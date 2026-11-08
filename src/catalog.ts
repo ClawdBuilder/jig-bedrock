@@ -259,9 +259,9 @@ function orderedSystem(rows: Profile[], catalog: Catalog | undefined): Profile[]
     const firstRegion = catalog?.regions?.[0] ?? "us-east-1";
     const first = /^us-gov-/.test(firstRegion)
         ? "us-gov"
-        : /^ap-northeast-/.test(firstRegion)
+        : /^ap-northeast-(?:1|3)$/.test(firstRegion)
           ? "jp"
-          : /^ap-southeast-2/.test(firstRegion)
+          : /^ap-southeast-(?:2|4)$/.test(firstRegion)
             ? "au"
             : /^ap-/.test(firstRegion)
               ? "apac"
@@ -271,12 +271,13 @@ function orderedSystem(rows: Profile[], catalog: Catalog | undefined): Profile[]
         const prefix = id.split(".")[0] ?? "";
         return prefix;
     };
+    const order = catalog?.regions ?? [firstRegion];
     const rank = (p: Profile): number => {
         const prefix = geography(p);
-        if (p.kind !== "system") return 99;
+        if (p.kind !== "system") return 999;
         if (prefix === first) return 0;
         if (prefix === "global") return 1;
-        return 2;
+        return 2 + Math.max(0, order.indexOf(p.region));
     };
     return rows
         .filter((p) => p.kind === "system")

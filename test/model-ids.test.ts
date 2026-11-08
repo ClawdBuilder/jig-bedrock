@@ -131,3 +131,71 @@ test("two application profiles keep 0.1.2 suffixes, while a system us profile be
         rmSync(folder, { recursive: true, force: true });
     }
 });
+
+test("Seoul is apac and Melbourne is au for the bare system slug", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const base = {
+        schema: 1 as const,
+        mode: "system" as const,
+        account_id: "123456789012",
+        fetched_at: Math.floor(Date.now() / 1000),
+    };
+    const profile = (arn: string, region: string, name: string) => ({
+        arn,
+        profile_name: name,
+        foundation_model_id: "anthropic.claude-sonnet-5-5",
+        region,
+        kind: "system" as const,
+    });
+    const folder = mkdtempSync(path.join(tmpdir(), "jig-bedrock-usage-"));
+    try {
+        const seoul = discoveredProfiles(
+            {
+                ...base,
+                regions: ["ap-northeast-2", "ap-northeast-3"],
+                profiles: [
+                    profile(
+                        "arn:aws:bedrock:ap-northeast-3::inference-profile/jp.anthropic.claude-sonnet-5-5",
+                        "ap-northeast-3",
+                        "Osaka",
+                    ),
+                    profile(
+                        "arn:aws:bedrock:ap-northeast-2::inference-profile/apac.anthropic.claude-sonnet-5-5",
+                        "ap-northeast-2",
+                        "Seoul",
+                    ),
+                    profile(
+                        "arn:aws:bedrock:us-east-1::inference-profile/global.anthropic.claude-sonnet-5-5",
+                        "us-east-1",
+                        "Global",
+                    ),
+                ],
+            },
+            folder,
+        );
+        assert.equal(seoul.available.find((m) => m.id === "claude-sonnet-5-5")?.arn.includes("apac."), true);
+        const melbourne = discoveredProfiles(
+            {
+                ...base,
+                regions: ["ap-southeast-4"],
+                profiles: [
+                    profile(
+                        "arn:aws:bedrock:ap-southeast-4::inference-profile/au.anthropic.claude-sonnet-5-5",
+                        "ap-southeast-4",
+                        "Melbourne",
+                    ),
+                    profile(
+                        "arn:aws:bedrock:ap-southeast-2::inference-profile/apac.anthropic.claude-sonnet-5-5",
+                        "ap-southeast-2",
+                        "Sydney apac",
+                    ),
+                ],
+            },
+            folder,
+        );
+        assert.equal(melbourne.available.find((m) => m.id === "claude-sonnet-5-5")?.arn.includes("au."), true);
+    } finally {
+        rmSync(folder, { recursive: true, force: true });
+    }
+});
