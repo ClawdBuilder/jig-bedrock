@@ -100,12 +100,18 @@ export async function checkSso(
 ): Promise<SsoState> {
     // The fast path: a cached token that stays valid needs no network check and no SDK.
     if (cachedTokenFresh(profile, deps)) return "ok";
-    const limit = AbortSignal.timeout(deps.timeoutMs);
+    // `AbortSignal.timeout` uses an unreferenced timer. With a stalled SDK and nothing else in the event loop, the process
+    // would exit before the check could return an error. A referenced timer keeps the check alive for its own timeout.
+    const controller = new AbortController();
+    const limit = controller.signal;
+    const timer = setTimeout(() => controller.abort(), deps.timeoutMs);
     try {
         // The SDK's answer is dropped: only whether it resolved matters.
         await until(deps.credentialProvider()({ profile })(), signal ? AbortSignal.any([signal, limit]) : limit);
         return "ok";
     } catch (error) {
         return classify(error);
+    } finally {
+        clearTimeout(timer);
     }
 }

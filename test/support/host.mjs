@@ -4,6 +4,11 @@ import { register } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+// Tests use the Pi package this repository installs as a dev dependency. A contributor's machine may also have a global
+// Pi beside node; a CI runner does not, so resolve the local package here before any test imports Pi's modules. The
+// extension's own runtime lookup is unchanged: it still uses PI_HOST_DIR or the install beside node.
+process.env.PI_HOST_DIR = path.resolve(import.meta.dirname, "../../node_modules/@earendil-works/pi-coding-agent");
+
 register("./host-hooks.mjs", import.meta.url);
 
 // Every test process is cut off from the user's real credentials and settings before any test runs, whatever the test
