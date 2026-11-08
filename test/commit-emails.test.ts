@@ -9,12 +9,14 @@ import { test } from "node:test";
 
 const script = new URL("../scripts/check-commit-emails.mjs", import.meta.url).pathname;
 
-function run(log: string, list?: string): { status: number; output: string } {
+function run(log: string, list?: string, text?: string): { status: number; output: string } {
     const dir = mkdtempSync(join(tmpdir(), "jig-bedrock-emails-"));
     try {
         const logFile = join(dir, "git-log");
         writeFileSync(logFile, log);
         const env: NodeJS.ProcessEnv = { ...process.env, JIG_GIT_LOG: logFile };
+        delete env.JIG_SCAN_WORDS_TEXT;
+        if (text !== undefined) env.JIG_SCAN_WORDS_TEXT = text;
         if (list === undefined) delete env.JIG_SCAN_WORDS;
         else {
             const listFile = join(dir, "scan-words.txt");
@@ -69,6 +71,12 @@ test("without the list an unknown address warns and still succeeds", () => {
     const result = run(line("e".repeat(40), "person@private.example", "noreply@example.com"));
     assert.equal(result.status, 0);
     assert.match(result.output, /warn .*author email is not a public identity/);
+});
+
+test("the list in JIG_SCAN_WORDS_TEXT fails a matching address", () => {
+    const result = run(badAuthor, undefined, "private\n");
+    assert.equal(result.status, 1);
+    assert.match(result.output, /author email matches the private list/);
 });
 
 test("a clean list run says clean", () => {

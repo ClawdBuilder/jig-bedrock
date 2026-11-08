@@ -10,14 +10,23 @@ import path from "node:path";
 const PUBLIC = [/^noreply@example\.com$/i, /^[^@\s]+@users\.noreply\.github\.com$/i, /^mrigankamondal10@gmail\.com$/i];
 
 const wordFile = process.env.JIG_SCAN_WORDS || path.join(homedir(), ".config", "jig", "scan-words.txt");
+const wordText = process.env.JIG_SCAN_WORDS_TEXT;
 let words = [];
-try {
-    words = readFileSync(wordFile, "utf8")
+if (wordText !== undefined) {
+    // CI passes the private list as a repository secret; it is newline-separated text.
+    words = wordText
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean);
-} catch {
-    // No file: warn-only mode.
+} else {
+    try {
+        words = readFileSync(wordFile, "utf8")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+    } catch {
+        // No file: warn-only mode.
+    }
 }
 
 const range =

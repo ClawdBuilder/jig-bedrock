@@ -202,8 +202,9 @@ npm run scan
 
 ### Commit emails
 
-`npm run check:emails` checks the author and committer addresses in `origin/main..HEAD`. CI uses the private word list in
-`JIG_SCAN_WORDS` or `~/.config/jig/scan-words.txt` and fails on a match; the list stays outside this repository. A fork
+`npm run check:emails` checks the author and committer addresses in `origin/main..HEAD`. CI uses the private word list from
+the `SCAN_WORDS` repository secret, passed as `JIG_SCAN_WORDS_TEXT`; locally, `JIG_SCAN_WORDS_TEXT`, `JIG_SCAN_WORDS` or
+`~/.config/jig/scan-words.txt` supplies it. The list stays outside this repository, and a match fails. A fork
 without it passes `noreply@example.com`, an address at `users.noreply.github.com`, and the maintainer's public address;
 any other address warns and does not block the run.
 
