@@ -14,11 +14,11 @@ jobs:
         runs-on: ubuntu-24.04
         timeout-minutes: 20
         strategy:
-            # Both lines finish, so a failure that is only on one Node version is seen next to the pass on the other.
+            # All three lines finish, so a failure that is only on one Node version is seen next to the passes on the others.
             fail-fast: false
             matrix:
-                # package.json says Node >=22.19.0; run the lowest allowed line and the current LTS line.
-                node: ["22.19.0", "24"]
+                # package.json says Node >=22.19.0; run the lowest allowed line, the previous LTS and the current one.
+                node: ["22.19.0", "24", "26"]
         steps:
             - name: Check out the repository
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

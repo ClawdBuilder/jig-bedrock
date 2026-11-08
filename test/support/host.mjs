@@ -1,6 +1,6 @@
 // Tests resolve Pi's host packages from the installed Pi (scripts/pi-host-dir.mjs), as Pi maps them for extensions at runtime.
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,7 +9,9 @@ import path from "node:path";
 // extension's own runtime lookup is unchanged: it still uses PI_HOST_DIR or the install beside node.
 process.env.PI_HOST_DIR = path.resolve(import.meta.dirname, "../../node_modules/@earendil-works/pi-coding-agent");
 
-register("./host-hooks.mjs", import.meta.url);
+// Node 26 deprecates module.register(); registerHooks takes the same resolve hook without the loader warning.
+const hostHooks = await import("./host-hooks.mjs");
+registerHooks({ resolve: hostHooks.resolveSync });
 
 // Every test process is cut off from the user's real credentials and settings before any test runs, whatever the test
 // file does: the password store, AWS, gpg, Pi's agent folder, the home folder (where the SSO token cache and the catalog
