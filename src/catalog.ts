@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -69,6 +70,8 @@ export type Catalog = {
     account_id: string;
     regions: string[];
     fetched_at: number;
+    filter_hash?: string;
+    warnings?: string[];
     profiles: Profile[];
     /** Explicit-list entries that could not be read; they do not stop the others. */
     errors?: { profile: string; message: string }[];
@@ -121,6 +124,29 @@ export function validArn(
         /^(?:application-inference-profile|inference-profile)\/[A-Za-z0-9.-]{1,256}$/.test(p[5] ?? "")
     );
 }
+/** The discovery filter, hashed into the catalog so a changed tag or list is never reused. */
+export function filterHash(expected: {
+    mode?: "explicit" | "tag" | "system";
+    tagKey?: string;
+    tagValue?: string;
+    activeTagKey?: string;
+    activeTagValue?: string;
+    profiles?: string[];
+}): string {
+    return createHash("sha256")
+        .update(
+            JSON.stringify([
+                expected.mode ?? null,
+                expected.tagKey ?? null,
+                expected.tagValue ?? null,
+                expected.activeTagKey ?? null,
+                expected.activeTagValue ?? null,
+                expected.profiles ?? null,
+            ]),
+        )
+        .digest("hex");
+}
+
 export function readCatalog(
     file: string,
     expected: {
@@ -153,8 +179,10 @@ export function readCatalog(
         const c = JSON.parse(raw) as Catalog;
         if (
             c.schema !== 1 ||
-            c.mode !== expected.mode ||
             c.team !== expected.team ||
+            (c.mode === undefined
+                ? expected.mode !== "tag" || c.filter_hash !== undefined
+                : c.mode !== expected.mode || c.filter_hash !== filterHash(expected)) ||
             c.aws_profile !== expected.profile ||
             typeof c.account_id !== "string" ||
             !/^\d{12}$/.test(c.account_id) ||
@@ -226,6 +254,32 @@ function thinkingLevelMap(
     return { thinkingLevelMap: { ...(base ?? {}), off: null } };
 }
 
+/** System profiles first, by the geography of their id: the region's prefix, then global, then the rest. */
+function orderedSystem(rows: Profile[], catalog: Catalog | undefined): Profile[] {
+    const first = (catalog?.regions?.[0] ?? "us-east-1").split("-")[0] ?? "us";
+    const geography = (p: Profile) => {
+        const id = p.arn.slice(p.arn.lastIndexOf("/") + 1);
+        const prefix = id.split(".")[0] ?? "";
+        return prefix;
+    };
+    const rank = (p: Profile): number => {
+        const prefix = geography(p);
+        if (p.kind !== "system") return 99;
+        if (prefix === first) return 0;
+        if (prefix === "global") return 1;
+        return 2;
+    };
+    return rows
+        .filter((p) => p.kind === "system")
+        .sort((a, b) => rank(a) - rank(b) || (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
+}
+
+function orderedApplication(rows: Profile[]): Profile[] {
+    const system = rows.filter((p) => p.kind === "system");
+    const apps = rows.filter((p) => p.kind !== "system");
+    return [...system, ...apps];
+}
+
 export function discoveredProfiles(
     catalog: Catalog | undefined,
     usageDir: string,
@@ -257,13 +311,12 @@ export function discoveredProfiles(
         grouped.set(key, [...(grouped.get(key) || []), p]);
     }
     for (const [key, rows] of grouped) {
-        // System-defined profiles sort first: they need no account tag and keep the bare slug; an application profile
-        // for the same model gets the region/id suffix, so a stable cross-region profile is never displaced by a tag.
-        const ordered = [...rows].sort((a, b) => Number(b.kind === "system") - Number(a.kind === "system"));
-        const preferred = ordered.find((row) => row.kind === "system") ?? ordered[0];
-        for (const p of ordered) {
+        const system = orderedSystem(rows, catalog);
+        const preferred = system[0] ?? (rows.length === 1 ? rows[0] : undefined);
+        for (const p of orderedApplication(rows)) {
             const r = registryEntry(p.foundation_model_id);
-            const id = p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const id =
+                p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
             const pricing = rates.get(key);
             const fallback =
                 r.cost &&

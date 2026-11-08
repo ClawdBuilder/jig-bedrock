@@ -256,9 +256,10 @@ export function createJigBedrock(
             }
             const change = updateModels(models, updated);
             if (ctx && (change.added || change.removed)) {
+                const catalogProblems = catalog.load()?.errors?.length ?? 0;
                 ctx.ui.notify(
-                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed. Choose /model if your selection was removed.`,
-                    "info",
+                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.${catalogProblems ? ` ${catalogProblems} profile${catalogProblems === 1 ? "" : "s"} could not be read; see /bedrock-profiles.` : ""} Choose /model if your selection was removed.`,
+                    catalogProblems ? "warning" : "info",
                 );
             }
             if (change.changed && native) {

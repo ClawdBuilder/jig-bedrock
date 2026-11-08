@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicCache } from "./cache.ts";
-import { type Catalog, type Profile, readCatalog, validArn } from "./catalog.ts";
+import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI or usage program, checked field by field where it is used
@@ -65,6 +65,15 @@ export function discoveryHelp(status: Status): string {
             return "Check AWS access and the configuration in README.md, then /bedrock-refresh.";
     }
 }
+function entryMessage(error: unknown): string {
+    const text = String(error);
+    if (/profile scope/.test(text)) return text.replace(/^Error:\s*/, "");
+    if (/model scope/.test(text)) return "model scope";
+    if (category(error) === "permission_denied") return "denied";
+    if (category(error) === "configuration") return "not found";
+    return category(error);
+}
+
 export function createAwsDiscovery(
     config: ResolvedConfig,
     runner: Runner = runFile,
@@ -72,14 +81,15 @@ export function createAwsDiscovery(
     now = Date.now,
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
-        invalidAccount = false;
+        invalidAccount = false,
+        last: Catalog | undefined;
     const mode =
         config.mode ??
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
     const activeKey = config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
     const activeValue = config.activeTagValue ?? "true";
     const scope = { ...config, mode, team: config.team };
-    const load = () => (invalidAccount ? undefined : readCatalog(file, scope, now()));
+    const load = () => (invalidAccount ? undefined : (last ?? readCatalog(file, scope, now())));
     const perform = async (force = false): Promise<Status> => {
         let remaining = 8 * 1_048_576,
             pages = 0,
@@ -111,7 +121,8 @@ export function createAwsDiscovery(
             } else invalidAccount = false;
             const profiles: Profile[] = [],
                 seen = new Set<string>(),
-                explicitErrors: { profile: string; message: string }[] = [];
+                explicitErrors: { profile: string; message: string }[] = [],
+                warnings: string[] = [];
             const info = (arn: string, region: string) =>
                 aws(["bedrock", "get-inference-profile", "--inference-profile-identifier", arn, "--region", region]);
             const foundation = async (value: Json, depth = 0): Promise<string> => {
@@ -129,8 +140,10 @@ export function createAwsDiscovery(
                         // biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters in an AWS model id
                         if (!id || id.length > 256 || /[\x00-\x1f]/.test(id)) throw new Error("model ID");
                         ids.add(id);
-                    } else if (resource.startsWith("inference-profile/") && depth < 2)
+                    } else if (resource.startsWith("inference-profile/") && depth < 2) {
+                        if (match[3] && match[3] !== account && match[3] !== "aws") throw new Error("model scope");
                         ids.add(await foundation(await info(row.modelArn, match[2]), depth + 1));
+                    }
                     else throw new Error("model scope");
                 }
                 if (ids.size !== 1) throw new Error("ambiguous model");
@@ -170,6 +183,10 @@ export function createAwsDiscovery(
                     const region = match?.[2] ?? config.regions[0];
                     if (!region) throw new Error("profile scope");
                     try {
+                        if (match && !config.regions.includes(region))
+                            throw new Error(
+                                `profile scope: ${entry} is in ${region}; add ${region} to bedrock.regions`,
+                            );
                         if (match) await add(entry, region, kind);
                         else {
                             const found = await info(entry, region);
@@ -178,7 +195,7 @@ export function createAwsDiscovery(
                             await add(foundArn, region, found.type === "SYSTEM_DEFINED" ? "system" : "application");
                         }
                     } catch (error) {
-                        explicitErrors.push({ profile: entry, message: category(error) });
+                        explicitErrors.push({ profile: entry, message: entryMessage(error) });
                     }
                 }
             } else if (mode === "tag") {
@@ -272,7 +289,17 @@ export function createAwsDiscovery(
                 }
             }
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
-            atomicCache(file, {
+            const failed = mode === "explicit" && profiles.length === 0 && explicitErrors.length > 0;
+            if (mode === "tag" && profiles.length === 0) {
+                const active =
+                    activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
+                warnings.push(
+                    `No application inference profiles matched ${config.tagKey ?? "Team"}=${config.tagValue}${active} in ${config.regions.join(", ")}. Check bedrock.tagKey/tagValue.`,
+                );
+            }
+            if (mode === "system" && profiles.length === 0)
+                warnings.push(`No AWS-defined Claude inference profiles in ${config.regions.join(", ")}.`);
+            const catalog: Catalog = {
                 schema: 1,
                 mode,
                 team: config.team,
@@ -280,11 +307,15 @@ export function createAwsDiscovery(
                 account_id: account,
                 regions: config.regions,
                 fetched_at: Math.floor(now() / 1000),
+                filter_hash: filterHash(scope),
+                ...(warnings.length > 0 ? { warnings } : {}),
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
-            });
+            };
+            atomicCache(file, catalog);
+            last = catalog;
             invalidAccount = false;
-            return "ok";
+            return failed ? "unavailable" : "ok";
         } catch (e) {
             return category(e);
         }

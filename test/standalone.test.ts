@@ -796,3 +796,104 @@ test("in tag mode the bare slug stays with the application profile", async () =>
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("changing the tag filter invalidates the cache, and a 0.1.2 cache is accepted as legacy tag mode", async (t) => {
+    const f = fixture();
+    const file = join(directory(t), "catalog.json");
+    const legacy = { ...config, mode: "tag" as const };
+    assert.equal(await createAwsDiscovery(legacy, f.runner, file).refresh(), "ok");
+    assert.equal(
+        createAwsDiscovery({ ...config, mode: "tag", tagKey: "CostCenter", tagValue: "42" }, f.runner, file).load(),
+        undefined,
+    );
+    const old = JSON.parse(readFileSync(file, "utf8"));
+    delete old.mode;
+    delete old.filter_hash;
+    writeFileSync(file, JSON.stringify(old), { mode: 0o600 });
+    assert.equal(createAwsDiscovery(legacy, f.runner, file).load()?.profiles.length, 1);
+});
+
+test("an explicit ARN outside regions is named with the region to add", async (t) => {
+    const runner: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        return JSON.stringify({ status: "ACTIVE", models: [] });
+    };
+    const file = join(directory(t), "catalog.json");
+    const source = createAwsDiscovery(
+        {
+            ...config,
+            team: undefined,
+            mode: "explicit",
+            profiles: [`arn:aws:bedrock:eu-west-1:${account}:application-inference-profile/eu`],
+        },
+        runner,
+        file,
+    );
+    assert.equal(await source.refresh(), "unavailable");
+    assert.match(source.load()?.errors?.[0]?.message ?? "", /eu-west-1.*bedrock\.regions/);
+});
+
+test("tag mode with no matches says the key, value and regions", async (t) => {
+    const runner: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        return JSON.stringify({ ResourceTagMappingList: [] });
+    };
+    const file = join(directory(t), "catalog.json");
+    const source = createAwsDiscovery(
+        { ...config, mode: "tag", team: undefined, tagKey: "CostCenter", tagValue: "typo" },
+        runner,
+        file,
+    );
+    assert.equal(await source.refresh(), "ok");
+    assert.match(source.load()?.warnings?.[0] ?? "", /CostCenter=typo.*us-east-1/);
+});
+
+test("a nested model profile in another account is refused", async (t) => {
+    const runner: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        if (args.includes("list-inference-profiles"))
+            return JSON.stringify({
+                inferenceProfileSummaries: [
+                    {
+                        inferenceProfileArn: `arn:aws:bedrock:us-east-1::inference-profile/jp.anthropic.claude-sonnet-4-5`,
+                        inferenceProfileName: "JP Claude",
+                    },
+                ],
+            });
+        return JSON.stringify({
+            status: "ACTIVE",
+            inferenceProfileName: "JP Claude",
+            inferenceProfileArn: `arn:aws:bedrock:us-east-1::inference-profile/jp.anthropic.claude-sonnet-4-5`,
+            models: [{ modelArn: "arn:aws:bedrock:us-east-1:999999999999:inference-profile/other" }],
+        });
+    };
+    const file = join(directory(t), "catalog.json");
+    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    assert.equal(await source.refresh(), "ok");
+    assert.equal(source.load()?.profiles.length, 0);
+    assert.match(source.load()?.errors?.[0]?.message ?? "", /model scope/);
+});
+
+test("jp and au system profiles pass the loose prefix and are decided by the foundation model", async (t) => {
+    const runner: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        const region = args[args.indexOf("--region") + 1];
+        if (args.includes("list-inference-profiles"))
+            return JSON.stringify({
+                inferenceProfileSummaries: ["jp", "au"].map((geo) => ({
+                    inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/${geo}.anthropic.claude-sonnet-4-5`,
+                    inferenceProfileName: `${geo} Claude`,
+                })),
+            });
+        return JSON.stringify({
+            status: "ACTIVE",
+            inferenceProfileName: "geo Claude",
+            inferenceProfileArn: args[args.indexOf("--inference-profile-identifier") + 1],
+            models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5" }],
+        });
+    };
+    const file = join(directory(t), "catalog.json");
+    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    assert.equal(await source.refresh(), "ok");
+    assert.equal(source.load()?.profiles.length, 2);
+});

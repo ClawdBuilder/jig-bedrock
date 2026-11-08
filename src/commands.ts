@@ -294,6 +294,10 @@ export function registerStatisticsCommands(
                             ? `Catalog observed ${new Date(catalog.fetched_at * 1000).toISOString()}${Date.now() / 1000 - catalog.fetched_at > 86_400 ? " (stale; /bedrock-refresh)" : ""}. ${catalog.profiles.length} active profiles / ${models.length} usable models.`
                             : "No approved catalog. Run /aws-login, then /bedrock-refresh.",
                         "Catalog tags filter presentation; AWS IAM authorizes model access.",
+                        ...(catalog?.warnings ?? []).map((line) => `Note: ${line}`),
+                        ...(catalog?.errors ?? []).map(
+                            (error) => `Could not read ${clean(error.profile)}: ${clean(error.message)}.`,
+                        ),
                         ...models.map(
                             (m) =>
                                 `${clean(m.name)} · ${m.arn.split(":")[3]} · ${m.rateSource} / million tokens: input $${m.cost.input}, output $${m.cost.output}, cache read $${m.cost.cacheRead}, ${writeRates(m)}`,

@@ -80,3 +80,54 @@ test("a system profile keeps the bare slug when an application profile names the
         rmSync(empty, { recursive: true, force: true });
     }
 });
+
+test("two application profiles keep 0.1.2 suffixes, while a system us profile beats global", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const region = "us-east-1";
+    const base = {
+        schema: 1 as const,
+        account_id: "123456789012",
+        regions: [region],
+        fetched_at: Math.floor(Date.now() / 1000),
+    };
+    const app = (id: string) => ({
+        arn: `arn:aws:bedrock:${region}:123456789012:application-inference-profile/${id}`,
+        profile_name: id,
+        foundation_model_id: "anthropic.claude-sonnet-5-5",
+        region,
+        kind: "application" as const,
+    });
+    const folder = mkdtempSync(path.join(tmpdir(), "jig-bedrock-usage-"));
+    try {
+        const apps = discoveredProfiles({ ...base, mode: "tag", team: "x", profiles: [app("a"), app("b")] }, folder);
+        assert.equal(apps.available.length, 2);
+        assert.ok(apps.available.every((m) => m.id.startsWith("claude-sonnet-5-5--")));
+        const systems = discoveredProfiles(
+            {
+                ...base,
+                mode: "system",
+                profiles: [
+                    {
+                        arn: `arn:aws:bedrock:${region}::inference-profile/global.anthropic.claude-sonnet-5-5`,
+                        profile_name: "Global",
+                        foundation_model_id: "anthropic.claude-sonnet-5-5",
+                        region,
+                        kind: "system",
+                    },
+                    {
+                        arn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-5-5`,
+                        profile_name: "US",
+                        foundation_model_id: "anthropic.claude-sonnet-5-5",
+                        region,
+                        kind: "system",
+                    },
+                ],
+            },
+            folder,
+        );
+        assert.equal(systems.available.find((m) => m.id === "claude-sonnet-5-5")?.arn.includes("/us."), true);
+    } finally {
+        rmSync(folder, { recursive: true, force: true });
+    }
+});
