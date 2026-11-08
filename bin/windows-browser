@@ -1,0 +1,4 @@
+#!/bin/sh
+# Opens the address in $1 in the Windows default browser, from WSL. jig-bedrock gives this to `aws sso login` as its BROWSER when
+# Pi runs under WSL and nobody set one (src/wsl.ts). rundll32 passes the whole address on, `&` included; cmd.exe would split it there.
+exec /mnt/c/Windows/System32/rundll32.exe url.dll,FileProtocolHandler "$1"

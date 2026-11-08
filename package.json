@@ -1,0 +1,52 @@
+{
+    "name": "@clawdbuilder/jig-bedrock",
+    "version": "0.1.0",
+    "description": "Claude on AWS Bedrock for Pi: inference-profile discovery, the Messages route with cache-friendly tools, Converse fallback, SSO repair and a budget footer.",
+    "type": "module",
+    "license": "MIT",
+    "keywords": [
+        "pi-package",
+        "pi",
+        "bedrock",
+        "aws",
+        "claude",
+        "anthropic"
+    ],
+    "files": [
+        "index.ts",
+        "src/**",
+        "bin/**",
+        "README.md",
+        "LICENSE"
+    ],
+    "pi": {
+        "extensions": [
+            "index.ts"
+        ]
+    },
+    "scripts": {
+        "check": "tsc -p tsconfig.json && biome ci .",
+        "test": "node --import ./test/support/host.mjs --test \"test/*.test.ts\"",
+        "scan": "node scripts/scan-company-strings.mjs"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.6.4",
+        "@types/node": "26.6.6",
+        "typescript": "7.0.2",
+        "@earendil-works/pi-ai": "1.5.0",
+        "@earendil-works/pi-coding-agent": "1.5.0"
+    },
+    "publishConfig": {
+        "provenance": true,
+        "access": "public"
+    },
+    "repository": "git+https://github.com/ClawdBuilder/jig-bedrock.git",
+    "homepage": "https://github.com/ClawdBuilder/jig-bedrock#readme",
+    "engines": {
+        "node": ">=22.19.0"
+    },
+    "peerDependencies": {
+        "@earendil-works/pi-ai": "1.5.0",
+        "@earendil-works/pi-coding-agent": "1.5.0"
+    }
+}

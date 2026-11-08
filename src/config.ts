@@ -1,0 +1,214 @@
+// The Bedrock provider's settings: the `bedrock` section of jig.json, over the package defaults, over which environment
+// variables win. Diagnostics name fields and never echo configuration values or parser output.
+//
+//   team               your exact AWS "Team" tag value: the inference profiles that carry it (and Active=true) are the models
+//   profile            the AWS profile to sign in with (default my-bedrock-profile)
+//   regions            where to look for profiles (default us-east-1)
+//   usageDir             a folder holding an executable named usage that prints the usage JSON (optional; default ~/.local/share/usage-tool)
+//   monthlyBudgetUsd   a figure to show in the footer next to the month's spend; not an AWS limit (optional)
+//   ssoLoginCommand    the argv of the login, with {profile} for the profile (default aws sso login --profile {profile})
+//   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default true)
+//   browser            the program that opens the sign-in address, as BROWSER for the login (optional; under WSL the Windows browser)
+//   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
+//
+// Environment variables override the settings: JIG_BEDROCK_TEAM, JIG_BEDROCK_PROFILE, JIG_BEDROCK_REGIONS (comma
+// separated) and JIG_BEDROCK_USAGE_DIR.
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { Check } from "./check.ts";
+import { isObject, knownKeys } from "./check.ts";
+
+export interface ResolvedConfig {
+    team: string;
+    tagKey?: string;
+    tagValue?: string;
+    activeTagKey?: string;
+    activeTagValue?: string;
+    profile: string;
+    regions: string[];
+    usageDir: string;
+    monthlyBudgetUsd?: number;
+    ssoLoginCommand: string[];
+    signInAtStart: boolean;
+    browser?: string;
+    /** Set by loadConfig; a hand-written fixture may leave it out, and the provider then uses messages. */
+    api?: BedrockApi;
+    agentDir?: string;
+}
+
+/** The two ways to reach the same models: the Anthropic Messages route, or the older Converse route. */
+export type BedrockApi = "messages" | "converse";
+export type ConfigResult = { config: ResolvedConfig; error?: never } | { config?: never; error: string };
+
+export const profilePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
+/** A full path, or a bare program name: never a path relative to the folder Pi happens to be in, and no arguments. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a browser path may not contain control characters
+const browserPattern = /^(?:\/[^\s\x00-\x1f\x7f]{1,4095}|[A-Za-z0-9][A-Za-z0-9._+-]{0,127})$/;
+/** Every setting of the `bedrock` section. A key that is not one of these is an error. */
+export const FIELDS = [
+    "team",
+    "tagKey",
+    "tagValue",
+    "activeTagKey",
+    "activeTagValue",
+    "profile",
+    "regions",
+    "usageDir",
+    "monthlyBudgetUsd",
+    "ssoLoginCommand",
+    "signInAtStart",
+    "browser",
+    "api",
+] as const;
+
+export const DEFAULTS = {
+    tagKey: "Team",
+    activeTagKey: "Active",
+    activeTagValue: "true",
+    profile: "my-bedrock-profile",
+    regions: ["us-east-1"],
+    usageDir: "~/.local/share/usage-tool",
+    ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
+    signInAtStart: true,
+    api: "messages" as BedrockApi,
+};
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: config values reject control characters
+const control = /[\x00-\x1f\x7f]/;
+
+/** The problems with a configuration, one message each, each naming its field. Empty when it is fine. */
+export function problemsOf(c: Record<string, unknown>): string[] {
+    const problems: string[] = [];
+    const {
+        team,
+        tagKey,
+        tagValue,
+        activeTagKey,
+        activeTagValue,
+        profile,
+        regions,
+        usageDir,
+        monthlyBudgetUsd,
+        ssoLoginCommand,
+        signInAtStart,
+        browser,
+        api,
+    } = c;
+    if (typeof team !== "string" || team.trim() === "" || team.length > 256 || control.test(team)) {
+        problems.push("bedrock.team must be your exact AWS tag value (1-256 characters, no control characters)");
+    }
+    for (const [name, value] of [
+        ["tagKey", tagKey],
+        ["tagValue", tagValue],
+        ["activeTagKey", activeTagKey],
+        ["activeTagValue", activeTagValue],
+    ] as const)
+        if (
+            value !== undefined &&
+            (typeof value !== "string" || value.trim() === "" || value.length > 256 || control.test(value))
+        )
+            problems.push(`bedrock.${name} must be a tag name or value of 1-256 characters`);
+    if (typeof profile !== "string" || !profilePattern.test(profile)) {
+        problems.push(
+            "bedrock.profile must be an AWS profile name: 1-128 letters, digits, underscores, dots or hyphens, starting with a letter or digit",
+        );
+    }
+    if (
+        !Array.isArray(regions) ||
+        regions.length === 0 ||
+        regions.length > 16 ||
+        regions.some((region) => typeof region !== "string" || !regionPattern.test(region)) ||
+        new Set(regions).size !== regions.length
+    ) {
+        problems.push("bedrock.regions must contain 1-16 unique AWS region names");
+    }
+    if (typeof usageDir !== "string" || usageDir.trim() === "" || control.test(usageDir)) {
+        problems.push("bedrock.usageDir must be a nonempty local path");
+    }
+    if (
+        monthlyBudgetUsd !== undefined &&
+        (typeof monthlyBudgetUsd !== "number" || !Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd <= 0)
+    ) {
+        problems.push("bedrock.monthlyBudgetUsd must be a positive finite number, or omitted");
+    }
+    if (
+        !Array.isArray(ssoLoginCommand) ||
+        ssoLoginCommand.length === 0 ||
+        ssoLoginCommand.length > 64 ||
+        ssoLoginCommand.some(
+            (part) =>
+                typeof part !== "string" ||
+                part === "" ||
+                part.length > 4096 ||
+                control.test(part) ||
+                /[{}]/.test(part.replaceAll("{profile}", "")),
+        ) ||
+        String(ssoLoginCommand[0]).includes("{profile}")
+    ) {
+        problems.push("bedrock.ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
+    }
+    if (typeof signInAtStart !== "boolean") problems.push("bedrock.signInAtStart must be true or false");
+    if (browser !== undefined && (typeof browser !== "string" || !browserPattern.test(browser))) {
+        problems.push(
+            "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)",
+        );
+    }
+    if (api !== undefined && api !== "messages" && api !== "converse") {
+        problems.push('bedrock.api must be "messages" (the Anthropic Messages route) or "converse" (the older route)');
+    }
+    return problems;
+}
+
+/** The check the `bedrock` section goes through when jig-core reads jig.json. The package defaults fill what is left out. */
+export const checkBedrock: Check = (raw, errors) => {
+    if (!isObject(raw)) {
+        errors.push("bedrock must be an object");
+        return;
+    }
+    knownKeys(raw, FIELDS, "bedrock", errors);
+    errors.push(...problemsOf({ ...DEFAULTS, ...raw }));
+};
+
+/** The same check as jig-core's `registerSection` wants it: the messages, empty when the section is fine. */
+export function validateBedrock(raw: unknown): string[] {
+    const errors: string[] = [];
+    checkBedrock(raw, errors);
+    return errors;
+}
+
+/**
+ * The settings as the provider uses them: the package defaults, then `raw` (the `bedrock` section, or undefined when
+ * there is none), then the environment variables.
+ */
+export function loadConfig(
+    options: { raw: Record<string, unknown> | undefined; env?: NodeJS.ProcessEnv; agentDir?: string } = {
+        raw: undefined,
+    },
+): ConfigResult {
+    const env = options.env ?? process.env;
+    const agentDir = options.agentDir ?? (env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent"));
+    const unknown = Object.keys(options.raw ?? {}).filter((key) => !(FIELDS as readonly string[]).includes(key));
+    if (unknown.length > 0)
+        return { error: "Unknown field in bedrock in jig.json; see the configuration table in README.md." };
+    const c: Record<string, unknown> = { ...DEFAULTS, ...options.raw, agentDir };
+    if (env.JIG_BEDROCK_TEAM !== undefined) c.team = env.JIG_BEDROCK_TEAM;
+    if (env.JIG_BEDROCK_TAG_KEY !== undefined) c.tagKey = env.JIG_BEDROCK_TAG_KEY;
+    if (env.JIG_BEDROCK_TAG_VALUE !== undefined) c.tagValue = env.JIG_BEDROCK_TAG_VALUE;
+    if (env.JIG_BEDROCK_PROFILE !== undefined) c.profile = env.JIG_BEDROCK_PROFILE;
+    if (env.JIG_BEDROCK_USAGE_DIR !== undefined) c.usageDir = env.JIG_BEDROCK_USAGE_DIR;
+    if (env.JIG_BEDROCK_REGIONS !== undefined)
+        c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
+    const [problem] = problemsOf(c);
+    if (problem !== undefined) {
+        return {
+            error:
+                c.team === undefined
+                    ? "Set bedrock.team in the bedrock settings to your exact AWS tag value."
+                    : `${problem}.`,
+        };
+    }
+    (c.regions as string[]).sort();
+    c.tagValue = typeof c.tagValue === "string" && c.tagValue !== "" ? c.tagValue : c.team;
+    return { config: c as unknown as ResolvedConfig };
+}
