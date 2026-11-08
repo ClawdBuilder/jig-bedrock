@@ -122,7 +122,12 @@ export function problemsOf(c: Record<string, unknown>): string[] {
             profiles.length > 256 ||
             profiles.some(
                 (value) =>
-                    typeof value !== "string" || value.trim() === "" || value.length > 2048 || control.test(value),
+                    typeof value !== "string" ||
+                    value.trim() === "" ||
+                    value.length > 2048 ||
+                    value.startsWith("-") ||
+                    !/^[A-Za-z0-9._:/-]+$/.test(value) ||
+                    control.test(value),
             ) ||
             new Set(profiles).size !== profiles.length)
     ) {
