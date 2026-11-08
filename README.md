@@ -44,25 +44,24 @@ Three modes, chosen by the settings:
    `activeTagKey` is not, `Active=true` is still required, so existing settings behave exactly as before.
 3. **Explicit list.** `profiles` names ARNs or profile ids; each is read with `GetInferenceProfile` and no tag search runs.
 
-| Setting                           | Default                                         | Meaning                                                                                             |
-| --------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `team`                            | none                                            | Shorthand for `tagValue`; existing settings keep the `Active=true` filter                           |
-| `tagKey`                          | `Team` when tagged                              | The tag key for mode 2                                                                              |
-| `tagValue`                        | the value of `team`                             | The tag value for mode 2                                                                            |
-| `activeTagKey` / `activeTagValue` | none                                            | Optional tag that marks a profile usable; `team` alone still defaults to `Active`/`true`            |
-| `profiles`                        | none                                            | Mode 3: explicit inference-profile ARNs or ids                                                      |
-| `profile`                         | `my-bedrock-profile`                            | The AWS profile for discovery, requests and sign-in                                                 |
-| `regions`                         | `["us-east-1"]`                                 | Where to look for profiles                                                                          |
-| `usageDir`                        | `~/.local/share/usage-tool`                     | Optional directory holding an executable `usage` that prints the usage JSON; omit if you have none  |
-| `monthlyBudgetUsd`                | none                                            | A figure for the footer, not an AWS limit                                                           |
-| `ssoLoginCommand`                 | `["aws","sso","login","--profile","{profile}"]` | The owning tool starts the sign-in; this package never handles a password or token                  |
-| `signInAtStart`                   | `"ask"`                                         | Ask before a start-up sign-in; `true` signs in at once, `false` waits for a request or `/aws-login` |
-| `browser`                         | WSL's Windows browser                           | Program that opens the sign-in address                                                              |
-| `api`                             | `messages`                                      | `messages` (cache-friendly) or `converse`                                                           |
+| Setting                           | Default                                         | Meaning                                                                                            |
+| --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `team`                            | none                                            | Shorthand for `tagValue`; existing settings keep the `Active=true` filter                          |
+| `tagKey`                          | `Team` when tagged                              | The tag key for mode 2                                                                             |
+| `tagValue`                        | the value of `team`                             | The tag value for mode 2                                                                           |
+| `activeTagKey` / `activeTagValue` | none                                            | Optional tag that marks a profile usable; `team` alone still defaults to `Active`/`true`           |
+| `profiles`                        | none                                            | Mode 3: explicit inference-profile ARNs or ids                                                     |
+| `profile`                         | `my-bedrock-profile`                            | The AWS profile for discovery, requests and sign-in                                                |
+| `regions`                         | `["us-east-1"]`                                 | Where to look for profiles                                                                         |
+| `usageDir`                        | `~/.local/share/usage-tool`                     | Optional directory holding an executable `usage` that prints the usage JSON; omit if you have none |
+| `monthlyBudgetUsd`                | none                                            | A figure for the footer, not an AWS limit                                                          |
+| `ssoLoginCommand`                 | `["aws","sso","login","--profile","{profile}"]` | The owning tool starts the sign-in; this package never handles a password or token                 |
+| `signInAtStart`                   | `true`                                          | Refresh an expired SSO session when Pi starts                                                      |
+| `browser`                         | WSL's Windows browser                           | Program that opens the sign-in address                                                             |
+| `api`                             | `messages`                                      | `messages` (cache-friendly) or `converse`                                                          |
 
-The default is `"ask"`: Pi never opens a browser from the start-up check without your yes. `false` leaves sign-in to a
-failing request or `/aws-login`; `/aws-login` always signs in when you run it. In both cases the start-up check still runs
-read-only, and an expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”
+`signInAtStart: false` leaves sign-in to a failing request or `/aws-login`; the start-up check still runs read-only, and an
+expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”
 
 Environment: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_PROFILE`, `JIG_BEDROCK_REGIONS`, `JIG_BEDROCK_USAGE_DIR`,
 `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`. `PI_HOST_DIR` points at the Pi install when it is not beside `node`.

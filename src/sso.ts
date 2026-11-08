@@ -1,6 +1,6 @@
 import type { AssistantMessage, AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { profilePattern, type SignInAtStart } from "./config.ts";
+import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import { profilePattern } from "./config.ts";
 import { isJigBedrock } from "./identity.ts";
 
 type Stream = NonNullable<ProviderConfig["streamSimple"]>;
@@ -117,27 +117,6 @@ export function isPresentedSsoFailure(message: { errorMessage?: string }): boole
 }
 type Notice = (text: string, level: "info" | "warning") => void;
 
-function expiredError(
-    error: AssistantMessage,
-    aborted = false,
-): {
-    type: "error";
-    reason: "aborted" | "error";
-    error: AssistantMessage;
-} {
-    return {
-        type: "error",
-        reason: aborted ? "aborted" : "error",
-        error: {
-            ...error,
-            stopReason: aborted ? "aborted" : "error",
-            errorMessage: aborted
-                ? "AWS SSO recovery cancelled."
-                : "AWS SSO session expired. Run /aws-login when you're ready.",
-        } as AssistantMessage,
-    };
-}
-
 /** The TUI shows notices; print, JSON and RPC modes have no notice area, so a waiting sign-in is announced on stderr. */
 export function noticeFor(
     ctx: { mode?: string; ui: { notify(text: string, level: "info" | "warning"): void } },
@@ -181,31 +160,14 @@ export function profileFor(options?: SimpleStreamOptions): string | undefined {
     return profilePattern.test(profile) ? profile : undefined;
 }
 
-/** How a request handles an expired SSO session. `/aws-login` remains an explicit sign-in whatever this says. */
-export interface SsoRecoveryOptions {
-    mode?: SignInAtStart;
-    ask?: (profile: string) => Promise<boolean>;
-}
-
 /** Keep native Bedrock streaming/auth; retry the same request once, never an agent turn. */
 export function withSsoRecovery(
     native: Stream,
     makeStream: () => AssistantMessageEventStream,
     recover: Recover,
     notify: Notice,
-    recoveryOptions: SsoRecoveryOptions = {},
 ): Stream {
     recover = shareRecovery(recover);
-    let asking: Promise<boolean> | undefined;
-    const askOnce = (profile: string): Promise<boolean> => {
-        if (asking) return asking;
-        asking = (recoveryOptions.ask?.(profile) ?? Promise.resolve(false))
-            .catch(() => false)
-            .finally(() => {
-                asking = undefined;
-            });
-        return asking;
-    };
     return (model, context, options) => {
         const output = makeStream();
         void (async () => {
@@ -239,22 +201,6 @@ export function withSsoRecovery(
                         !options?.signal?.aborted &&
                         isSsoExpiry(event.error)
                     ) {
-                        if (recoveryOptions.mode === false) {
-                            output.push(expiredError(event.error));
-                            return;
-                        }
-                        if (recoveryOptions.mode === "ask") {
-                            let yes = false;
-                            try {
-                                yes = (await askOnce(profile)) === true;
-                            } catch {
-                                yes = false;
-                            }
-                            if (!yes) {
-                                output.push(expiredError(event.error, options?.signal?.aborted));
-                                return;
-                            }
-                        }
                         notify(`Restoring AWS SSO (${profile}); browser sign-in or MFA may be needed.`, "info");
                         try {
                             await recover(profile, options?.signal, "request");
@@ -315,7 +261,6 @@ export async function registerBedrockSsoRecovery(
     pi: ExtensionAPI,
     recovery: Recover,
     defaultProfile?: string,
-    options: { mode?: SignInAtStart } = {},
 ): Promise<RecoveredBedrock> {
     // Not worth deferring: Pi has already loaded both modules, so inside Pi these imports and builtinProviders() take about 1-5 ms
     // together (measured), while the models for /model need the native provider's metadata at registration anyway.
@@ -331,29 +276,10 @@ export async function registerBedrockSsoRecovery(
     // hide a request subscriber from warmup/manual failure presentation.
     shared.set(recover, recover);
     let notice: Notice = () => {};
-    let current: ExtensionContext | undefined;
-    let asking: Promise<boolean> | undefined;
     pi.on("session_start", (_event, ctx) => {
-        current = ctx;
         notice = noticeFor(ctx);
     });
-    pi.on("session_shutdown", () => {
-        asking = undefined;
-        lifetime.abort();
-    });
-    // One question at a time: a second expired request joins the open prompt instead of asking twice.
-    const ask = (profile: string): Promise<boolean> => {
-        const ctx = current;
-        if (!ctx?.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return Promise.resolve(false);
-        if (asking) return asking;
-        asking = ctx.ui
-            .confirm("AWS sign-in", `AWS sign-in for ${profile} has expired. Sign in now?`)
-            .catch(() => false)
-            .finally(() => {
-                asking = undefined;
-            });
-        return asking;
-    };
+    pi.on("session_shutdown", () => lifetime.abort());
     pi.registerCommand("aws-login", {
         description: "Restore the selected AWS SSO profile (browser sign-in may be needed)",
         handler: async (args, ctx) => {
@@ -380,14 +306,13 @@ export async function registerBedrockSsoRecovery(
     // Keep both public stream entry points so full calls retain Bedrock options.
     const provider = {
         ...native,
-        stream: withSsoRecovery(native.stream as Stream, createAssistantMessageEventStream, recover, notify, {
-            mode: options.mode ?? true,
-            ask,
-        }) as typeof native.stream,
-        streamSimple: withSsoRecovery(native.streamSimple, createAssistantMessageEventStream, recover, notify, {
-            mode: options.mode ?? true,
-            ask,
-        }),
+        stream: withSsoRecovery(
+            native.stream as Stream,
+            createAssistantMessageEventStream,
+            recover,
+            notify,
+        ) as typeof native.stream,
+        streamSimple: withSsoRecovery(native.streamSimple, createAssistantMessageEventStream, recover, notify),
     };
     const anthropic = builtinProviders().find((candidate) => candidate.id === "anthropic");
     return {
@@ -400,14 +325,12 @@ export async function registerBedrockSsoRecovery(
                           createAssistantMessageEventStream,
                           recover,
                           notify,
-                          { mode: options.mode ?? true, ask },
                       ),
                       streamSimple: withSsoRecovery(
                           anthropic.streamSimple,
                           createAssistantMessageEventStream,
                           recover,
                           notify,
-                          { mode: options.mode ?? true, ask },
                       ),
                   },
               }

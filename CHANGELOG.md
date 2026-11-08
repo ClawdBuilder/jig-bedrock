@@ -2,18 +2,12 @@
 
 ## [0.2.1] - 2026-11-08
 
-### Changed
-
-- A start-up SSO check now asks before opening the browser: `signInAtStart` defaults to `"ask"`. Yes uses the same shared
-  sign-in as before; no or Esc leaves it to `/aws-login`. `true` keeps the old immediate sign-in, and `false` leaves it to a
-  failing request or `/aws-login`. The start-up check still runs read-only, and `false` or a no answer shows the Bedrock
-  models notice instead of staying silent.
-- A request that fails on an expired session follows the same choice: `"ask"` asks once, with a second failing request
-  joining the open question; `false` only reports the `/aws-login` hint. `/aws-login` is still an explicit yes.
-
 ### Fixed
 
-- The saved-model warning says "for your profiles", not "for this team".
+- With `signInAtStart: false`, the start-up SSO check still runs read-only. An expired session now shows
+  “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.” instead of staying silent.
+- The saved-model warning says “for your profiles”, not “for this team”; the usage footer says it is not a total across
+  profiles, not a team total.
 
 ## [0.2.0] - 2026-11-08
 

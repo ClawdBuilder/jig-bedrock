@@ -219,9 +219,7 @@ export function createJigBedrock(
                   })
                 : undefined;
         try {
-            const recovered = await registerBedrockSsoRecovery(pi, recovery, authProfile, {
-                mode: config.signInAtStart,
-            });
+            const recovered = await registerBedrockSsoRecovery(pi, recovery, authProfile);
             native = recovered.provider;
             messages = recovered.messages;
             usePiRegistry(native);
@@ -284,11 +282,11 @@ export function createJigBedrock(
             provider();
             return status;
         };
-        // Ask, sign in, or wait when Pi starts and the session has expired, through the recovery the commands and requests share. Not in a child:
+        // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not in a child:
         // the parent does it, and a second window from a child would be one nobody expects.
         if (!child && authProfile !== undefined) {
             registerSignInAtStart(pi, {
-                mode: config.signInAtStart,
+                signInAtStart: config.signInAtStart,
                 profile: authProfile,
                 recover: shareRecovery(recovery),
                 check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
