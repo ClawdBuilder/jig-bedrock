@@ -502,6 +502,8 @@ test("saved default comes from the active Pi home and warns once when unavailabl
     await hooks.get("session_start")!({}, ctx);
     assert.equal(notices.length, 1);
     assert.match(notices[0]!, /Saved Bedrock model is unavailable/);
+    assert.match(notices[0]!, /for your profiles/);
+    assert.doesNotMatch(notices[0]!, /\bteam\b/i);
 });
 
 test("catalog rejects symlinks, loose permissions, duplicate ARNs and future timestamps", async (t) => {
