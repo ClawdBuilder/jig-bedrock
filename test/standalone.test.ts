@@ -651,7 +651,7 @@ test("explicit list reads the named profile and reports an unknown ARN without a
     assert.equal(source.load()?.profiles[0]?.arn, id);
     assert.ok(calls.every((a) => !a.includes("get-resources") && !a.includes("list-inference-profiles")));
     const missing = createAwsDiscovery({ ...explicit, profiles: [id.replace("listed", "missing")] }, runner, file);
-    assert.equal(await missing.refresh(true), "ok");
+    assert.equal(await missing.refresh(true), "unavailable");
     assert.equal(missing.load()?.errors?.[0]?.profile, id.replace("listed", "missing"));
 });
 
@@ -766,7 +766,7 @@ test("an explicit access-denied entry is named, the others still load, and ids a
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2, JSON.stringify(source.load()));
     assert.equal(source.load()?.errors?.[0]?.profile, "denied");
-    assert.equal(source.load()?.errors?.[0]?.message, "permission_denied");
+    assert.equal(source.load()?.errors?.[0]?.message, "denied");
 });
 
 test("in tag mode the bare slug stays with the application profile", async () => {
@@ -790,7 +790,7 @@ test("in tag mode the bare slug stays with the application profile", async () =>
     const dir = mkdtempSync(join(tmpdir(), "jig-bedrock-usage-"));
     try {
         const { available } = discoveredProfiles(catalog, dir);
-        assert.ok(available.some((m) => m.id === "claude-sonnet-5-5"));
+        assert.ok(available.every((m) => m.id.startsWith("claude-sonnet-5-5--")));
         assert.equal(available.length, 2);
     } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -893,7 +893,11 @@ test("jp and au system profiles pass the loose prefix and are decided by the fou
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    const source = createAwsDiscovery(
+        { ...config, team: undefined, mode: "system", regions: ["us-east-1"] },
+        runner,
+        file,
+    );
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2);
 });

@@ -315,8 +315,7 @@ export function discoveredProfiles(
         const preferred = system[0] ?? (rows.length === 1 ? rows[0] : undefined);
         for (const p of orderedApplication(rows)) {
             const r = registryEntry(p.foundation_model_id);
-            const id =
-                p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const id = p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
             const pricing = rates.get(key);
             const fallback =
                 r.cost &&

@@ -4,8 +4,9 @@
 
 ### Added
 
-- Inference-profile discovery has three modes. With no tag settings it lists AWS-defined cross-region Claude profiles
-  (`SYSTEM_DEFINED`) in every configured region; `tagKey`/`tagValue` filters application profiles by any tag, with `team`
+- Inference-profile discovery has three modes. With no tag settings it lists **every** AWS-defined cross-region Claude
+  profile (`SYSTEM_DEFINED`) in your regions, including `global.` profiles, whose cost and data residency differ. A user
+  who was "disabled" before now gets models. Narrow it with `profiles` or a tag; `tagKey`/`tagValue` filters application profiles by any tag, with `team`
   still accepted as the value of the `Team` tag; `profiles` reads an explicit list of ARNs or profile ids.
 - `activeTagKey`/`activeTagValue` are optional. Existing `team` settings still require `Active=true`, so they see no change.
 - Each mode has its own IAM requirements and the README has the table.

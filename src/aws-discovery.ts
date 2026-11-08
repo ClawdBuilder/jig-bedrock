@@ -81,15 +81,14 @@ export function createAwsDiscovery(
     now = Date.now,
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
-        invalidAccount = false,
-        last: Catalog | undefined;
+        invalidAccount = false;
     const mode =
         config.mode ??
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
     const activeKey = config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
     const activeValue = config.activeTagValue ?? "true";
     const scope = { ...config, mode, team: config.team };
-    const load = () => (invalidAccount ? undefined : (last ?? readCatalog(file, scope, now())));
+    const load = () => (invalidAccount ? undefined : readCatalog(file, scope, now()));
     const perform = async (force = false): Promise<Status> => {
         let remaining = 8 * 1_048_576,
             pages = 0,
@@ -143,8 +142,7 @@ export function createAwsDiscovery(
                     } else if (resource.startsWith("inference-profile/") && depth < 2) {
                         if (match[3] && match[3] !== account && match[3] !== "aws") throw new Error("model scope");
                         ids.add(await foundation(await info(row.modelArn, match[2]), depth + 1));
-                    }
-                    else throw new Error("model scope");
+                    } else throw new Error("model scope");
                 }
                 if (ids.size !== 1) throw new Error("ambiguous model");
                 return [...ids][0] as string;
@@ -272,13 +270,12 @@ export function createAwsDiscovery(
                         for (const row of rows) {
                             const arn = row?.inferenceProfileArn;
                             if (typeof arn !== "string") throw new Error("profile scope");
-                            if (
-                                !/(?:^|\/)(?:us|eu|apac|global)?\.?anthropic\.claude/i.test(
-                                    `${arn} ${row.inferenceProfileName ?? ""}`,
-                                )
-                            )
-                                continue;
-                            await add(arn, region, "system");
+                            if (!/anthropic\.claude/i.test(`${arn} ${row.inferenceProfileName ?? ""}`)) continue;
+                            try {
+                                await add(arn, region, "system");
+                            } catch (error) {
+                                explicitErrors.push({ profile: arn, message: entryMessage(error) });
+                            }
                         }
                         token = result.nextToken ?? "";
                         if (!token) break;
@@ -291,8 +288,7 @@ export function createAwsDiscovery(
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
             const failed = mode === "explicit" && profiles.length === 0 && explicitErrors.length > 0;
             if (mode === "tag" && profiles.length === 0) {
-                const active =
-                    activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
+                const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
                 warnings.push(
                     `No application inference profiles matched ${config.tagKey ?? "Team"}=${config.tagValue}${active} in ${config.regions.join(", ")}. Check bedrock.tagKey/tagValue.`,
                 );
@@ -313,7 +309,6 @@ export function createAwsDiscovery(
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             };
             atomicCache(file, catalog);
-            last = catalog;
             invalidAccount = false;
             return failed ? "unavailable" : "ok";
         } catch (e) {
