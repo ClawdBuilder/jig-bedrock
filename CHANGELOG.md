@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0] - 2026-11-08
+
+### Added
+
+- Inference-profile discovery has three modes. With no tag settings it lists **every** AWS-defined cross-region Claude
+  profile (`SYSTEM_DEFINED`) in your regions, including `global.` profiles, whose cost and data residency differ. A user
+  who was "disabled" before now gets models. Narrow it with `profiles` or a tag; `tagKey`/`tagValue` filters application profiles by any tag, with `team`
+  still accepted as the value of the `Team` tag; `profiles` reads an explicit list of ARNs or profile ids.
+- `activeTagKey`/`activeTagValue` are optional. Existing `team` settings still require `Active=true`, so they see no change.
+- Each mode has its own IAM requirements and the README has the table.
+- Model ids stay the slug of the model name; when a system and an application profile resolve to the same model, the
+  system profile keeps the bare id and the application profile gets the region/profile suffix.
+
+### Changed
+
+- A 0.1.2 catalog is reused once after the upgrade when team, profile and regions match; changing tag settings in the same
+  step takes effect on `/bedrock-refresh`.
+- `team` is no longer required. The default is now system-defined profiles, so a missing `team` no longer disables the
+  provider.
+- System-defined profiles use the Converse route because their ids are not application inference-profile ARNs.
+
 All notable changes to `jig-bedrock` are recorded here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.2] - 2026-11-08

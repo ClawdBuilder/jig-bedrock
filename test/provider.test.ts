@@ -119,5 +119,20 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
     assert.notEqual(controller!.models[0]!.arn, selected.arn);
     assert.equal(hooks.get("input")![0]!({}, ctx).action, "handled");
     assert.ok(notices.some((n) => n.includes("Choose /model")));
+    cache.errors = [{ profile: "arn:bad", message: "denied" }];
+    await controller!.refresh();
+    assert.ok(
+        notices.some((n) => n.includes("arn:bad: denied")),
+        notices.at(-1),
+    );
+    cache.errors = [];
+    cache.warnings = [
+        "No application inference profiles matched CostCenter=42 in us-east-1. Check bedrock.tagKey/tagValue.",
+    ];
+    await controller!.refresh();
+    assert.ok(
+        notices.some((n) => n.includes("CostCenter=42")),
+        notices.at(-1),
+    );
     for (const fn of hooks.get("session_shutdown") || []) await fn({}, ctx);
 });

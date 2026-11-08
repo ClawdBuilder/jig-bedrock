@@ -1,4 +1,4 @@
-// The Bedrock model provider: the team's application inference profiles as Pi models, AWS SSO recovery, a monthly spend figure and
+// The Bedrock model provider: your inference profiles as Pi models, AWS SSO recovery, a monthly spend figure and
 // the commands around them. Its settings are the `bedrock` section when Jig is present, or the extension's own settings (see config.ts); it also
 // publishes the optional display events in events.ts.
 //
@@ -150,10 +150,7 @@ export function createJigBedrock(
         }
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
-            const where =
-                options.api === undefined
-                    ? `Add "team" to ${file}, then /reload.`
-                    : `Set it in bedrock in jig.json or in ${file}, then /reload.`;
+            const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;
             pi.on("session_start", (_event, ctx) =>
                 ctx.ui.notify(`Bedrock provider disabled: ${resolved.error} ${where}`, "warning"),
             );
@@ -258,11 +255,17 @@ export function createJigBedrock(
                 }
             }
             const change = updateModels(models, updated);
-            if (ctx && (change.added || change.removed)) {
-                ctx.ui.notify(
-                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed. Choose /model if your selection was removed.`,
-                    "info",
-                );
+            const current = catalog.load();
+            const problems = current?.errors ?? [];
+            const warnings = current?.warnings ?? [];
+            if (ctx && (change.added || change.removed || problems.length > 0 || warnings.length > 0)) {
+                const detail = [
+                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
+                    ...warnings,
+                    ...problems.map((problem) => `${problem.profile}: ${problem.message}.`),
+                    "Choose /model if your selection was removed.",
+                ].join(" ");
+                ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
             }
             if (change.changed && native) {
                 await registerTeamBedrock(
@@ -290,7 +293,7 @@ export function createJigBedrock(
             });
         }
         pi.registerCommand("bedrock-refresh", {
-            description: "Refresh team Bedrock models",
+            description: "Refresh your Bedrock models",
             handler: async (_args, context) => {
                 const status = await refresh();
                 context.ui.notify(

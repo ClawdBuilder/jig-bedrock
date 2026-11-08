@@ -69,7 +69,7 @@ describe("bedrock.browser", () => {
 describe("the section's messages", () => {
     test("name keys of the bedrock section, none of the old jig.bedrock", () => {
         const messages = validateBedrock({ profile: "bad profile", regions: [], monthlyBudgetUsd: 0, typo: 1 });
-        assert.ok(messages.length >= 5, messages.join("\n"));
+        assert.ok(messages.length >= 4, messages.join("\n"));
         for (const message of messages) {
             assert.match(message, /^bedrock\./);
             assert.doesNotMatch(message, /jig\.bedrock/);
@@ -79,7 +79,7 @@ describe("the section's messages", () => {
     });
 
     test("a missing team says to set bedrock.team, and a wrong field in the file says where to look", () => {
-        assert.match(loadConfig({ raw: undefined, env: {} }).error ?? "", /^Set bedrock\.team in the bedrock settings/);
+        assert.equal(loadConfig({ raw: undefined, env: {} }).config?.mode, "system");
         assert.match(
             loadConfig({ raw: { team: "t", typo: 1 }, env: {} }).error ?? "",
             /^Unknown field in bedrock in jig\.json/,
@@ -99,7 +99,7 @@ describe("the environment", () => {
         const config = loadConfig({ raw, env }).config;
         assert.equal(config?.team, "From The Environment");
         assert.equal(config?.profile, "env-profile");
-        assert.deepEqual(config?.regions, ["eu-west-1", "us-west-2"]);
+        assert.deepEqual(config?.regions, ["us-west-2", "eu-west-1"]);
         assert.equal(config?.usageDir, "/env/usage");
         assert.equal(loadConfig({ raw: undefined, env }).config?.team, "From The Environment");
     });
