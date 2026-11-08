@@ -390,7 +390,7 @@ test("usage program parse and scoped cache throttle refresh and preserve last go
             { ...config, monthlyBudgetUsd: 100 },
             async (_program, args) => {
                 calls++;
-                assert.equal(args.at(-1), config.profile);
+                assert.deepEqual(args, ["--monthly", "--output", "json"]);
                 if (fail) throw new Error("secret");
                 return report;
             },

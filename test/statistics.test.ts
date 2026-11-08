@@ -100,7 +100,7 @@ test("a real usage program executable receives closed argv and explicit regions;
     const snapshot = await source.refresh("daily", { force: true });
     assert.equal(snapshot.report.totals.requests, 2);
     assert.deepEqual(JSON.parse(readFileSync(marker, "utf8")), {
-        args: ["usage", "--daily", "--output", "json", "--aws-profile", config.profile],
+        args: ["--daily", "--output", "json"],
         regions: "us-east-1,us-west-2",
         profile: config.profile,
         skipUpdate: "1",

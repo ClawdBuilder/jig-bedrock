@@ -154,7 +154,16 @@ mode bits), and the no-browser fallback is the WSL-only `bin/windows-browser` sh
 | `/bedrock-doctor`         | Probe Node, AWS CLI, bash, jq and the optional usage program; it does not call AWS |
 
 The footer and `/bedrock-usage` read an executable named `usage` in `usageDir`; it is called with `--daily`,
-`--weekly` or `--monthly` and `--output json`, and prints the spend as JSON.
+`--weekly` or `--monthly` and `--output json`, and prints the spend as JSON. It receives `AWS_PROFILE` and
+`BEDROCK_REGIONS` in its environment.
+
+If your usage CLI's own command is `usage-cli`, put this two-line wrapper at
+`~/.local/share/usage-tool/usage` and make it executable:
+
+```sh
+#!/bin/sh
+exec usage-cli usage "$@"
+```
 
 ## Tests
 
