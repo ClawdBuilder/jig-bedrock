@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1] - 2026-11-08
+
+### Changed
+
+- A start-up SSO check now asks before opening the browser: `signInAtStart` defaults to `"ask"`. Yes uses the same shared
+  sign-in as before; no or Esc leaves it to `/aws-login`. `true` keeps the old immediate sign-in, and `false` leaves it to a
+  failing request or `/aws-login`.
+- A request that fails on an expired session follows the same choice: `"ask"` asks once, with a second failing request
+  joining the open question; `false` only reports the `/aws-login` hint. `/aws-login` is still an explicit yes.
+
+### Fixed
+
+- The saved-model warning says "for your profiles", not "for this team".
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

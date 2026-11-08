@@ -11,18 +11,19 @@ const MESSAGE =
     "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)";
 
 describe("bedrock.signInAtStart", () => {
-    test("is on unless the file turns it off", () => {
-        assert.equal(DEFAULTS.signInAtStart, true);
-        assert.equal(loadConfig({ raw: { team: "t" }, env: {} }).config?.signInAtStart, true);
-        assert.equal(loadConfig({ raw: { team: "t", signInAtStart: false }, env: {} }).config?.signInAtStart, false);
-        assert.equal(loadConfig({ raw: { team: "t", signInAtStart: true }, env: {} }).config?.signInAtStart, true);
+    test("asks by default, and accepts true, false and ask", () => {
+        assert.equal(DEFAULTS.signInAtStart, "ask");
+        for (const value of [undefined, "ask", true, false]) {
+            const raw = value === undefined ? { team: "t" } : { team: "t", signInAtStart: value };
+            assert.equal(loadConfig({ raw, env: {} }).config?.signInAtStart, value === undefined ? "ask" : value);
+        }
+        assert.deepEqual(validateBedrock({ team: "t", signInAtStart: "ask" }), []);
     });
 
-    test("is true or false, and a mistake names the key and not the value", () => {
-        assert.deepEqual(validateBedrock({ team: "t", signInAtStart: false }), []);
+    test("rejects anything else, and a mistake names the key and not the value", () => {
         for (const value of ["private-canary", 1, null, []]) {
             const messages = validateBedrock({ team: "t", signInAtStart: value });
-            assert.deepEqual(messages, ["bedrock.signInAtStart must be true or false"]);
+            assert.deepEqual(messages, ['bedrock.signInAtStart must be true, false or "ask"']);
             assert.equal(loadConfig({ raw: { team: "t", signInAtStart: value }, env: {} }).config, undefined);
         }
     });

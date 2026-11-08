@@ -7,7 +7,7 @@
 //   usageDir             a folder holding an executable named usage that prints the usage JSON (optional; default ~/.local/share/usage-tool)
 //   monthlyBudgetUsd   a figure to show in the footer next to the month's spend; not an AWS limit (optional)
 //   ssoLoginCommand    the argv of the login, with {profile} for the profile (default aws sso login --profile {profile})
-//   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default true)
+//   signInAtStart      ask before a start-up sign-in, sign in at once, or leave it to the first failed request (default ask)
 //   browser            the program that opens the sign-in address, as BROWSER for the login (optional; under WSL the Windows browser)
 //   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
 //
@@ -17,6 +17,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Check } from "./check.ts";
 import { isObject, knownKeys } from "./check.ts";
+
+/** What a start-up sign-in does: ask, sign in, or wait for a request or /aws-login. */
+export type SignInAtStart = boolean | "ask";
 
 export interface ResolvedConfig {
     team?: string;
@@ -33,7 +36,7 @@ export interface ResolvedConfig {
     usageDir: string;
     monthlyBudgetUsd?: number;
     ssoLoginCommand: string[];
-    signInAtStart: boolean;
+    signInAtStart: SignInAtStart;
     browser?: string;
     /** Set by loadConfig; a hand-written fixture may leave it out, and the provider then uses messages. */
     api?: BedrockApi;
@@ -72,7 +75,7 @@ export const DEFAULTS = {
     regions: ["us-east-1"],
     usageDir: "~/.local/share/usage-tool",
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
-    signInAtStart: true,
+    signInAtStart: "ask" as SignInAtStart,
     api: "messages" as BedrockApi,
 };
 
@@ -172,7 +175,9 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     ) {
         problems.push("bedrock.ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
     }
-    if (typeof signInAtStart !== "boolean") problems.push("bedrock.signInAtStart must be true or false");
+    if (signInAtStart !== true && signInAtStart !== false && signInAtStart !== "ask") {
+        problems.push('bedrock.signInAtStart must be true, false or "ask"');
+    }
     if (browser !== undefined && (typeof browser !== "string" || !browserPattern.test(browser))) {
         problems.push(
             "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)",

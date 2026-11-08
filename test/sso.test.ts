@@ -299,3 +299,116 @@ test("SSO notices go to the TUI, or to stderr where there is no notice area", ()
     assert.equal(written.length, 4);
     assert.ok(written.every((line) => line === "jig-bedrock: Restoring AWS SSO (p)\n"));
 });
+
+test('"ask" with yes opens the shared recovery once', async () => {
+    let calls = 0,
+        logins = 0,
+        asks = 0;
+    const wrapped = withSsoRecovery(
+        () => {
+            calls++;
+            return events(calls === 1 ? failed() : done());
+        },
+        make,
+        async () => {
+            logins++;
+        },
+        () => {},
+        {
+            mode: "ask",
+            ask: async () => {
+                asks++;
+                return true;
+            },
+        },
+    );
+    const out = await collect(wrapped(model, context, options));
+    assert.equal(asks, 1);
+    assert.equal(logins, 1);
+    assert.equal(calls, 2);
+    assert.equal(out.at(-1)?.type, "done");
+});
+
+test('"ask" with no opens nothing and reports the sign-in hint', async () => {
+    let calls = 0,
+        logins = 0,
+        asks = 0;
+    const wrapped = withSsoRecovery(
+        () => {
+            calls++;
+            return events(failed());
+        },
+        make,
+        async () => {
+            logins++;
+        },
+        () => {},
+        {
+            mode: "ask",
+            ask: async () => {
+                asks++;
+                return false;
+            },
+        },
+    );
+    const out = await collect(wrapped(model, context, options));
+    assert.equal(asks, 1);
+    assert.equal(logins, 0);
+    assert.equal(calls, 1);
+    assert.match(out.at(-1)?.error?.errorMessage, /Run \/aws-login when you're ready\./);
+});
+
+test("two failing requests while the question is open ask once and recover once", async () => {
+    let asks = 0,
+        logins = 0;
+    let answer!: (yes: boolean) => void;
+    const question = new Promise<boolean>((resolve) => {
+        answer = resolve;
+    });
+    const wrapped = withSsoRecovery(
+        () => events(failed()),
+        make,
+        async () => {
+            logins++;
+        },
+        () => {},
+        {
+            mode: "ask",
+            ask: () => {
+                asks++;
+                return question;
+            },
+        },
+    );
+    const first = collect(wrapped(model, context, options));
+    const second = collect(wrapped(model, context, options));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(asks, 1);
+    answer(false);
+    const results = await Promise.all([first, second]);
+    assert.equal(logins, 0);
+    for (const out of results) assert.match(out.at(-1)?.error?.errorMessage, /Run \/aws-login/);
+});
+
+test('"false" reports the hint without asking or recovering', async () => {
+    let calls = 0,
+        asks = 0,
+        logins = 0;
+    const wrapped = withSsoRecovery(
+        () => {
+            calls++;
+            return events(failed());
+        },
+        make,
+        async () => {
+            logins++;
+        },
+        () => {},
+        { mode: false, ask: async () => (asks++, true) },
+    );
+    const out = await collect(wrapped(model, context, options));
+    assert.equal(asks, 0);
+    assert.equal(logins, 0);
+    assert.equal(calls, 1);
+    assert.match(out.at(-1)?.error?.errorMessage, /Run \/aws-login/);
+});

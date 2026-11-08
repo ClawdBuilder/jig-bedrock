@@ -2,11 +2,14 @@
 // checked (sso-check.ts); when it has expired the shared recovery starts at once, which is the one that /aws-login and a failed
 // request use, so there is one browser window however many of them need it. Nothing here waits: session start returns first.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { SignInAtStart } from "./config.ts";
 import type { Recover } from "./sso.ts";
 import { recoveryHint, SsoRecoveryError } from "./sso.ts";
 import type { SsoState } from "./sso-check.ts";
 
 export interface StartSignIn {
+    /** What an expired session does: ask, sign in now, or leave it for a request or /aws-login. */
+    mode?: SignInAtStart;
     /** The AWS profile the provider signs in with. */
     profile: string;
     /** The shared recovery (`shareRecovery`), the one /aws-login and a request go through. */
@@ -28,6 +31,21 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         if (signal.aborted) return;
         const state = await start.check(start.profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
+        const mode = start.mode ?? true;
+        if (mode === false) return;
+        if (mode === "ask") {
+            let yes = false;
+            try {
+                yes = await ctx.ui.confirm("AWS sign-in", `AWS sign-in for ${start.profile} has expired. Sign in now?`);
+            } catch {
+                yes = false;
+            }
+            if (signal.aborted) return;
+            if (!yes) {
+                ctx.ui.notify("Run /aws-login when you're ready.", "info");
+                return;
+            }
+        }
         ctx.ui.notify(`AWS sign-in for ${start.profile} has expired; signing in, your browser opens.`, "info");
         try {
             await start.recover(start.profile, signal, "warmup");

@@ -27,7 +27,7 @@ export function usePiRegistry(native: import("@earendil-works/pi-ai").Provider):
     );
 }
 
-// Pi 1.2 widened ProviderModelConfig to chat, image and classifier models; team profiles are chat models.
+// Pi 1.2 widened ProviderModelConfig to chat, image and classifier models; inference profiles are chat models.
 type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
 export type TeamBedrockModel = ChatModelConfig & {
     api: "anthropic-messages" | "bedrock-converse-stream";
@@ -40,7 +40,7 @@ export type TeamBedrockModel = ChatModelConfig & {
 
 /**
  * What Pi's Anthropic Messages client is told about Bedrock's route, from Pi's own `getAnthropicCompat` names. The probe on the
- * team account showed native tool changes (the inline-tools beta and the deferred placeholder) working, so those stay on; long
+ * test account showed native tool changes (the inline-tools beta and the deferred placeholder) working, so those stay on; long
  * cache retention and strict tool schemas are off because the route has not shown them, and the rest is the Anthropic API's
  * default, which the route mirrors. See the report for what was not tested.
  */
@@ -393,7 +393,7 @@ export function updateModels(
 }
 export function resolveSelection(models: readonly TeamBedrockModel[], selection: string): TeamBedrockModel | undefined {
     const id = selection.replace(/^(?:amazon-bedrock|jig-bedrock)\//, "");
-    // A session saved under Pi's built-in provider names the team profile by its ARN.
+    // A session saved under Pi's built-in provider names the configured profile by its ARN.
     const matches = models.filter((m) => m.id === id || m.arn === id || m.aliases.includes(id));
     return matches.length === 1 ? matches[0] : undefined;
 }
@@ -537,7 +537,7 @@ export function registerBedrockSelectionGuard(
 ): { blockUntilChoice(): void } {
     let unresolvedSavedSelection = false;
     const warning =
-        "Saved Bedrock model is unavailable or ambiguous for this team; choose a model with /model before sending a request.";
+        "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const unsupported = (ctx: ExtensionContext) =>
         unresolvedSavedSelection ||
         (isJigBedrock(ctx.model) &&

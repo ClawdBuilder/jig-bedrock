@@ -274,7 +274,7 @@ test("slash commands validate closed arguments and display separate local and us
     assert.match(text, /Current Pi branch/);
     assert.match(text, /Pi estimated cost: \$0.2000/);
     assert.match(text, /usage program user estimate/);
-    assert.match(text, /not a team total/);
+    assert.match(text, /not a total across profiles/);
     assert.match(text, /Cache read 4/);
     assert.doesNotMatch(text, /never-copy/);
     const originalPath = process.env.PATH;
