@@ -3,43 +3,12 @@
 A Pi provider for Claude on AWS Bedrock. It discovers the application inference profiles your account can use, sends
 Claude through Bedrock's Anthropic Messages route where possible, and falls back to Converse per model.
 
-## How it works
+## The gap it fills
 
-`jig-bedrock` reads the `bedrock` settings once at Pi start. Discovery and requests happen later: on the first request,
-when Pi starts an SSO check, or when you run a command.
-
-### Discovery
-
-Discovery runs the AWS CLI with the configured `profile` and `regions`:
-
-- `aws sts get-caller-identity` learns the 12-digit account.
-- `aws resourcegroupstaggingapi get-resources --resource-type-filters bedrock:application-inference-profile` asks for the
-  profiles in each region. `--tag-filters` keeps the profile's `Team` tag (or `tagKey`) and its `Active=true` tag (or
-  `activeTagKey`/`activeTagValue`).
-- `aws bedrock get-inference-profile --inference-profile-identifier <arn>` reads each profile's name, status and model.
-
-Only `ACTIVE` profiles are listed. Their foundation model is read from the profile's model ARN; the provider does not call
-`GetFoundationModel`. A successful catalog is cached for **24 hours** in `~/.cache/jig-bedrock/catalog.json`, with private
-permissions and an atomic rename. A changed account or settings discards it; `/bedrock-refresh` forces a new run.
-
-### Routes
-
-There are two routes to the same Claude models:
-
-- **Messages.** Pi's Anthropic Messages client calls
-  `https://bedrock-runtime.<region>.amazonaws.com/anthropic/v1/messages`. `bedrock-fetch.ts` removes the client's API-key
-  headers and signs each request with SigV4 (`sigv4.ts`). The signature uses the credentials the AWS SDK resolves for the
-  configured profile.
-- **Converse.** Pi's Bedrock provider uses the AWS SDK's `ConverseStream` operation at the bedrock-runtime endpoint.
-
-A profile is put on Messages only when `api` is `messages` (the default) and its foundation model is an Anthropic model.
-Every other model uses Converse. `api: "converse"` puts every model on Converse. Both routes stream. On Messages the tools array stays
-stable, so the prompt cache survives a tool change; on Converse a changed tool list rewrites it. The footer and usage
-figures are the same.
-
-A child agent (a Pi session with `PI_SUBAGENT_ID`, or the older `PI_SUBAGENT_CHILD=1`) skips the catalog refresh, the
-usage program and its events, and the sign-in at start. The parent does those; the child still sends requests and reads
-the parent's cached catalog.
+Pi's built-in Bedrock provider uses Converse only, has a fixed model list, and has no profile discovery, SSO repair or
+budget footer. This package adds the Messages route with SigV4, discovery by an AWS tag, repair through `aws sso login`,
+and an optional spend line. It works in plain Pi; when [Jig](https://github.com/ClawdBuilder/jig) is installed it also
+uses Jig's records and footer, but Jig is not required.
 
 ## Install
 
@@ -86,6 +55,44 @@ Environment: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_PROFILE`, `JIG_BEDROCK_REGIONS`, `
 `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`. `PI_HOST_DIR` points at the Pi install when it is not beside `node`.
 `PI_CACHE_RETENTION` sets Pi's own cache retention; the provider does not change it.
 
+## How it works
+
+`jig-bedrock` reads the `bedrock` settings once at Pi start. Discovery and requests happen later: on the first request,
+when Pi starts an SSO check, or when you run a command.
+
+### Discovery
+
+Discovery runs the AWS CLI with the configured `profile` and `regions`:
+
+- `aws sts get-caller-identity` learns the 12-digit account.
+- `aws resourcegroupstaggingapi get-resources --resource-type-filters bedrock:application-inference-profile` asks for the
+  profiles in each region. `--tag-filters` keeps the profile's `Team` tag (or `tagKey`) and its `Active=true` tag (or
+  `activeTagKey`/`activeTagValue`).
+- `aws bedrock get-inference-profile --inference-profile-identifier <arn>` reads each profile's name, status and model.
+
+Only `ACTIVE` profiles are listed. Their foundation model is read from the profile's model ARN; the provider does not call
+`GetFoundationModel`. A successful catalog is cached for **24 hours** in `~/.cache/jig-bedrock/catalog.json`, with private
+permissions and an atomic rename. A changed account or settings discards it; `/bedrock-refresh` forces a new run.
+
+### Routes
+
+There are two routes to the same Claude models:
+
+- **Messages.** Pi's Anthropic Messages client calls
+  `https://bedrock-runtime.<region>.amazonaws.com/anthropic/v1/messages`. `bedrock-fetch.ts` removes the client's API-key
+  headers and signs each request with SigV4 (`sigv4.ts`). The signature uses the credentials the AWS SDK resolves for the
+  configured profile.
+- **Converse.** Pi's Bedrock provider uses the AWS SDK's `ConverseStream` operation at the bedrock-runtime endpoint.
+
+A profile is put on Messages only when `api` is `messages` (the default) and its foundation model is an Anthropic model.
+Every other model uses Converse. `api: "converse"` puts every model on Converse. Both routes stream. On Messages the tools array stays
+stable, so the prompt cache survives a tool change; on Converse a changed tool list rewrites it. The footer and usage
+figures are the same.
+
+A child agent (a Pi session with `PI_SUBAGENT_ID`, or the older `PI_SUBAGENT_CHILD=1`) skips the catalog refresh, the
+usage program and its events, and the sign-in at start. The parent does those; the child still sends requests and reads
+the parent's cached catalog.
+
 ## Credentials
 
 Requests use the AWS SDK's default credential chain, loaded from Pi's install (`pi-host.ts` loads
@@ -116,11 +123,17 @@ The profile used for discovery needs these actions:
 - `tag:GetResources` for the tagged inference profiles;
 - `bedrock:GetInferenceProfile` for each profile.
 
-The request route needs:
+The provider always streams: Messages uses Bedrock's Anthropic Messages route, and Converse uses the SDK's
+`ConverseStream` operation. The request therefore needs:
 
-- `bedrock:InvokeModelWithResponseStream` for the Messages route (and `bedrock:InvokeModel` if a non-streaming call is
-  made);
-- `bedrock:Converse` and `bedrock:ConverseStream` for Converse.
+- `bedrock:InvokeModelWithResponseStream` for both routes. The SDK's `ConverseStream` is authorized by this action, not by
+  an action named after Converse.
+
+`bedrock:InvokeModel` is not needed: this provider has no non-streaming call. If a future call adds one, it needs that
+action too.
+
+For an application inference profile, the policy must allow the action on the profile's ARN **and** on every foundation
+model ARN the profile routes to.
 
 No `List` or `GetFoundationModel` permission is needed: the code gets the foundation model from the profile's ARN.
 
