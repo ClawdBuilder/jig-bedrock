@@ -173,7 +173,7 @@ test("discovery bounds bytes, pagination and deadline and never publishes raw fa
     assert.ok(calls <= 3);
 });
 test("config precedence and invalid or missing teams fail closed without throwing", () => {
-    assert.equal(resolveConfig(undefined), undefined);
+    assert.equal(resolveConfig(undefined)?.mode, "system");
     const section = { team: "file-team", profile: "file-profile", regions: ["us-west-2"], monthlyBudgetUsd: 25 };
     const c = resolveConfig(section, {
         JIG_BEDROCK_TEAM: "env-team",
@@ -202,7 +202,7 @@ test("config precedence and invalid or missing teams fail closed without throwin
         "Platform / Core, Europe",
     );
     assert.equal(resolveConfig({ team: "fixture", ssoLoginCommand: ["aws", "{token}"] }), undefined);
-    assert.match(loadConfig({ raw: undefined, env: {} }).error!, /Set bedrock\.team in the bedrock settings/);
+    assert.equal(loadConfig({ raw: undefined, env: {} }).config?.mode, "system");
 });
 test("configuration diagnostics identify invalid fields without exposing their contents", () => {
     for (const [value, expected] of [
@@ -235,7 +235,7 @@ test("the bedrock section is checked when jig.json is read: each problem names i
         }),
         [],
     );
-    assert.match(errors({}).join("\n"), /bedrock\.team must be your exact AWS tag value/);
+    assert.deepEqual(errors({}), []);
     assert.match(errors({ team: "t", typo: "private-canary" }).join("\n"), /bedrock\.typo is not a known field/);
     assert.match(
         errors({ team: "t", profile: "bad profile" }).join("\n"),
@@ -314,44 +314,11 @@ test("team tag punctuation is passed as one JSON argv value", async (t) => {
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.team, team);
 });
-test("missing team emits one notice without AWS, usage program or provider registration", async (t) => {
-    const dir = directory(t);
-    const hooks = new Map<string, Hook[]>(),
-        notices: string[] = [];
-    await createJigBedrock({ env: { PI_CODING_AGENT_DIR: dir }, selection: { agentDir: dir } })({
-        on: (name: string, fn: Hook) => hooks.set(name, [...(hooks.get(name) || []), fn]),
-        registerProvider: () => assert.fail("provider"),
-        setModel: () => false,
-    } as any);
-    const ctx = { sessionManager: { getBranch: () => [] }, ui: { notify: (s: string) => notices.push(s) } };
-    for (const fn of hooks.get("session_start") || []) await fn({}, ctx);
-    assert.equal(notices.length, 1);
-    const file = join(dir, "bedrock.json");
-    assert.ok(notices[0]!.includes(`Add "team" to ${file}, then /reload.`), notices[0]);
-    assert.doesNotMatch(notices[0]!, /jig\.json/);
+test("no team is the system-defined mode, not a disabled provider", () => {
+    const config = resolveConfig(undefined)!;
+    assert.equal(config.mode, "system");
+    assert.equal(config.team, undefined);
 });
-test("with Jig, the missing settings notice names jig.json and bedrock.json", async (t) => {
-    const dir = directory(t);
-    const hooks = new Map<string, Hook[]>(),
-        notices: string[] = [];
-    const api = {
-        config: {
-            registerSection() {},
-            section: () => undefined,
-        },
-    } as any;
-    await createJigBedrock({ api, env: { PI_CODING_AGENT_DIR: dir }, selection: { agentDir: dir } })({
-        on: (name: string, fn: Hook) => hooks.set(name, [...(hooks.get(name) || []), fn]),
-        registerProvider: () => assert.fail("provider"),
-        setModel: () => false,
-    } as any);
-    const ctx = { sessionManager: { getBranch: () => [] }, ui: { notify: (s: string) => notices.push(s) } };
-    for (const fn of hooks.get("session_start") || []) await fn({}, ctx);
-    assert.equal(notices.length, 1);
-    assert.ok(notices[0]!.includes("bedrock in jig.json"), notices[0]);
-    assert.ok(notices[0]!.includes(`in ${join(dir, "bedrock.json")}`), notices[0]);
-});
-
 test("usage program parse and scoped cache throttle refresh and preserve last good spend", async (t) => {
     let now = Date.now(),
         calls = 0,
@@ -615,4 +582,73 @@ test("parallel failed SSO login does not report successful recovery", async (t) 
     const outcomes = await Promise.allSettled([recover(config.profile), recover(config.profile)]);
     assert.ok(outcomes.every((r) => r.status === "rejected"));
     assert.doesNotMatch(JSON.stringify(outcomes), /secret-device-code/);
+});
+
+test("system mode lists system-defined Claude profiles, paginates and drops non-Anthropic", async (t) => {
+    const calls: string[][] = [];
+    let token = "";
+    const runner: Runner = async (_program, args) => {
+        calls.push(args);
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        const region = args[args.indexOf("--region") + 1];
+        if (args.includes("list-inference-profiles")) {
+            assert.equal(args[args.indexOf("--type-equals") + 1], "SYSTEM_DEFINED");
+            if (token === "next") return JSON.stringify({ inferenceProfileSummaries: [] });
+            token = "next";
+            return JSON.stringify({
+                inferenceProfileSummaries: [
+                    {
+                        inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-4-5`,
+                        inferenceProfileName: "Claude Sonnet 4.5",
+                    },
+                    {
+                        inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.amazon.nova-pro`,
+                        inferenceProfileName: "Nova Pro",
+                    },
+                ],
+                nextToken: "next",
+            });
+        }
+        return JSON.stringify({
+            status: "ACTIVE",
+            inferenceProfileName: "Claude Sonnet 4.5",
+            inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-4-5`,
+            models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5" }],
+        });
+    };
+    const file = join(directory(t), "catalog.json");
+    const system = { ...config, team: undefined, mode: "system" as const };
+    const source = createAwsDiscovery(system, runner, file);
+    assert.equal(await source.refresh(), "ok");
+    assert.equal(source.load()?.profiles.length, 1);
+    assert.equal(source.load()?.profiles[0]?.kind, "system");
+    assert.ok(calls.filter((a) => a.includes("list-inference-profiles")).length >= 2);
+    assert.equal(createAwsDiscovery({ ...system, mode: "tag", team: "fixture-team" }, runner, file).load(), undefined);
+});
+
+test("explicit list reads the named profile and reports an unknown ARN without a tag search", async (t) => {
+    const calls: string[][] = [];
+    const id = `arn:aws:bedrock:us-east-1:${account}:application-inference-profile/listed`;
+    const runner: Runner = async (_program, args) => {
+        calls.push(args);
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        if (args.includes("get-inference-profile")) {
+            if (!args.includes(id)) throw new Error("An error occurred (ResourceNotFound)");
+            return JSON.stringify({
+                status: "ACTIVE",
+                inferenceProfileArn: id,
+                inferenceProfileName: "Listed",
+                models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-5" }],
+            });
+        }
+        throw new Error("unexpected");
+    };
+    const file = join(directory(t), "catalog.json");
+    const explicit = { ...config, team: undefined, mode: "explicit" as const, profiles: [id] };
+    const source = createAwsDiscovery(explicit, runner, file);
+    assert.equal(await source.refresh(), "ok");
+    assert.equal(source.load()?.profiles[0]?.arn, id);
+    assert.ok(calls.every((a) => !a.includes("get-resources") && !a.includes("list-inference-profiles")));
+    const missing = createAwsDiscovery({ ...explicit, profiles: [id.replace("listed", "missing")] }, runner, file);
+    assert.equal(await missing.refresh(true), "unavailable");
 });

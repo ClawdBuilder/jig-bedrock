@@ -54,10 +54,17 @@ const MESSAGES_COMPAT = {
     supportsMidConvoSystemMessages: true,
     supportsMidConvoToolChanges: true,
 } as const;
-export type Profile = { arn: string; profile_name: string; foundation_model_id: string; region: string };
+export type Profile = {
+    arn: string;
+    profile_name: string;
+    foundation_model_id: string;
+    region: string;
+    kind?: "application" | "system";
+};
 export type Catalog = {
     schema: 1;
-    team: string;
+    mode?: "explicit" | "tag" | "system";
+    team?: string;
     aws_profile: string;
     account_id: string;
     regions: string[];
@@ -92,27 +99,45 @@ export function boundedRegular(file: string, max: number, privateMode = false): 
         closeSync(fd);
     }
 }
-export function validArn(arn: string, region: string, account: string): boolean {
+export function validArn(
+    arn: string,
+    region: string,
+    account: string,
+    kind: "application" | "system" | "any" = "application",
+): boolean {
     const p = arn.split(":");
+    const app = (p[5] ?? "").startsWith("application-inference-profile/");
+    const system = (p[5] ?? "").startsWith("inference-profile/");
     return (
         p.length === 6 &&
         p[0] === "arn" &&
         ["aws", "aws-cn", "aws-us-gov"].includes(p[1] ?? "") &&
         p[2] === "bedrock" &&
         p[3] === region &&
-        p[4] === account &&
-        /^application-inference-profile\/[A-Za-z0-9-]{1,128}$/.test(p[5] ?? "")
+        (system ? p[4] === "" || p[4] === "aws" || p[4] === account : p[4] === account) &&
+        (kind === "any" ? app || system : kind === "application" ? app : system) &&
+        /^(?:application-inference-profile|inference-profile)\/[A-Za-z0-9.-]{1,256}$/.test(p[5] ?? "")
     );
 }
 export function readCatalog(
     file: string,
-    expected: { team: string; profile: string; regions: string[] },
+    expected: {
+        mode?: "explicit" | "tag" | "system";
+        team?: string;
+        tagKey?: string;
+        tagValue?: string;
+        activeTagKey?: string;
+        activeTagValue?: string;
+        profiles?: string[];
+        profile: string;
+        regions: string[];
+    },
     now = Date.now(),
 ): Catalog | undefined {
     expected = { ...expected, regions: [...expected.regions].sort() };
     const directory = dirname(file);
     if (
-        !label(expected.team, 256) ||
+        (expected.team !== undefined && !label(expected.team, 256)) ||
         !label(expected.profile, 128) ||
         !expected.regions.length ||
         new Set(expected.regions).size !== expected.regions.length
@@ -126,6 +151,7 @@ export function readCatalog(
         const c = JSON.parse(raw) as Catalog;
         if (
             c.schema !== 1 ||
+            c.mode !== expected.mode ||
             c.team !== expected.team ||
             c.aws_profile !== expected.profile ||
             typeof c.account_id !== "string" ||
@@ -151,7 +177,7 @@ export function readCatalog(
                 !label(p.profile_name, 256) ||
                 !label(p.foundation_model_id, 256) ||
                 typeof p.arn !== "string" ||
-                !validArn(p.arn, p.region, c.account_id) ||
+                !validArn(p.arn, p.region, c.account_id, p.kind ?? "application") ||
                 seen.has(p.arn)
             )
                 return;
@@ -228,10 +254,14 @@ export function discoveredProfiles(
         const key = slug(registryName(r.name));
         grouped.set(key, [...(grouped.get(key) || []), p]);
     }
-    for (const [key, rows] of grouped)
-        for (const p of rows) {
+    for (const [key, rows] of grouped) {
+        // System-defined profiles sort first: they need no account tag and keep the bare slug; an application profile
+        // for the same model gets the region/id suffix, so a stable cross-region profile is never displaced by a tag.
+        const ordered = [...rows].sort((a, b) => Number(b.kind === "system") - Number(a.kind === "system"));
+        const preferred = ordered.find((row) => row.kind === "system") ?? ordered[0];
+        for (const p of ordered) {
             const r = registryEntry(p.foundation_model_id);
-            const id = rows.length === 1 ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const id = p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
             const pricing = rates.get(key);
             const fallback =
                 r.cost &&
@@ -250,13 +280,13 @@ export function discoveredProfiles(
             }
             const promptCache = promptCacheFor(p.foundation_model_id);
             // Only Claude profiles go on the Anthropic route; gpt, nova and the rest keep their own route.
-            const messages = api === "messages" && isAnthropicModel(p.foundation_model_id);
+            const messages = api === "messages" && p.kind !== "system" && isAnthropicModel(p.foundation_model_id);
             available.push({
                 id,
                 arn: p.arn,
                 foundationModelId: p.foundation_model_id,
                 aliases: [],
-                name: registryName(r.name) + (rows.length === 1 ? "" : ` (${p.region}, ${p.profile_name})`),
+                name: registryName(r.name) + (p === preferred ? "" : ` (${p.region}, ${p.profile_name})`),
                 api: messages ? "anthropic-messages" : "bedrock-converse-stream",
                 baseUrl: messages
                     ? `https://bedrock-runtime.${p.region}.amazonaws.com/anthropic`
@@ -280,6 +310,7 @@ export function discoveredProfiles(
                 ...(thinkingLevelMap(r.thinkingLevelMap, p.foundation_model_id) ?? {}),
             });
         }
+    }
     return { available, unavailable };
 }
 export function updateModels(

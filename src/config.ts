@@ -19,11 +19,15 @@ import type { Check } from "./check.ts";
 import { isObject, knownKeys } from "./check.ts";
 
 export interface ResolvedConfig {
-    team: string;
+    team?: string;
     tagKey?: string;
     tagValue?: string;
     activeTagKey?: string;
     activeTagValue?: string;
+    /** Explicit inference-profile ARNs or ids; when nonempty, no tag or system search runs. */
+    profiles?: string[];
+    /** Derived: explicit, tag or system. */
+    mode?: "explicit" | "tag" | "system";
     profile: string;
     regions: string[];
     usageDir: string;
@@ -52,6 +56,7 @@ export const FIELDS = [
     "tagValue",
     "activeTagKey",
     "activeTagValue",
+    "profiles",
     "profile",
     "regions",
     "usageDir",
@@ -63,9 +68,6 @@ export const FIELDS = [
 ] as const;
 
 export const DEFAULTS = {
-    tagKey: "Team",
-    activeTagKey: "Active",
-    activeTagValue: "true",
     profile: "my-bedrock-profile",
     regions: ["us-east-1"],
     usageDir: "~/.local/share/usage-tool",
@@ -86,6 +88,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         tagValue,
         activeTagKey,
         activeTagValue,
+        profiles,
         profile,
         regions,
         usageDir,
@@ -95,7 +98,10 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         browser,
         api,
     } = c;
-    if (typeof team !== "string" || team.trim() === "" || team.length > 256 || control.test(team)) {
+    if (
+        team !== undefined &&
+        (typeof team !== "string" || team.trim() === "" || team.length > 256 || control.test(team))
+    ) {
         problems.push("bedrock.team must be your exact AWS tag value (1-256 characters, no control characters)");
     }
     for (const [name, value] of [
@@ -109,6 +115,19 @@ export function problemsOf(c: Record<string, unknown>): string[] {
             (typeof value !== "string" || value.trim() === "" || value.length > 256 || control.test(value))
         )
             problems.push(`bedrock.${name} must be a tag name or value of 1-256 characters`);
+    if (
+        profiles !== undefined &&
+        (!Array.isArray(profiles) ||
+            profiles.length === 0 ||
+            profiles.length > 256 ||
+            profiles.some(
+                (value) =>
+                    typeof value !== "string" || value.trim() === "" || value.length > 2048 || control.test(value),
+            ) ||
+            new Set(profiles).size !== profiles.length)
+    ) {
+        problems.push("bedrock.profiles must be a nonempty list of up to 256 unique inference-profile ARNs or ids");
+    }
     if (typeof profile !== "string" || !profilePattern.test(profile)) {
         problems.push(
             "bedrock.profile must be an AWS profile name: 1-128 letters, digits, underscores, dots or hyphens, starting with a letter or digit",
@@ -200,15 +219,21 @@ export function loadConfig(
     if (env.JIG_BEDROCK_REGIONS !== undefined)
         c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
     const [problem] = problemsOf(c);
-    if (problem !== undefined) {
-        return {
-            error:
-                c.team === undefined
-                    ? "Set bedrock.team in the bedrock settings to your exact AWS tag value."
-                    : `${problem}.`,
-        };
-    }
+    if (problem !== undefined) return { error: `${problem}.` };
     (c.regions as string[]).sort();
-    c.tagValue = typeof c.tagValue === "string" && c.tagValue !== "" ? c.tagValue : c.team;
+    const team = typeof c.team === "string" && c.team !== "" ? c.team : undefined;
+    const tagValue = typeof c.tagValue === "string" && c.tagValue !== "" ? c.tagValue : team;
+    const explicit = Array.isArray(c.profiles) && c.profiles.length > 0;
+    c.team = team;
+    c.tagValue = tagValue;
+    c.mode = explicit ? "explicit" : tagValue !== undefined || c.tagKey !== undefined ? "tag" : "system";
+    // Legacy team settings keep Active=true unless the user sets an active tag key.
+    if (c.mode === "tag" && c.activeTagKey === undefined && team !== undefined)
+        c.activeTagValue = c.activeTagValue ?? "true";
+    if (c.mode !== "tag") {
+        delete c.tagKey;
+        delete c.activeTagKey;
+        delete c.activeTagValue;
+    }
     return { config: c as unknown as ResolvedConfig };
 }

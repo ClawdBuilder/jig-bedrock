@@ -1,6 +1,6 @@
 {
     "name": "@clawdbuilder/jig-bedrock",
-    "version": "0.1.2",
+    "version": "0.2.0",
     "description": "Claude on AWS Bedrock for Pi: inference-profile discovery, the Messages route with cache-friendly tools, Converse fallback, SSO repair and a budget footer.",
     "type": "module",
     "license": "MIT",

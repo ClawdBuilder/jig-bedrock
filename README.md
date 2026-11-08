@@ -24,24 +24,33 @@ calling AWS.
 
 ## Minimum settings
 
-With Jig, add a `bedrock` section to `jig.json` (or use the environment):
+With Jig, add a `bedrock` section to `jig.json` (or use the environment). Nothing is required: with no settings, the
+provider lists AWS-defined cross-region Claude profiles in `regions`.
 
 ```json
-{ "bedrock": { "team": "my-team" } }
+{ "bedrock": { "regions": ["us-east-1"] } }
 ```
 
 A plain Pi install has no `jig.json`: put the same keys in `~/.pi/agent/bedrock.json` (or in a `bedrock` object in that
 file). With Jig, that file is read first and Jig's `bedrock` section is merged over it. A project's `jig.json` may set the
 catalog keys, but `ssoLoginCommand`, `usageDir` and `browser` are read only from the user's file or the environment.
 
-`team` is the value of the AWS tag on your inference profiles. The package discovers active profiles with that value.
+Three modes, chosen by the settings:
+
+1. **System-defined (default).** No tag settings: lists AWS-defined cross-region Claude inference profiles with
+   `ListInferenceProfiles --type-equals SYSTEM_DEFINED`.
+2. **Tag filter.** `tagKey` and `tagValue` filter application profiles by any tag. `team` is a shorthand for
+   `tagValue` with `tagKey` defaulting to `Team`. `activeTagKey`/`activeTagValue` are optional; when `team` is set and
+   `activeTagKey` is not, `Active=true` is still required, so existing settings behave exactly as before.
+3. **Explicit list.** `profiles` names ARNs or profile ids; each is read with `GetInferenceProfile` and no tag search runs.
 
 | Setting                           | Default                                         | Meaning                                                                                            |
 | --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `team`                            | required                                        | The exact AWS tag value on your application inference profiles                                     |
-| `tagKey`                          | `Team`                                          | The AWS tag that names your team on the inference profiles                                         |
-| `tagValue`                        | the value of `team`                             | The tag value to discover; `team` is kept for compatibility                                        |
-| `activeTagKey` / `activeTagValue` | `Active` / `true`                               | The tag that marks a profile as usable                                                             |
+| `team`                            | none                                            | Shorthand for `tagValue`; existing settings keep the `Active=true` filter                          |
+| `tagKey`                          | `Team` when tagged                              | The tag key for mode 2                                                                             |
+| `tagValue`                        | the value of `team`                             | The tag value for mode 2                                                                           |
+| `activeTagKey` / `activeTagValue` | none                                            | Optional tag that marks a profile usable; `team` alone still defaults to `Active`/`true`           |
+| `profiles`                        | none                                            | Mode 3: explicit inference-profile ARNs or ids                                                     |
 | `profile`                         | `my-bedrock-profile`                            | The AWS profile for discovery, requests and sign-in                                                |
 | `regions`                         | `["us-east-1"]`                                 | Where to look for profiles                                                                         |
 | `usageDir`                        | `~/.local/share/usage-tool`                     | Optional directory holding an executable `usage` that prints the usage JSON; omit if you have none |
@@ -62,13 +71,14 @@ when Pi starts an SSO check, or when you run a command.
 
 ### Discovery
 
-Discovery runs the AWS CLI with the configured `profile` and `regions`:
+Discovery runs the AWS CLI with the configured `profile` and `regions`. It always starts with
+`aws sts get-caller-identity`. Then:
 
-- `aws sts get-caller-identity` learns the 12-digit account.
-- `aws resourcegroupstaggingapi get-resources --resource-type-filters bedrock:application-inference-profile` asks for the
-  profiles in each region. `--tag-filters` keeps the profile's `Team` tag (or `tagKey`) and its `Active=true` tag (or
-  `activeTagKey`/`activeTagValue`).
-- `aws bedrock get-inference-profile --inference-profile-identifier <arn>` reads each profile's name, status and model.
+- **System:** `aws bedrock list-inference-profiles --type-equals SYSTEM_DEFINED`, paginated per region; only Claude
+  profiles are kept, then `GetInferenceProfile` reads each one.
+- **Tag:** `aws resourcegroupstaggingapi get-resources --resource-type-filters
+  bedrock:application-inference-profile`, filtered by `tagKey`/`tagValue` and, only when configured, the active tag.
+- **Explicit:** `GetInferenceProfile` for each `profiles` entry; no tag call and no system listing.
 
 Only `ACTIVE` profiles are listed. Their foundation model is read from the profile's model ARN; the provider does not call
 `GetFoundationModel`. A successful catalog is cached for **24 hours** in `~/.cache/jig-bedrock/catalog.json`, with private
@@ -84,14 +94,28 @@ There are two routes to the same Claude models:
   configured profile.
 - **Converse.** Pi's Bedrock provider uses the AWS SDK's `ConverseStream` operation at the bedrock-runtime endpoint.
 
-A profile is put on Messages only when `api` is `messages` (the default) and its foundation model is an Anthropic model.
-Every other model uses Converse. `api: "converse"` puts every model on Converse. Both routes stream. On Messages the tools array stays
+A profile is put on Messages only when `api` is `messages` (the default), it is an **application** inference profile, and
+its foundation model is an Anthropic model. System-defined profile ids use Converse, because they are not application
+inference-profile ARNs. Every other model uses Converse. `api: "converse"` puts every model on Converse. Both routes stream. On Messages the tools array stays
 stable, so the prompt cache survives a tool change; on Converse a changed tool list rewrites it. The footer and usage
 figures are the same.
 
 A child agent (a Pi session with `PI_SUBAGENT_ID`, or the older `PI_SUBAGENT_CHILD=1`) skips the catalog refresh, the
 usage program and its events, and the sign-in at start. The parent does those; the child still sends requests and reads
 the parent's cached catalog.
+
+## IAM
+
+| Mode     | Discovery permissions                                          | Invoke                                                                                                   |
+| -------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| System   | `bedrock:ListInferenceProfiles`, `bedrock:GetInferenceProfile` | `bedrock:InvokeModel*` on the profile and on each foundation model it routes to, in every routing region |
+| Tag      | `tag:GetResources`, `bedrock:GetInferenceProfile`              | same                                                                                                     |
+| Explicit | `bedrock:GetInferenceProfile`                                  | same                                                                                                     |
+
+Add `sts:GetCallerIdentity` for the account check. For an AWS-defined cross-region profile the policy must allow the
+profile **and** the foundation model in every region it routes to; AWS's [inference-profile permissions][ip-iam] say the
+same. Application profiles additionally need the profile's own ARN. [ip-iam]:
+https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html
 
 ## Credentials
 
@@ -180,3 +204,11 @@ Real-AWS tests are manual and need the user's approval; unit tests use recorded 
 ## Licence
 
 MIT.
+
+## Not verified against real AWS
+
+- The exact Messages behaviour for a system-defined profile id (this package sends those through Converse).
+- The response shapes of `ListInferenceProfiles` pagination and system-profile model ARNs, which the tests fake from
+  AWS documentation.
+- IAM policy evaluation for cross-region profile plus foundation-model permissions in every routing region.
+- Pricing and model metadata for system-defined profiles come from Pi's registry; no live `GetFoundationModel` call is made.

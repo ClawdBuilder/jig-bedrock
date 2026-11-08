@@ -276,7 +276,7 @@ export function registerStatisticsCommands(
         },
     });
     pi.registerCommand("bedrock-profiles", {
-        description: "Show approved team Bedrock models, regions and pricing sources from the current catalog",
+        description: "Show your approved Bedrock models, regions and pricing sources from the current catalog",
         handler: async (args, ctx) => {
             if (args.trim()) {
                 ctx.ui.notify("Usage: /bedrock-profiles", "warning");
@@ -284,12 +284,12 @@ export function registerStatisticsCommands(
             }
             await showReport(
                 ctx,
-                "Bedrock · Team profiles",
+                "Bedrock · Your profiles",
                 async () => {
                     const catalog = sources.catalog.load(),
                         models = sources.models();
                     return [
-                        `Team: ${clean(config.team)} · AWS profile: ${clean(config.profile)} · regions: ${config.regions.join(", ")}`,
+                        `${config.mode === "system" ? "Mode: system-defined" : config.mode === "explicit" ? "Mode: explicit list" : `Tag: ${clean(config.tagKey ?? "Team")}=${clean(config.tagValue)}`} · AWS profile: ${clean(config.profile)} · regions: ${config.regions.join(", ")}`,
                         catalog
                             ? `Catalog observed ${new Date(catalog.fetched_at * 1000).toISOString()}${Date.now() / 1000 - catalog.fetched_at > 86_400 ? " (stale; /bedrock-refresh)" : ""}. ${catalog.profiles.length} active profiles / ${models.length} usable models.`
                             : "No approved catalog. Run /aws-login, then /bedrock-refresh.",

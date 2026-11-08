@@ -43,3 +43,40 @@ test("a team's Sonnet 5.5 and Opus 5.5 profiles are models jig-bedrock/claude-so
         rmSync(empty, { recursive: true, force: true });
     }
 });
+
+test("a system profile keeps the bare slug when an application profile names the same model", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const region = "us-east-1";
+    const catalog: Catalog = {
+        schema: 1,
+        mode: "explicit",
+        account_id: "123456789012",
+        regions: [region],
+        fetched_at: Math.floor(Date.now() / 1000),
+        profiles: [
+            {
+                arn: `arn:aws:bedrock:${region}:123456789012:application-inference-profile/app`,
+                profile_name: "Application",
+                foundation_model_id: "anthropic.claude-sonnet-5-5",
+                region,
+                kind: "application",
+            },
+            {
+                arn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-5-5`,
+                profile_name: "System",
+                foundation_model_id: "anthropic.claude-sonnet-5-5",
+                region,
+                kind: "system",
+            },
+        ],
+    };
+    const empty = mkdtempSync(path.join(tmpdir(), "jig-bedrock-usage-"));
+    try {
+        const { available } = discoveredProfiles(catalog, empty);
+        assert.equal(available.find((m) => m.id === "claude-sonnet-5-5")?.arn.includes("inference-profile/us."), true);
+        assert.ok(available.some((m) => m.id.startsWith("claude-sonnet-5-5--us-east-1--app")));
+    } finally {
+        rmSync(empty, { recursive: true, force: true });
+    }
+});
