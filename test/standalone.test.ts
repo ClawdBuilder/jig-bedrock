@@ -695,7 +695,10 @@ test("switching mode discards the cached catalog", async (t) => {
     const tag = { ...config, mode: "tag" as const };
     assert.equal(await createAwsDiscovery(tag, f.runner, file).refresh(), "ok");
     assert.equal(createAwsDiscovery({ ...config, mode: "system" }, f.runner, file).load(), undefined);
-    assert.equal(createAwsDiscovery({ ...config, mode: "explicit", profiles: ["x"], team: undefined }, f.runner, file).load(), undefined);
+    assert.equal(
+        createAwsDiscovery({ ...config, mode: "explicit", profiles: ["x"], team: undefined }, f.runner, file).load(),
+        undefined,
+    );
 });
 
 test("system mode lists once per configured region and keeps profiles from both", async (t) => {
@@ -729,7 +732,13 @@ test("system mode lists once per configured region and keeps profiles from both"
     );
     assert.equal(await source.refresh(), "ok");
     assert.deepEqual(listed.sort(), ["eu-west-1", "us-east-1"]);
-    assert.deepEqual(source.load()?.profiles.map((p) => p.region).sort(), ["eu-west-1", "us-east-1"]);
+    assert.deepEqual(
+        source
+            .load()
+            ?.profiles.map((p) => p.region)
+            .sort(),
+        ["eu-west-1", "us-east-1"],
+    );
 });
 
 test("an explicit access-denied entry is named, the others still load, and ids and ARNs mix", async (t) => {
@@ -750,14 +759,14 @@ test("an explicit access-denied entry is named, the others still load, and ids a
     };
     const file = join(directory(t), "catalog.json");
     const source = createAwsDiscovery(
-        { ...config, team: undefined, mode: "explicit", profiles: [id, id2, "denied"] },
+        { ...config, team: undefined, mode: "explicit", profiles: [id, "short-id", "denied"] },
         runner,
         file,
     );
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2, JSON.stringify(source.load()));
     assert.equal(source.load()?.errors?.[0]?.profile, "denied");
-    assert.equal(source.load()?.errors?.[0]?.message, "unavailable");
+    assert.equal(source.load()?.errors?.[0]?.message, "permission_denied");
 });
 
 test("in tag mode the bare slug stays with the application profile", async () => {

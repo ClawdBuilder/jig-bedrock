@@ -170,7 +170,13 @@ export function createAwsDiscovery(
                     const region = match?.[2] ?? config.regions[0];
                     if (!region) throw new Error("profile scope");
                     try {
-                        await add(entry, region, kind);
+                        if (match) await add(entry, region, kind);
+                        else {
+                            const found = await info(entry, region);
+                            const foundArn = found.inferenceProfileArn;
+                            if (typeof foundArn !== "string") throw new Error("profile ARN");
+                            await add(foundArn, region, found.type === "SYSTEM_DEFINED" ? "system" : "application");
+                        }
                     } catch (error) {
                         explicitErrors.push({ profile: entry, message: category(error) });
                     }
