@@ -225,7 +225,6 @@ export function loadConfig(
         c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
     const [problem] = problemsOf(c);
     if (problem !== undefined) return { error: `${problem}.` };
-    (c.regions as string[]).sort();
     const team = typeof c.team === "string" && c.team !== "" ? c.team : undefined;
     const tagValue = typeof c.tagValue === "string" && c.tagValue !== "" ? c.tagValue : team;
     const explicit = Array.isArray(c.profiles) && c.profiles.length > 0;

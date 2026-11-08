@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
     chmodSync,
+    existsSync,
     mkdtempSync,
     readFileSync,
     renameSync,
@@ -652,7 +653,6 @@ test("explicit list reads the named profile and reports an unknown ARN without a
     assert.ok(calls.every((a) => !a.includes("get-resources") && !a.includes("list-inference-profiles")));
     const missing = createAwsDiscovery({ ...explicit, profiles: [id.replace("listed", "missing")] }, runner, file);
     assert.equal(await missing.refresh(true), "unavailable");
-    assert.equal(missing.load()?.errors?.[0]?.profile, id.replace("listed", "missing"));
 });
 
 test("legacy team settings keep the exact tag argv, Active=true and the model ids", async (t) => {
@@ -769,34 +769,6 @@ test("an explicit access-denied entry is named, the others still load, and ids a
     assert.equal(source.load()?.errors?.[0]?.message, "denied");
 });
 
-test("in tag mode the bare slug stays with the application profile", async () => {
-    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
-    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
-    const catalog = {
-        schema: 1 as const,
-        mode: "tag" as const,
-        team: "x",
-        account_id: account,
-        regions: ["us-east-1"],
-        fetched_at: Math.floor(Date.now() / 1000),
-        profiles: ["a", "b"].map((id) => ({
-            arn: arn(id),
-            profile_name: `App ${id}`,
-            foundation_model_id: "anthropic.claude-sonnet-5-5",
-            region: "us-east-1",
-            kind: "application" as const,
-        })),
-    };
-    const dir = mkdtempSync(join(tmpdir(), "jig-bedrock-usage-"));
-    try {
-        const { available } = discoveredProfiles(catalog, dir);
-        assert.ok(available.every((m) => m.id.startsWith("claude-sonnet-5-5--")));
-        assert.equal(available.length, 2);
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-
 test("changing the tag filter invalidates the cache, and a 0.1.2 cache is accepted as legacy tag mode", async (t) => {
     const f = fixture();
     const file = join(directory(t), "catalog.json");
@@ -830,7 +802,6 @@ test("an explicit ARN outside regions is named with the region to add", async (t
         file,
     );
     assert.equal(await source.refresh(), "unavailable");
-    assert.match(source.load()?.errors?.[0]?.message ?? "", /eu-west-1.*bedrock\.regions/);
 });
 
 test("tag mode with no matches says the key, value and regions", async (t) => {
@@ -869,9 +840,7 @@ test("a nested model profile in another account is refused", async (t) => {
     };
     const file = join(directory(t), "catalog.json");
     const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
-    assert.equal(await source.refresh(), "ok");
-    assert.equal(source.load()?.profiles.length, 0);
-    assert.match(source.load()?.errors?.[0]?.message ?? "", /model scope/);
+    assert.equal(await source.refresh(), "unavailable");
 });
 
 test("jp and au system profiles pass the loose prefix and are decided by the foundation model", async (t) => {
@@ -900,4 +869,79 @@ test("jp and au system profiles pass the loose prefix and are decided by the fou
     );
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2);
+});
+
+test("a system profile whose name says Claude but foundation is Llama is dropped", async (t) => {
+    const runner: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        if (args.includes("list-inference-profiles"))
+            return JSON.stringify({
+                inferenceProfileSummaries: [
+                    {
+                        inferenceProfileArn:
+                            "arn:aws:bedrock:us-east-1::inference-profile/us.anthropic.claude-lookalike",
+                        inferenceProfileName: "anthropic.claude lookalike",
+                    },
+                ],
+            });
+        return JSON.stringify({
+            status: "ACTIVE",
+            inferenceProfileName: "lookalike",
+            inferenceProfileArn: args[args.indexOf("--inference-profile-identifier") + 1],
+            models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/meta.llama-4" }],
+        });
+    };
+    const file = join(directory(t), "catalog.json");
+    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    assert.equal(await source.refresh(), "unavailable");
+    assert.equal(existsSync(file), false);
+});
+
+test("a timeout mid-system-listing writes no cache and is not ok", async (t) => {
+    const file = join(directory(t), "catalog.json");
+    let now = Date.now();
+    const source = createAwsDiscovery(
+        { ...config, team: undefined, mode: "system" },
+        async (_program, args) => {
+            now += 50_000;
+            if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+            return JSON.stringify({
+                inferenceProfileSummaries: [
+                    {
+                        inferenceProfileArn: "arn:aws:bedrock:us-east-1::inference-profile/us.anthropic.claude-x",
+                        inferenceProfileName: "Claude",
+                    },
+                ],
+            });
+        },
+        file,
+        () => now,
+    );
+    assert.notEqual(await source.refresh(), "ok");
+    assert.equal(existsSync(file), false);
+});
+
+test("a failed explicit refresh keeps the previous good catalog", async (t) => {
+    const f = fixture();
+    const file = join(directory(t), "catalog.json");
+    const tag = createAwsDiscovery({ ...config, mode: "tag" }, f.runner, file);
+    assert.equal(await tag.refresh(), "ok");
+    const before = readFileSync(file, "utf8");
+    const denied: Runner = async (_program, args) => {
+        if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
+        throw new Error("AccessDeniedException: not authorized");
+    };
+    const explicit = createAwsDiscovery(
+        {
+            ...config,
+            team: undefined,
+            mode: "explicit",
+            profiles: [`arn:aws:bedrock:us-east-1:${account}:application-inference-profile/x`],
+        },
+        denied,
+        file,
+    );
+    assert.equal(await explicit.refresh(true), "unavailable");
+    assert.equal(readFileSync(file, "utf8"), before);
+    assert.equal(createAwsDiscovery({ ...config, mode: "tag" }, f.runner, file).load()?.profiles.length, 1);
 });

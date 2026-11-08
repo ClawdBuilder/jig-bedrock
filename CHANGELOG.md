@@ -15,6 +15,8 @@
 
 ### Changed
 
+- A 0.1.2 catalog is reused once after the upgrade when team, profile and regions match; changing tag settings in the same
+  step takes effect on `/bedrock-refresh`.
 - `team` is no longer required. The default is now system-defined profiles, so a missing `team` no longer disables the
   provider.
 - System-defined profiles use the Converse route because their ids are not application inference-profile ARNs.

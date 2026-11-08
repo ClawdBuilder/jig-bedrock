@@ -99,7 +99,7 @@ describe("the environment", () => {
         const config = loadConfig({ raw, env }).config;
         assert.equal(config?.team, "From The Environment");
         assert.equal(config?.profile, "env-profile");
-        assert.deepEqual(config?.regions, ["eu-west-1", "us-west-2"]);
+        assert.deepEqual(config?.regions, ["us-west-2", "eu-west-1"]);
         assert.equal(config?.usageDir, "/env/usage");
         assert.equal(loadConfig({ raw: undefined, env }).config?.team, "From The Environment");
     });

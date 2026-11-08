@@ -65,6 +65,13 @@ export function discoveryHelp(status: Status): string {
             return "Check AWS access and the configuration in README.md, then /bedrock-refresh.";
     }
 }
+const PROFILE_ERROR =
+    /profile scope|model scope|model ID|ambiguous model|models|profile name|profile mismatch|profile tags/;
+
+function profileError(error: unknown): boolean {
+    return PROFILE_ERROR.test(String(error));
+}
+
 function entryMessage(error: unknown): string {
     const text = String(error);
     if (/profile scope/.test(text)) return text.replace(/^Error:\s*/, "");
@@ -162,10 +169,12 @@ export function createAwsDiscovery(
                     throw new Error("profile mismatch");
                 if (value.status !== "ACTIVE") return;
                 seen.add(candidate);
+                const foundationModelId = await foundation(value);
+                if (kind === "system" && !foundationModelId.startsWith("anthropic.claude")) return;
                 profiles.push({
                     arn: candidate,
                     profile_name: nameOf(value),
-                    foundation_model_id: await foundation(value),
+                    foundation_model_id: foundationModelId,
                     region,
                     kind,
                 });
@@ -193,6 +202,7 @@ export function createAwsDiscovery(
                             await add(foundArn, region, found.type === "SYSTEM_DEFINED" ? "system" : "application");
                         }
                     } catch (error) {
+                        if (!profileError(error) && !/AccessDenied/i.test(String(error))) throw error;
                         explicitErrors.push({ profile: entry, message: entryMessage(error) });
                     }
                 }
@@ -274,6 +284,7 @@ export function createAwsDiscovery(
                             try {
                                 await add(arn, region, "system");
                             } catch (error) {
+                                if (!profileError(error)) throw error;
                                 explicitErrors.push({ profile: arn, message: entryMessage(error) });
                             }
                         }
@@ -286,7 +297,8 @@ export function createAwsDiscovery(
                 }
             }
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
-            const failed = mode === "explicit" && profiles.length === 0 && explicitErrors.length > 0;
+            const failed =
+                (mode === "explicit" || mode === "system") && profiles.length === 0 && explicitErrors.length > 0;
             if (mode === "tag" && profiles.length === 0) {
                 const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
                 warnings.push(
@@ -295,6 +307,7 @@ export function createAwsDiscovery(
             }
             if (mode === "system" && profiles.length === 0)
                 warnings.push(`No AWS-defined Claude inference profiles in ${config.regions.join(", ")}.`);
+            if (failed) return "unavailable";
             const catalog: Catalog = {
                 schema: 1,
                 mode,

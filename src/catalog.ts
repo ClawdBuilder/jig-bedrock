@@ -256,7 +256,16 @@ function thinkingLevelMap(
 
 /** System profiles first, by the geography of their id: the region's prefix, then global, then the rest. */
 function orderedSystem(rows: Profile[], catalog: Catalog | undefined): Profile[] {
-    const first = (catalog?.regions?.[0] ?? "us-east-1").split("-")[0] ?? "us";
+    const firstRegion = catalog?.regions?.[0] ?? "us-east-1";
+    const first = /^us-gov-/.test(firstRegion)
+        ? "us-gov"
+        : /^ap-northeast-/.test(firstRegion)
+          ? "jp"
+          : /^ap-southeast-2/.test(firstRegion)
+            ? "au"
+            : /^ap-/.test(firstRegion)
+              ? "apac"
+              : (firstRegion.split("-")[0] ?? "us");
     const geography = (p: Profile) => {
         const id = p.arn.slice(p.arn.lastIndexOf("/") + 1);
         const prefix = id.split(".")[0] ?? "";

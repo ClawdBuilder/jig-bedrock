@@ -255,12 +255,17 @@ export function createJigBedrock(
                 }
             }
             const change = updateModels(models, updated);
-            if (ctx && (change.added || change.removed)) {
-                const catalogProblems = catalog.load()?.errors?.length ?? 0;
-                ctx.ui.notify(
-                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.${catalogProblems ? ` ${catalogProblems} profile${catalogProblems === 1 ? "" : "s"} could not be read; see /bedrock-profiles.` : ""} Choose /model if your selection was removed.`,
-                    catalogProblems ? "warning" : "info",
-                );
+            const current = catalog.load();
+            const problems = current?.errors ?? [];
+            const warnings = current?.warnings ?? [];
+            if (ctx && (change.added || change.removed || problems.length > 0 || warnings.length > 0)) {
+                const detail = [
+                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
+                    ...warnings,
+                    ...problems.map((problem) => `${problem.profile}: ${problem.message}.`),
+                    "Choose /model if your selection was removed.",
+                ].join(" ");
+                ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
             }
             if (change.changed && native) {
                 await registerTeamBedrock(
