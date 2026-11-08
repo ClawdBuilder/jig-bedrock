@@ -286,7 +286,7 @@ export function createJigBedrock(
         };
         // Ask, sign in, or wait when Pi starts and the session has expired, through the recovery the commands and requests share. Not in a child:
         // the parent does it, and a second window from a child would be one nobody expects.
-        if (config.signInAtStart !== false && !child && authProfile !== undefined) {
+        if (!child && authProfile !== undefined) {
             registerSignInAtStart(pi, {
                 mode: config.signInAtStart,
                 profile: authProfile,

@@ -12,6 +12,7 @@ async function scenario(mode: boolean | "ask", yes = true, options: { hasUI?: bo
     let confirms = 0;
     let recovered = 0;
     let refreshed = 0;
+    let checked = 0;
     const pi = {
         on: (name: string, hook: Hook) => {
             hooks.set(name, hook);
@@ -23,7 +24,10 @@ async function scenario(mode: boolean | "ask", yes = true, options: { hasUI?: bo
         recover: async () => {
             recovered++;
         },
-        check: async () => "sign-in",
+        check: async () => {
+            checked++;
+            return "sign-in";
+        },
         refresh: async () => {
             refreshed++;
         },
@@ -43,7 +47,7 @@ async function scenario(mode: boolean | "ask", yes = true, options: { hasUI?: bo
     };
     await hooks.get("session_start")!({ reason: "startup" }, ctx);
     await pause();
-    return { confirms, recovered, refreshed, notices };
+    return { checked, confirms, recovered, refreshed, notices };
 }
 
 test('"ask" with yes opens the shared recovery once', async () => {
@@ -59,7 +63,7 @@ test('"ask" with no opens nothing and says where to sign in', async () => {
     assert.equal(result.confirms, 1);
     assert.equal(result.recovered, 0);
     assert.equal(result.refreshed, 0);
-    assert.deepEqual(result.notices, ["Run /aws-login when you're ready."]);
+    assert.deepEqual(result.notices, ["Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh."]);
 });
 
 test("true signs in at once, without asking", async () => {
@@ -68,10 +72,12 @@ test("true signs in at once, without asking", async () => {
     assert.equal(result.recovered, 1);
 });
 
-test("false never checks, asks or opens a browser", async () => {
+test("false still checks read-only, opens nothing, and shows the models notice", async () => {
     const result = await scenario(false);
+    assert.equal(result.checked, 1);
     assert.equal(result.confirms, 0);
     assert.equal(result.recovered, 0);
+    assert.deepEqual(result.notices, ["Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh."]);
 });
 
 test("print mode has no question and opens nothing", async () => {

@@ -32,7 +32,11 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         const state = await start.check(start.profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
         const mode = start.mode ?? true;
-        if (mode === false) return;
+        const expiredNotice = "Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.";
+        if (mode === false) {
+            ctx.ui.notify(expiredNotice, "warning");
+            return;
+        }
         if (mode === "ask") {
             let yes = false;
             try {
@@ -42,7 +46,7 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
             }
             if (signal.aborted) return;
             if (!yes) {
-                ctx.ui.notify("Run /aws-login when you're ready.", "info");
+                ctx.ui.notify(expiredNotice, "warning");
                 return;
             }
         }

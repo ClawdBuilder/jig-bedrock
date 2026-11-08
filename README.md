@@ -61,7 +61,8 @@ Three modes, chosen by the settings:
 | `api`                             | `messages`                                      | `messages` (cache-friendly) or `converse`                                                           |
 
 The default is `"ask"`: Pi never opens a browser from the start-up check without your yes. `false` leaves sign-in to a
-failing request or `/aws-login`; `/aws-login` always signs in when you run it.
+failing request or `/aws-login`; `/aws-login` always signs in when you run it. In both cases the start-up check still runs
+read-only, and an expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”
 
 Environment: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_PROFILE`, `JIG_BEDROCK_REGIONS`, `JIG_BEDROCK_USAGE_DIR`,
 `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`. `PI_HOST_DIR` points at the Pi install when it is not beside `node`.

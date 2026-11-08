@@ -6,7 +6,8 @@
 
 - A start-up SSO check now asks before opening the browser: `signInAtStart` defaults to `"ask"`. Yes uses the same shared
   sign-in as before; no or Esc leaves it to `/aws-login`. `true` keeps the old immediate sign-in, and `false` leaves it to a
-  failing request or `/aws-login`.
+  failing request or `/aws-login`. The start-up check still runs read-only, and `false` or a no answer shows the Bedrock
+  models notice instead of staying silent.
 - A request that fails on an expired session follows the same choice: `"ask"` asks once, with a second failing request
   joining the open question; `false` only reports the `/aws-login` hint. `/aws-login` is still an explicit yes.
 
