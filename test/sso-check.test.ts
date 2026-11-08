@@ -10,6 +10,7 @@ import { afterEach, describe, test } from "node:test";
 import type { CredentialProvider } from "../src/pi-host.ts";
 import type { SsoCheckDeps } from "../src/sso-check.ts";
 import { checkSso, classify, ssoKey, tokenFresh } from "../src/sso-check.ts";
+import { registerSignInAtStart } from "../src/start-sign-in.ts";
 
 const NOW = Date.UTC(2026, 10, 2, 9, 0, 0);
 const minutes = (n: number) => new Date(NOW + n * 60_000).toISOString();
@@ -205,6 +206,51 @@ describe("the check", () => {
         );
         assert.equal(state, "error", "the answer was given when the time ran out");
         await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    test("a static-key profile passes the start-up check through the SDK and opens no sign-in", async () => {
+        const home = mkdtempSync(path.join(tmpdir(), "bedrock-sso-static-"));
+        dirs.push(home);
+        mkdirSync(path.join(home, ".aws"), { recursive: true });
+        // No sso_session or sso_start_url: this profile has access keys, and the SDK's provider is the authority.
+        writeFileSync(path.join(home, ".aws", "config"), "[profile static-keys]\nregion = us-east-1\n");
+        let providerCalls = 0;
+        const deps: SsoCheckDeps = {
+            env: {},
+            home,
+            readText: (file) => readFileSync(file, "utf8"),
+            now: () => NOW,
+            credentialProvider: () =>
+                ((init: { profile: string }) => {
+                    assert.equal(init.profile, "static-keys");
+                    providerCalls++;
+                    return async () => ({ accessKeyId: "AKIAFIXTURE", secretAccessKey: "fixture-secret" });
+                }) as CredentialProvider,
+            timeoutMs: 5_000,
+        };
+        assert.equal(await checkSso("static-keys", deps), "ok");
+        let recovered = 0;
+        const hooks = new Map<string, (...args: any[]) => unknown>();
+        registerSignInAtStart(
+            {
+                on: (name: string, fn: (...args: any[]) => unknown) => {
+                    hooks.set(name, fn);
+                    return () => {};
+                },
+            } as never,
+            {
+                profile: "static-keys",
+                check: (profile, signal) => checkSso(profile, deps, signal),
+                recover: async () => {
+                    recovered++;
+                },
+                refresh: async () => {},
+            },
+        );
+        await hooks.get("session_start")?.({ reason: "startup" }, { hasUI: true, mode: "tui" });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(recovered, 0, "a static-key profile opens no sign-in");
+        assert.ok(providerCalls >= 2);
     });
 
     test("reads the config named by AWS_CONFIG_FILE, as the SDK does", async () => {
