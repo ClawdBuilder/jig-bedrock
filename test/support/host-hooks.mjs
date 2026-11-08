@@ -6,6 +6,6 @@ import { piHostDir } from "../../scripts/pi-host-dir.mjs";
 const parentURL = pathToFileURL(path.join(piHostDir, "host.mjs")).href;
 const host = /^(?:typebox|@earendil-works\/pi-(?:coding-agent|tui|ai|agent-core))(?:\/|$)/;
 
-export async function resolve(specifier, context, next) {
+export function resolveSync(specifier, context, next) {
     return next(specifier, host.test(specifier) ? { ...context, parentURL } : context);
 }
