@@ -175,13 +175,20 @@ describe("the check", () => {
         });
         assert.equal(await checkSso("my-bedrock-profile", noSdk.deps(failing)), "error");
         const stalled = setup(undefined, { timeoutMs: 30 });
-        assert.equal(
-            await checkSso(
-                "my-bedrock-profile",
-                stalled.deps(() => new Promise(() => {})),
-            ),
-            "error",
-        );
+        // Keep this test's own event loop alive while the check's timeout runs: the stalled promise holds nothing, and
+        // Node 22 otherwise ends the test as failed before the timeout can fire.
+        const keepAlive = setTimeout(() => {}, 250);
+        try {
+            assert.equal(
+                await checkSso(
+                    "my-bedrock-profile",
+                    stalled.deps(() => new Promise(() => {})),
+                ),
+                "error",
+            );
+        } finally {
+            clearTimeout(keepAlive);
+        }
         const controller = new AbortController();
         const cancelled = setup();
         const pending = checkSso(
