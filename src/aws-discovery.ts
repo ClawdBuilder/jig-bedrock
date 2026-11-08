@@ -110,7 +110,8 @@ export function createAwsDiscovery(
                 rmSync(file, { force: true });
             } else invalidAccount = false;
             const profiles: Profile[] = [],
-                seen = new Set<string>();
+                seen = new Set<string>(),
+                explicitErrors: { profile: string; message: string }[] = [];
             const info = (arn: string, region: string) =>
                 aws(["bedrock", "get-inference-profile", "--inference-profile-identifier", arn, "--region", region]);
             const foundation = async (value: Json, depth = 0): Promise<string> => {
@@ -168,7 +169,11 @@ export function createAwsDiscovery(
                         | "system";
                     const region = match?.[2] ?? config.regions[0];
                     if (!region) throw new Error("profile scope");
-                    await add(match ? entry : entry, region, kind);
+                    try {
+                        await add(entry, region, kind);
+                    } catch (error) {
+                        explicitErrors.push({ profile: entry, message: category(error) });
+                    }
                 }
             } else if (mode === "tag") {
                 for (const region of config.regions) {
@@ -270,6 +275,7 @@ export function createAwsDiscovery(
                 regions: config.regions,
                 fetched_at: Math.floor(now() / 1000),
                 profiles,
+                ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             });
             invalidAccount = false;
             return "ok";

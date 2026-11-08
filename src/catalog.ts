@@ -70,6 +70,8 @@ export type Catalog = {
     regions: string[];
     fetched_at: number;
     profiles: Profile[];
+    /** Explicit-list entries that could not be read; they do not stop the others. */
+    errors?: { profile: string; message: string }[];
 };
 const slug = (s: string) =>
     s
