@@ -250,24 +250,20 @@ export function createStatistics(
             previous = load(period);
         if (!options.force && previous && !previous.stale) return previous;
         try {
-            const output = await runner(
-                usageExecutable(config),
-                ["usage", `--${period}`, "--output", "json", "--aws-profile", config.profile],
-                {
-                    timeout: 120_000,
-                    maxBuffer: 2_097_152,
-                    signal: options.signal,
-                    env: {
-                        ...process.env,
-                        BEDROCK_REGIONS: config.regions.join(","),
-                        AWS_PROFILE: config.profile,
-                        AWS_CLI_AUTO_PROMPT: "off",
-                        AWS_PAGER: "",
-                        NO_COLOR: "1",
-                        PAT_SKIP_UPDATE_CHECK: "1",
-                    },
+            const output = await runner(usageExecutable(config), [`--${period}`, "--output", "json"], {
+                timeout: 120_000,
+                maxBuffer: 2_097_152,
+                signal: options.signal,
+                env: {
+                    ...process.env,
+                    BEDROCK_REGIONS: config.regions.join(","),
+                    AWS_PROFILE: config.profile,
+                    AWS_CLI_AUTO_PROMPT: "off",
+                    AWS_PAGER: "",
+                    NO_COLOR: "1",
+                    PAT_SKIP_UPDATE_CHECK: "1",
                 },
-            );
+            });
             if (options.signal?.aborted) throw new UsageError("cancelled");
             const observedAt = now();
             // Legacy reports have no explicit range, so a UTC rollover cannot be safely relabelled.

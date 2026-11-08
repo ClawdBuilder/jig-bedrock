@@ -113,8 +113,9 @@ export const runUsage: UsageRunner = (program, args, options) =>
         );
         child.on("close", (code) => finish(code === 0 ? undefined : new UsageError(classify(stderr))));
         options.signal?.addEventListener("abort", abort, { once: true });
+        // A referenced timer keeps a stalled program's timeout alive when nothing else holds the event loop. It is
+        // cleared in finish(), so a program that answers does not delay exit.
         timer = setTimeout(() => finish(new UsageError("timeout")), options.timeout);
-        timer.unref();
         if (options.signal?.aborted) abort();
     });
 export const usageExecutable = (config: ResolvedConfig): string =>
