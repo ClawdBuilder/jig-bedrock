@@ -21,11 +21,14 @@ Linux, WSL2 and macOS are supported; Windows is not.
 
 ## Minimum settings
 
-Add a `bedrock` section to `jig.json` (or the same keys through the environment):
+With Jig, add a `bedrock` section to `jig.json` (or use the environment):
 
 ```json
 { "bedrock": { "team": "my-team" } }
 ```
+
+A plain Pi install has no `jig.json`: put the same keys in `~/.pi/agent/bedrock.json` (or the file's `bedrock` object).
+Both name the same settings; with Jig, `jig.json` is merged over that file.
 
 `team` is the value of the AWS tag on your inference profiles. The package discovers active profiles with that value.
 

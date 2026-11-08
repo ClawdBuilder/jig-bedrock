@@ -326,8 +326,32 @@ test("missing team emits one notice without AWS, usage program or provider regis
     const ctx = { sessionManager: { getBranch: () => [] }, ui: { notify: (s: string) => notices.push(s) } };
     for (const fn of hooks.get("session_start") || []) await fn({}, ctx);
     assert.equal(notices.length, 1);
-    assert.match(notices[0]!, /Edit bedrock in jig\.json/);
+    const file = join(dir, "bedrock.json");
+    assert.ok(notices[0]!.includes(`Add "team" to ${file}, then /reload.`), notices[0]);
+    assert.doesNotMatch(notices[0]!, /jig\.json/);
 });
+test("with Jig, the missing settings notice names jig.json and bedrock.json", async (t) => {
+    const dir = directory(t);
+    const hooks = new Map<string, Hook[]>(),
+        notices: string[] = [];
+    const api = {
+        config: {
+            registerSection() {},
+            section: () => undefined,
+        },
+    } as any;
+    await createJigBedrock({ api, env: { PI_CODING_AGENT_DIR: dir }, selection: { agentDir: dir } })({
+        on: (name: string, fn: Hook) => hooks.set(name, [...(hooks.get(name) || []), fn]),
+        registerProvider: () => assert.fail("provider"),
+        setModel: () => false,
+    } as any);
+    const ctx = { sessionManager: { getBranch: () => [] }, ui: { notify: (s: string) => notices.push(s) } };
+    for (const fn of hooks.get("session_start") || []) await fn({}, ctx);
+    assert.equal(notices.length, 1);
+    assert.ok(notices[0]!.includes("bedrock in jig.json"), notices[0]);
+    assert.ok(notices[0]!.includes(`in ${join(dir, "bedrock.json")}`), notices[0]);
+});
+
 test("usage program parse and scoped cache throttle refresh and preserve last good spend", async (t) => {
     let now = Date.now(),
         calls = 0,

@@ -149,11 +149,13 @@ export function createJigBedrock(
                 );
         }
         if (!config) {
+            const file = path.join(agentFolder(options.env), "bedrock.json");
+            const where =
+                options.api === undefined
+                    ? `Add "team" to ${file}, then /reload.`
+                    : `Set it in bedrock in jig.json or in ${file}, then /reload.`;
             pi.on("session_start", (_event, ctx) =>
-                ctx.ui.notify(
-                    `Bedrock provider disabled: ${resolved.error} Edit bedrock in jig.json, then /reload.`,
-                    "warning",
-                ),
+                ctx.ui.notify(`Bedrock provider disabled: ${resolved.error} ${where}`, "warning"),
             );
             return undefined;
         }
