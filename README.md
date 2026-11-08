@@ -200,6 +200,20 @@ npm run check
 npm run scan
 ```
 
+### Commit emails
+
+`npm run check:emails` checks the author and committer addresses in `origin/main..HEAD`. CI uses the private word list in
+`JIG_SCAN_WORDS` or `~/.config/jig/scan-words.txt` and fails on a match; the list stays outside this repository. A fork
+without it passes `noreply@example.com`, an address at `users.noreply.github.com`, and the maintainer's public address;
+any other address warns and does not block the run.
+
+The optional pre-push hook is not installed:
+
+```bash
+cp scripts/pre-push-commit-emails.sh .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
 WSL uses `bin/windows-browser` when `browser` is unset, so the sign-in opens on Windows.
 
 Real-AWS tests are manual and need the user's approval; unit tests use recorded shapes and a fake CLI.
