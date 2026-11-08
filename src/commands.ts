@@ -44,7 +44,7 @@ export function usageLines(snapshot: UsageSnapshot): string[] {
     return [
         `usage program user estimate · ${periodLabels[report.period]} (UTC) · ${snapshot.stale ? "STALE" : "fresh"}`,
         `User: ${clean(report.user)} · observed ${new Date(observedAt).toISOString()} · contract ${report.contract}`,
-        "Scope: this AWS user's inference profiles; excludes other users and is not a team total.",
+        "Scope: this AWS user's inference profiles; excludes other users and is not a total across profiles.",
         `Requests ${count(t.requests)} · fresh input ${count(t.inputFresh)} · output ${count(t.output)}`,
         `Cache read ${count(t.cacheRead)} · cache write ${count(t.cacheWrite)} · total input ${count(t.input)}`,
         `Estimated cost: ${totalCost(report)}. AWS metrics may arrive late.`,
@@ -325,7 +325,7 @@ export function registerStatisticsCommands(
                     return [
                         "Local checks only; no AWS calls, credential reads, login or model invocation.",
                         ...dependencyLines(h),
-                        `Team/profile configuration: loaded · configured regions: ${config.regions.length} · approved catalog: ${sources.catalog.load() ? "loaded" : "unavailable"}`,
+                        `Profile configuration: loaded · configured regions: ${config.regions.length} · approved catalog: ${sources.catalog.load() ? "loaded" : "unavailable"}`,
                         cached
                             ? `usage program report contract: ${cached.report.contract} · ${cached.stale ? "stale" : "fresh"} · ${cached.refreshFailed ? "last refresh failed" : "last refresh succeeded"}`
                             : "usage program report: unavailable; /bedrock-usage tests the read-only statistics path.",

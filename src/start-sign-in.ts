@@ -7,6 +7,8 @@ import { recoveryHint, SsoRecoveryError } from "./sso.ts";
 import type { SsoState } from "./sso-check.ts";
 
 export interface StartSignIn {
+    /** Whether an expired session signs in at once; false still checks read-only and says the models are not loaded. */
+    signInAtStart?: boolean;
     /** The AWS profile the provider signs in with. */
     profile: string;
     /** The shared recovery (`shareRecovery`), the one /aws-login and a request go through. */
@@ -28,6 +30,10 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         if (signal.aborted) return;
         const state = await start.check(start.profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
+        if (start.signInAtStart === false) {
+            ctx.ui.notify("Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.", "warning");
+            return;
+        }
         ctx.ui.notify(`AWS sign-in for ${start.profile} has expired; signing in, your browser opens.`, "info");
         try {
             await start.recover(start.profile, signal, "warmup");

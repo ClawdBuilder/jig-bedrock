@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1] - 2026-11-08
+
+### Fixed
+
+- With `signInAtStart: false`, the start-up SSO check still runs read-only. An expired session now shows
+  “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.” instead of staying silent.
+- The saved-model warning says “for your profiles”, not “for this team”; the usage footer says it is not a total across
+  profiles, not a team total.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

@@ -284,8 +284,9 @@ export function createJigBedrock(
         };
         // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not in a child:
         // the parent does it, and a second window from a child would be one nobody expects.
-        if (config.signInAtStart && !child && authProfile !== undefined) {
+        if (!child && authProfile !== undefined) {
             registerSignInAtStart(pi, {
+                signInAtStart: config.signInAtStart,
                 profile: authProfile,
                 recover: shareRecovery(recovery),
                 check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),

@@ -60,6 +60,9 @@ Three modes, chosen by the settings:
 | `browser`                         | WSL's Windows browser                           | Program that opens the sign-in address                                                             |
 | `api`                             | `messages`                                      | `messages` (cache-friendly) or `converse`                                                          |
 
+`signInAtStart: false` leaves sign-in to a failing request or `/aws-login`; the start-up check still runs read-only, and an
+expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”
+
 Environment: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_PROFILE`, `JIG_BEDROCK_REGIONS`, `JIG_BEDROCK_USAGE_DIR`,
 `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`. `PI_HOST_DIR` points at the Pi install when it is not beside `node`.
 `PI_CACHE_RETENTION` sets Pi's own cache retention; the provider does not change it.
