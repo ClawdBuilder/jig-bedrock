@@ -25,7 +25,7 @@
         ]
     },
     "scripts": {
-        "check": "tsc -p tsconfig.json && biome ci . && node scripts/check-commit-emails.mjs",
+        "check": "tsc -p tsconfig.json && biome ci .",
         "test": "node --import ./test/support/host.mjs --test \"test/*.test.ts\"",
         "scan": "node scripts/scan-company-strings.mjs",
         "check:emails": "node scripts/check-commit-emails.mjs"
