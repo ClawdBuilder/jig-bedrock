@@ -16,6 +16,7 @@
         "index.ts",
         "src/**",
         "bin/**",
+        "docs/**",
         "README.md",
         "LICENSE"
     ],

@@ -4,13 +4,18 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { registerTeamBedrock } from "../src/catalog.ts";
+import { createProfileAuth, ProfileResolver } from "../src/profile.ts";
 import { hostImport } from "./support/pi-host.ts";
 
 type Hook = (...args: any[]) => any;
-test("a configured AWS profile is the only credential the provider's auth hands on", async () => {
+test("the provider's auth hands on only the profile, never a key", async () => {
     const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
     let provider: any;
     const native = builtinProviders().find((p: any) => p.id === "amazon-bedrock");
+    const profiles = new ProfileResolver({
+        settings: { setting: "fixture-profile", env: {} },
+        listProfiles: async () => ["fixture-profile"],
+    });
     await registerTeamBedrock(
         {
             registerProvider: (p: any) => {
@@ -21,12 +26,30 @@ test("a configured AWS profile is the only credential the provider's auth hands 
         native,
         [],
         () => undefined,
-        "fixture-profile",
+        { profile: () => "fixture-profile", auth: createProfileAuth(profiles) },
     );
+    assert.equal(provider.auth.oauth, undefined);
+    assert.equal(provider.auth.apiKey.name, "AWS profile");
     const auth = await provider.auth.apiKey.resolve({
+        ctx: { env: async () => undefined, fileExists: async () => false },
         credential: { key: "private-canary", env: { AWS_SECRET_ACCESS_KEY: "private-canary" } },
+        signal: new AbortController().signal,
     });
-    assert.deepEqual(auth, { auth: {}, env: { AWS_PROFILE: "fixture-profile" }, source: "configured AWS profile" });
+    assert.deepEqual(auth, { auth: {}, env: { AWS_PROFILE: "fixture-profile" }, source: "bedrock.profile" });
+    assert.doesNotMatch(JSON.stringify(auth), /private-canary/);
+});
+
+test("a profile chosen at /login is the profile, with no key in the credential", async () => {
+    const profiles = new ProfileResolver({
+        settings: { env: {} },
+        listProfiles: async () => ["from-login"],
+    });
+    const auth = await createProfileAuth(profiles).apiKey?.resolve({
+        ctx: { env: async () => undefined, fileExists: async () => false },
+        credential: { type: "api_key", env: { AWS_PROFILE: "from-login" } },
+        signal: new AbortController().signal,
+    });
+    assert.deepEqual(auth, { auth: {}, env: { AWS_PROFILE: "from-login" }, source: "/login" });
 });
 test("the provider has no repository imports or internal environment dependencies", () => {
     const root = resolve(import.meta.dirname, "..");

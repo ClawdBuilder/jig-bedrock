@@ -43,7 +43,7 @@ export function findPiHost(
 }
 
 /** What the SDK's `defaultProvider` takes and gives: a function that resolves the profile's credentials when called. */
-export type CredentialProvider = (init: { profile: string }) => () => Promise<unknown>;
+export type CredentialProvider = (init?: { profile?: string }) => () => Promise<unknown>;
 
 /** `defaultProvider` of the SDK in Pi's install. Throws when Pi or the SDK cannot be found. */
 export function loadCredentialProvider(host: string | undefined): CredentialProvider {

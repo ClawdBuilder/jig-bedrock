@@ -4,6 +4,8 @@ import type { BudgetSource } from "./budget.ts";
 import type { TeamBedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { checkLocalDependencies, dependencyLines } from "./doctor.ts";
+import { type Markers, markers } from "./markers.ts";
+import { NO_PROFILE, type ProfileChoice, type ProfileResolver, sourceLabel } from "./profile.ts";
 import { cacheWriteRate } from "./prompt-cache.ts";
 import {
     periodLabels,
@@ -204,6 +206,30 @@ async function showReport(
         ctx.signal?.removeEventListener("abort", abort);
     }
 }
+/** One doctor line for the profile: its name, where it came from, and whether the AWS CLI lists it. */
+function profileLine(choice: ProfileChoice, m: Markers): string {
+    if (choice.ambient === true) return `${m.warn} Profile: none configured; using the AWS credential chain`;
+    if (choice.profile === undefined) return `${m.fail} Profile: none — ${NO_PROFILE}`;
+    const source = sourceLabel(choice.source);
+    if (choice.problem !== undefined) return `${m.fail} Profile: ${choice.profile} (${source}) — ${choice.problem}`;
+    if (choice.exists === false)
+        return `${m.fail} Profile: ${choice.profile} (${source}) — not in aws configure list-profiles; run /login to choose one`;
+    if (choice.exists === undefined)
+        return `${m.warn} Profile: ${choice.profile} (${source}) — aws configure list-profiles did not answer`;
+    return `${m.ok} Profile: ${choice.profile} (${source})`;
+}
+
+/** One doctor line for discovery: the mode and the regions it looks in. */
+function discoveryLine(config: ResolvedConfig, m: Markers): string {
+    const mode =
+        config.mode === "explicit"
+            ? `explicit list${config.profiles?.length ? ` (${config.profiles.length})` : ""}`
+            : config.mode === "tag"
+              ? `tag ${config.tagKey ?? "Team"}=${config.tagValue ?? ""}`
+              : "system-defined";
+    return `${m.ok} Discovery: ${mode} · regions: ${config.regions.join(", ")}`;
+}
+
 export function registerStatisticsCommands(
     pi: ExtensionAPI,
     sources: {
@@ -213,6 +239,10 @@ export function registerStatisticsCommands(
         models(): TeamBedrockModel[];
         budget: BudgetSource;
         publish(): void;
+        /** Resolves the profile for the doctor; absent in a test that only exercises another command. */
+        profiles?: ProfileResolver;
+        stored?: () => string | undefined;
+        env?: NodeJS.ProcessEnv;
     },
 ): void {
     const { config, statistics } = sources,
@@ -310,7 +340,7 @@ export function registerStatisticsCommands(
     });
     pi.registerCommand("bedrock-doctor", {
         description:
-            "Check local dependency versions, optional usage program setup and catalog health without AWS calls or reading credentials",
+            "Check local dependency versions, the configured AWS profile, optional usage program setup and catalog health without network calls or reading credentials",
         handler: async (args, ctx) => {
             if (args.trim()) {
                 ctx.ui.notify("Usage: /bedrock-doctor", "warning");
@@ -322,10 +352,16 @@ export function registerStatisticsCommands(
                 async (signal) => {
                     const h = await checkLocalDependencies(config, { signal }),
                         cached = statistics.load("monthly");
+                    const choice: ProfileChoice = sources.profiles
+                        ? await sources.profiles.resolve({ stored: sources.stored?.(), signal })
+                        : { profile: config.profile };
+                    const m = markers(sources.env ?? process.env);
                     return [
-                        "Local checks only; no AWS calls, credential reads, login or model invocation.",
+                        "Local checks only; no network calls, credential reads, login or model invocation.",
                         ...dependencyLines(h),
-                        `Profile configuration: loaded · configured regions: ${config.regions.length} · approved catalog: ${sources.catalog.load() ? "loaded" : "unavailable"}`,
+                        profileLine(choice, m),
+                        discoveryLine(config, m),
+                        sources.catalog.load() ? `${m.ok} Catalog: loaded` : `${m.skip} Catalog: not loaded`,
                         cached
                             ? `usage program report contract: ${cached.report.contract} · ${cached.stale ? "stale" : "fresh"} · ${cached.refreshFailed ? "last refresh failed" : "last refresh succeeded"}`
                             : "usage program report: unavailable; /bedrock-usage tests the read-only statistics path.",
@@ -334,7 +370,7 @@ export function registerStatisticsCommands(
                                   "Install usage program's prerequisites and set usageDir to the directory containing its executable usage file. Shell aliases and RC functions are not used.",
                               ]
                             : []),
-                        "usage program is optional for model use. /aws-login handles sign-in; /bedrock-refresh refreshes the catalog.",
+                        "usage program is optional for model use. /login chooses the AWS profile; /aws-login renews its SSO session; /bedrock-refresh refreshes the catalog.",
                     ];
                 },
                 active,

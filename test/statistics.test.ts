@@ -286,7 +286,7 @@ test("slash commands validate closed arguments and display separate local and us
         else process.env.PATH = originalPath;
     }
     assert.equal(calls, 1);
-    assert.match(h.notifications.pop()!, /no AWS calls/);
+    assert.match(h.notifications.pop()!, /no network calls/);
 });
 test("closing the native statistics dialog cancels its usage program work", async (t) => {
     let aborted = false;

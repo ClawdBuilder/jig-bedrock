@@ -2,7 +2,8 @@
 // variables win. Diagnostics name fields and never echo configuration values or parser output.
 //
 //   team               your exact AWS "Team" tag value: the inference profiles that carry it (and Active=true) are the models
-//   profile            the AWS profile to sign in with (default my-bedrock-profile)
+//   profile            the AWS profile to sign in with; absent means /login's choice, then AWS_PROFILE, then the
+//                      default profile if AWS lists it (no placeholder)
 //   regions            where to look for profiles (default us-east-1)
 //   usageDir             a folder holding an executable named usage that prints the usage JSON (optional; default ~/.local/share/usage-tool)
 //   monthlyBudgetUsd   a figure to show in the footer next to the month's spend; not an AWS limit (optional)
@@ -28,7 +29,10 @@ export interface ResolvedConfig {
     profiles?: string[];
     /** Derived: explicit, tag or system. */
     mode?: "explicit" | "tag" | "system";
-    profile: string;
+    /** Unset when the person has not configured one; the resolver in profile.ts fills it in. */
+    profile?: string;
+    /** Where an explicitly configured profile came from, for diagnostics. */
+    profileSource?: "setting" | "env";
     regions: string[];
     usageDir: string;
     monthlyBudgetUsd?: number;
@@ -68,7 +72,6 @@ export const FIELDS = [
 ] as const;
 
 export const DEFAULTS = {
-    profile: "my-bedrock-profile",
     regions: ["us-east-1"],
     usageDir: "~/.local/share/usage-tool",
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
@@ -133,7 +136,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     ) {
         problems.push("bedrock.profiles must be a nonempty list of up to 256 unique inference-profile ARNs or ids");
     }
-    if (typeof profile !== "string" || !profilePattern.test(profile)) {
+    if (profile !== undefined && (typeof profile !== "string" || !profilePattern.test(profile))) {
         problems.push(
             "bedrock.profile must be an AWS profile name: 1-128 letters, digits, underscores, dots or hyphens, starting with a letter or digit",
         );
@@ -219,10 +222,19 @@ export function loadConfig(
     if (env.JIG_BEDROCK_TEAM !== undefined) c.team = env.JIG_BEDROCK_TEAM;
     if (env.JIG_BEDROCK_TAG_KEY !== undefined) c.tagKey = env.JIG_BEDROCK_TAG_KEY;
     if (env.JIG_BEDROCK_TAG_VALUE !== undefined) c.tagValue = env.JIG_BEDROCK_TAG_VALUE;
-    if (env.JIG_BEDROCK_PROFILE !== undefined) c.profile = env.JIG_BEDROCK_PROFILE;
+    let profileSource: "setting" | "env" | undefined =
+        typeof c.profile === "string" && c.profile !== "" ? "setting" : undefined;
+    if (env.JIG_BEDROCK_PROFILE !== undefined) {
+        c.profile = env.JIG_BEDROCK_PROFILE;
+        profileSource = "env";
+    }
     if (env.JIG_BEDROCK_USAGE_DIR !== undefined) c.usageDir = env.JIG_BEDROCK_USAGE_DIR;
     if (env.JIG_BEDROCK_REGIONS !== undefined)
         c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
+    if (typeof c.profile === "string" && c.profile.trim() === "") {
+        delete c.profile;
+        profileSource = undefined;
+    }
     const [problem] = problemsOf(c);
     if (problem !== undefined) return { error: `${problem}.` };
     const team = typeof c.team === "string" && c.team !== "" ? c.team : undefined;
@@ -230,6 +242,7 @@ export function loadConfig(
     const explicit = Array.isArray(c.profiles) && c.profiles.length > 0;
     c.team = team;
     c.tagValue = tagValue;
+    if (profileSource !== undefined) c.profileSource = profileSource;
     c.mode = explicit ? "explicit" : tagValue !== undefined || c.tagKey !== undefined ? "tag" : "system";
     // Legacy team settings keep Active=true unless the user sets an active tag key.
     if (c.mode === "tag" && c.activeTagKey === undefined && team !== undefined)

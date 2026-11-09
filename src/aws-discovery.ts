@@ -94,8 +94,9 @@ export function createAwsDiscovery(
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
     const activeKey = config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
     const activeValue = config.activeTagValue ?? "true";
-    const scope = { ...config, mode, team: config.team };
-    const load = () => (invalidAccount ? undefined : readCatalog(file, scope, now()));
+    // Rebuilt per call: the profile is resolved once a session starts, after this object exists.
+    const scope = () => ({ ...config, mode, team: config.team });
+    const load = () => (invalidAccount ? undefined : readCatalog(file, scope(), now()));
     const perform = async (force = false): Promise<Status> => {
         let remaining = 8 * 1_048_576,
             pages = 0,
@@ -105,7 +106,13 @@ export function createAwsDiscovery(
             if (timeout <= 0) throw new Error("timeout");
             const output = await runner(
                 "aws",
-                [...args, "--profile", config.profile, "--output", "json", "--no-cli-pager"],
+                [
+                    ...args,
+                    ...(config.profile ? ["--profile", config.profile] : []),
+                    "--output",
+                    "json",
+                    "--no-cli-pager",
+                ],
                 { timeout, maxBuffer: Math.min(remaining, 1_048_576) },
             );
             remaining -= Buffer.byteLength(output);
@@ -115,12 +122,12 @@ export function createAwsDiscovery(
         };
         try {
             if (!force && !invalidAccount) {
-                const cached = readCatalog(file, scope, now());
+                const cached = readCatalog(file, scope(), now());
                 if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
             const account = (await aws(["sts", "get-caller-identity"])).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
-            const old = readCatalog(file, scope, now());
+            const old = readCatalog(file, scope(), now());
             if (old && old.account_id !== account) {
                 invalidAccount = true;
                 rmSync(file, { force: true });
@@ -312,11 +319,11 @@ export function createAwsDiscovery(
                 schema: 1,
                 mode,
                 team: config.team,
-                aws_profile: config.profile,
+                aws_profile: config.profile ?? "",
                 account_id: account,
                 regions: config.regions,
                 fetched_at: Math.floor(now() / 1000),
-                filter_hash: filterHash(scope),
+                filter_hash: filterHash(scope()),
                 ...(warnings.length > 0 ? { warnings } : {}),
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),

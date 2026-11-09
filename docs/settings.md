@@ -1,7 +1,7 @@
 # Settings
 
 Every setting of the `bedrock` section, the three discovery modes, and where each value comes from. The provider reads
-the settings once at Pi start: reload Pi after a change.
+the settings at Pi start and resolves the profile when the session starts, so `/login` takes effect without a reload.
 
 ## Where settings come from
 
@@ -14,24 +14,39 @@ applies the environment on top. A plain Pi install has no `jig.json`: the file a
 
 ## Every setting
 
-| Setting            | Default                                         | Meaning                                                                           |
-| ------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------- |
-| `profile`          | `my-bedrock-profile`                            | The AWS profile for discovery, requests and sign-in; the default is a placeholder |
-| `regions`          | `["us-east-1"]`                                 | Where to look for profiles                                                        |
-| `team`             | none                                            | Tag mode: the value of the `Team` tag                                             |
-| `tagKey`           | `Team` in tag mode                              | Tag mode: the tag name to filter on                                               |
-| `tagValue`         | the value of `team`                             | Tag mode: the tag value to filter on                                              |
-| `activeTagKey`     | none                                            | Tag mode: an extra tag that must also match                                       |
-| `activeTagValue`   | `true` when `team` is set                       | Tag mode: the extra tag's value                                                   |
-| `profiles`         | none                                            | Explicit mode: inference-profile ARNs or ids                                      |
-| `usageDir`         | `~/.local/share/usage-tool`                     | The folder holding the optional `usage` program                                   |
-| `monthlyBudgetUsd` | none                                            | A figure for the footer; not an AWS limit                                         |
-| `ssoLoginCommand`  | `["aws","sso","login","--profile","{profile}"]` | The argv that starts sign-in; `{profile}` is replaced                             |
-| `signInAtStart`    | `true`                                          | Refresh an expired SSO session when Pi starts                                     |
-| `browser`          | unset                                           | The program that opens the sign-in address                                        |
-| `api`              | `messages`                                      | `messages` (the Anthropic Messages route) or `converse`                           |
+| Setting            | Default                                         | Meaning                                                 |
+| ------------------ | ----------------------------------------------- | ------------------------------------------------------- |
+| `profile`          | unset                                           | The AWS profile for discovery, requests and sign-in     |
+| `regions`          | `["us-east-1"]`                                 | Where to look for profiles                              |
+| `team`             | none                                            | Tag mode: the value of the `Team` tag                   |
+| `tagKey`           | `Team` in tag mode                              | Tag mode: the tag name to filter on                     |
+| `tagValue`         | the value of `team`                             | Tag mode: the tag value to filter on                    |
+| `activeTagKey`     | none                                            | Tag mode: an extra tag that must also match             |
+| `activeTagValue`   | `true` when `team` is set                       | Tag mode: the extra tag's value                         |
+| `profiles`         | none                                            | Explicit mode: inference-profile ARNs or ids            |
+| `usageDir`         | `~/.local/share/usage-tool`                     | The folder holding the optional `usage` program         |
+| `monthlyBudgetUsd` | none                                            | A figure for the footer; not an AWS limit               |
+| `ssoLoginCommand`  | `["aws","sso","login","--profile","{profile}"]` | The argv that starts sign-in; `{profile}` is replaced   |
+| `signInAtStart`    | `true`                                          | Refresh an expired SSO session when Pi starts           |
+| `browser`          | unset                                           | The program that opens the sign-in address              |
+| `api`              | `messages`                                      | `messages` (the Anthropic Messages route) or `converse` |
 
-The package never handles a password or token: `ssoLoginCommand` starts the owning tool's login.
+The package never handles a password or token: `ssoLoginCommand` starts the owning tool's login, and `/login` stores
+only the profile name (in Pi's `auth.json`, as `env.AWS_PROFILE`).
+
+### Where the profile comes from
+
+When `profile` is unset, the provider takes the first of these that exists:
+
+1. the `profile` setting (or `JIG_BEDROCK_PROFILE`, which overrides it);
+2. the profile chosen at `/login`, kept in Pi's credential for this provider;
+3. `AWS_PROFILE`;
+4. `AWS_DEFAULT_PROFILE`;
+5. the `default` profile, when `aws configure list-profiles` names it;
+6. with none of those, the AWS credential chain (environment, container or instance role).
+
+A configured profile that `aws configure list-profiles` does not name resolves to no models: the start-up notice and
+`/bedrock-doctor` say which profile is missing and point to `/login`.
 
 `signInAtStart: false` leaves sign-in to a failing request or `/aws-login`. The start-up check still runs read-only, and
 an expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”

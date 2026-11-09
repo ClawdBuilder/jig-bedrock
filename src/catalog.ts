@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { ProviderAuth } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
     ExtensionContext,
@@ -157,7 +158,7 @@ export function readCatalog(
         activeTagKey?: string;
         activeTagValue?: string;
         profiles?: string[];
-        profile: string;
+        profile?: string;
         regions: string[];
     },
     now = Date.now(),
@@ -166,7 +167,7 @@ export function readCatalog(
     const directory = dirname(file);
     if (
         (expected.team !== undefined && !label(expected.team, 256)) ||
-        !label(expected.profile, 128) ||
+        (expected.profile !== undefined && !label(expected.profile, 128)) ||
         !expected.regions.length ||
         new Set(expected.regions).size !== expected.regions.length
     )
@@ -183,7 +184,7 @@ export function readCatalog(
             (c.mode === undefined
                 ? expected.mode !== "tag" || c.filter_hash !== undefined
                 : c.mode !== expected.mode || c.filter_hash !== filterHash(expected)) ||
-            c.aws_profile !== expected.profile ||
+            c.aws_profile !== (expected.profile ?? "") ||
             typeof c.account_id !== "string" ||
             !/^\d{12}$/.test(c.account_id) ||
             !Array.isArray(c.regions) ||
@@ -398,6 +399,11 @@ export function resolveSelection(models: readonly TeamBedrockModel[], selection:
     return matches.length === 1 ? matches[0] : undefined;
 }
 type Stream = NonNullable<ProviderConfig["streamSimple"]>;
+/** What the provider needs at request time: the current profile (or none) and its own auth, never Pi's Bedrock auth. */
+export interface BedrockIdentity {
+    profile: () => string | undefined;
+    auth: ProviderAuth;
+}
 export interface BedrockStreams {
     /** Pi's Bedrock Converse stream, from its own `amazon-bedrock` provider. */
     converse: Stream;
@@ -408,7 +414,7 @@ export function bedrockStream(
     models: readonly TeamBedrockModel[],
     streams: BedrockStreams,
     load: () => Catalog | undefined,
-    profile?: string,
+    profile: () => string | undefined,
     signedFetch?: typeof globalThis.fetch,
 ): Stream {
     const approved = [...models];
@@ -422,26 +428,27 @@ export function bedrockStream(
             )
         )
             throw new Error("Unapproved Bedrock profile; choose an available model with /model.");
+        const current = profile();
+        // A key or bearer token is never this provider's auth, and a different profile is never borrowed silently.
         if (
-            profile &&
-            (options?.apiKey ||
-                (options as Json)?.bearerToken ||
-                ((options as Json)?.profile && (options as Json).profile !== profile) ||
-                (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== profile))
+            options?.apiKey ||
+            (options as Json)?.bearerToken ||
+            (options?.env?.AWS_BEARER_TOKEN_BEDROCK ?? process.env.AWS_BEARER_TOKEN_BEDROCK) !== undefined ||
+            (current !== undefined &&
+                (((options as Json)?.profile && (options as Json).profile !== current) ||
+                    (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== current)))
         )
             throw new Error("Unapproved Bedrock authentication scope; choose the configured profile with /model.");
-        const scoped = profile
-            ? {
-                  ...options,
-                  profile,
-                  env: {
-                      ...options?.env,
-                      AWS_PROFILE: profile,
-                      AWS_BEARER_TOKEN_BEDROCK: "",
-                      AWS_BEDROCK_SKIP_AUTH: "0",
-                  },
-              }
-            : options;
+        const scoped = {
+            ...options,
+            ...(current === undefined ? {} : { profile: current }),
+            env: {
+                ...options?.env,
+                ...(current === undefined ? {} : { AWS_PROFILE: current }),
+                AWS_BEARER_TOKEN_BEDROCK: "",
+                AWS_BEDROCK_SKIP_AUTH: "0",
+            },
+        };
         const wire = { ...model, ...physical, id: physical.arn, provider: "amazon-bedrock" as const };
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
@@ -474,7 +481,7 @@ export async function registerTeamBedrock(
     native?: import("@earendil-works/pi-ai").Provider,
     models: TeamBedrockModel[] = [],
     load: () => Catalog | undefined = () => undefined,
-    profile?: string,
+    identity: BedrockIdentity = { profile: () => undefined, auth: {} },
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
 ): Promise<TeamBedrockModel[]> {
@@ -493,27 +500,14 @@ export async function registerTeamBedrock(
     pi.registerProvider({
         id: JIG_BEDROCK,
         name: "Bedrock (Jig)",
-        auth: profile
-            ? {
-                  ...native.auth,
-                  apiKey: {
-                      ...native.auth?.apiKey,
-                      name: native.auth?.apiKey?.name ?? "AWS profile",
-                      resolve: async () => ({
-                          auth: {},
-                          env: { AWS_PROFILE: profile },
-                          source: "configured AWS profile",
-                      }),
-                  },
-              }
-            : native.auth,
+        auth: identity.auth,
         getModels: () => picker,
         getAllModels: () => picker,
         stream: bedrockStream(
             models,
             { converse: native.stream as Stream, ...(messages ? { messages: messages.stream } : {}) },
             load,
-            profile,
+            identity.profile,
             signedFetch,
         ) as typeof native.stream,
         streamSimple: bedrockStream(
@@ -523,7 +517,7 @@ export async function registerTeamBedrock(
                 ...(messages ? { messages: messages.streamSimple } : {}),
             },
             load,
-            profile,
+            identity.profile,
             signedFetch,
         ),
     });

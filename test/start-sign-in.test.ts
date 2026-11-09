@@ -19,7 +19,7 @@ async function scenario(signInAtStart: boolean, uiMode = "tui") {
     };
     registerSignInAtStart(pi as any, {
         signInAtStart,
-        profile: "work",
+        profile: () => "work",
         recover: async () => {
             recovered++;
         },
