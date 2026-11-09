@@ -5,7 +5,14 @@ import type { TeamBedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { checkLocalDependencies, dependencyLines } from "./doctor.ts";
 import { type Markers, markers } from "./markers.ts";
-import { LOGIN_PATH, NO_PROFILE, type ProfileChoice, type ProfileResolver, sourceLabel } from "./profile.ts";
+import {
+    type ListProfiles,
+    LOGIN_PATH,
+    NO_PROFILE,
+    type ProfileChoice,
+    type ProfileResolver,
+    sourceLabel,
+} from "./profile.ts";
 import { cacheWriteRate } from "./prompt-cache.ts";
 import {
     periodLabels,
@@ -242,6 +249,8 @@ export function registerStatisticsCommands(
         /** Resolves the profile for the doctor; absent in a test that only exercises another command. */
         profiles?: ProfileResolver;
         stored?: () => string | undefined;
+        /** The longer listing /login uses, so the doctor does not call a slow AWS CLI missing. */
+        listProfiles?: ListProfiles;
         env?: NodeJS.ProcessEnv;
     },
 ): void {
@@ -352,9 +361,13 @@ export function registerStatisticsCommands(
                 async (signal) => {
                     const h = await checkLocalDependencies(config, { signal }),
                         cached = statistics.load("monthly");
-                    const choice: ProfileChoice = sources.profiles
+                    let choice: ProfileChoice = sources.profiles
                         ? await sources.profiles.resolve({ stored: sources.stored?.(), signal })
                         : { profile: config.profile };
+                    if (choice.profile !== undefined && choice.exists === undefined && sources.listProfiles) {
+                        const listed = await sources.listProfiles(signal);
+                        if (listed !== undefined) choice = { ...choice, exists: listed.includes(choice.profile) };
+                    }
                     const m = markers(sources.env ?? process.env);
                     return [
                         "Local checks only; no network calls, credential reads, login or model invocation.",
