@@ -195,7 +195,7 @@ test("config precedence and invalid or missing teams fail closed without throwin
         ["file-team", "file-profile", ["us-west-2"], 25],
     );
     assert.deepEqual(resolveConfig({ team: "t" })!.ssoLoginCommand, ["aws", "sso", "login", "--profile", "{profile}"]);
-    assert.equal(resolveConfig({ team: "t" })!.profile, "my-bedrock-profile");
+    assert.equal(resolveConfig({ team: "t" })!.profile, undefined);
     assert.equal(resolveConfig({ team: "t" })!.usageDir, "~/.local/share/usage-tool");
     for (const team of ["", " ", "bad\nteam", "x".repeat(257)])
         assert.equal(resolveConfig(undefined, { JIG_BEDROCK_TEAM: team }), undefined);
@@ -448,7 +448,7 @@ test("standalone stream blocks unknown, removed and cross-scope profiles before 
             }) as any,
         },
         source.load,
-        config.profile,
+        () => config.profile,
     );
     assert.equal(stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), "ok");
     assert.throws(() => stream({ ...models[0], provider: "amazon-bedrock" } as any, {} as any), /Unapproved/);

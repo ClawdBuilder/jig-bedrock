@@ -9,8 +9,8 @@ import type { SsoState } from "./sso-check.ts";
 export interface StartSignIn {
     /** Whether an expired session signs in at once; false still checks read-only and says the models are not loaded. */
     signInAtStart?: boolean;
-    /** The AWS profile the provider signs in with. */
-    profile: string;
+    /** The AWS profile the provider signs in with, resolved when the check runs; undefined means none is configured. */
+    profile: () => string | undefined;
     /** The shared recovery (`shareRecovery`), the one /aws-login and a request go through. */
     recover: Recover;
     check(profile: string, signal: AbortSignal): Promise<SsoState>;
@@ -28,15 +28,17 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         // Let session start finish before anything is read: the check reads files and may load the AWS SDK.
         await new Promise((resolve) => setImmediate(resolve));
         if (signal.aborted) return;
-        const state = await start.check(start.profile, signal);
+        const profile = start.profile();
+        if (profile === undefined) return;
+        const state = await start.check(profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
         if (start.signInAtStart === false) {
             ctx.ui.notify("Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.", "warning");
             return;
         }
-        ctx.ui.notify(`AWS sign-in for ${start.profile} has expired; signing in, your browser opens.`, "info");
+        ctx.ui.notify(`AWS sign-in for ${profile} has expired; signing in, your browser opens.`, "info");
         try {
-            await start.recover(start.profile, signal, "warmup");
+            await start.recover(profile, signal, "warmup");
         } catch (error) {
             // A request that joined this sign-in tells its own failure (streamed); a shutdown is nobody's failure.
             if (!signal.aborted && !(error instanceof SsoRecoveryError && error.streamed)) {
@@ -45,7 +47,7 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
             return;
         }
         if (signal.aborted) return;
-        ctx.ui.notify(`AWS sign-in for ${start.profile} is restored.`, "info");
+        ctx.ui.notify(`AWS sign-in for ${profile} is restored.`, "info");
         await start.refresh().catch(() => {});
     };
     pi.on("session_start", (event, ctx) => {

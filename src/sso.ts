@@ -2,6 +2,7 @@ import type { AssistantMessage, AssistantMessageEventStream, SimpleStreamOptions
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { profilePattern } from "./config.ts";
 import { isJigBedrock } from "./identity.ts";
+import { NO_PROFILE } from "./profile.ts";
 
 type Stream = NonNullable<ProviderConfig["streamSimple"]>;
 
@@ -260,7 +261,7 @@ export function withSsoRecovery(
 export async function registerBedrockSsoRecovery(
     pi: ExtensionAPI,
     recovery: Recover,
-    defaultProfile?: string,
+    defaultProfile?: () => string | undefined,
 ): Promise<RecoveredBedrock> {
     // Not worth deferring: Pi has already loaded both modules, so inside Pi these imports and builtinProviders() take about 1-5 ms
     // together (measured), while the models for /model need the native provider's metadata at registration anyway.
@@ -287,8 +288,14 @@ export async function registerBedrockSsoRecovery(
                 ctx.model && isJigBedrock(ctx.model)
                     ? await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)
                     : undefined;
-            const profile = args.trim() || defaultProfile || profileFor(auth?.ok ? auth : undefined);
-            if (!profile || !profilePattern.test(profile)) {
+            const fromEnvironment = profileFor(auth?.ok ? auth : undefined);
+            const profile =
+                args.trim() || defaultProfile?.() || (fromEnvironment === "default" ? undefined : fromEnvironment);
+            if (!profile) {
+                ctx.ui.notify(NO_PROFILE, "warning");
+                return;
+            }
+            if (!profilePattern.test(profile)) {
                 ctx.ui.notify("Use /aws-login [AWS profile name].", "warning");
                 return;
             }

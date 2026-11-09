@@ -246,7 +246,7 @@ describe("the check", () => {
                 },
             } as never,
             {
-                profile: "static-keys",
+                profile: () => "static-keys",
                 check: (profile, signal) => checkSso(profile, deps, signal),
                 recover: async () => {
                     recovered++;

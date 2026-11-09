@@ -161,7 +161,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
                 }) as never,
             },
             () => catalog,
-            "fixture-profile",
+            () => "fixture-profile",
             signedFetch,
         );
         const result = (messages as unknown as (m: unknown, c: unknown, o: unknown) => unknown)(
@@ -192,7 +192,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
                 }) as never,
             },
             () => catalog,
-            "fixture-profile",
+            () => "fixture-profile",
             signedFetch,
         );
         (hooked as unknown as (m: unknown, c: unknown, o: unknown) => unknown)(
@@ -219,7 +219,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
                 }) as never,
             },
             () => catalog,
-            "fixture-profile",
+            () => "fixture-profile",
             signedFetch,
         );
         (converse as unknown as (m: unknown, c: unknown, o: unknown) => unknown)(

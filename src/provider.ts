@@ -28,11 +28,13 @@ import { registerStatisticsCommands } from "./commands.ts";
 import type { ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { MODEL_NAMES_EVENT, modelNames, SEGMENT_EVENT, spendSegment } from "./events.ts";
-import { isJigBedrock } from "./identity.ts";
+import { isJigBedrock, JIG_BEDROCK } from "./identity.ts";
 import type { JigApi } from "./jig/types.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
+import type { ListProfiles, ProfileChoice } from "./profile.ts";
+import { createListProfiles, createProfileAuth, missingProfileNotice, NO_PROFILE, ProfileResolver } from "./profile.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
@@ -61,6 +63,10 @@ export interface BedrockOptions {
     login?: Omit<RecoveryOptions, "say">;
     /** Whether the profile's SSO session is still good, for the sign-in at start. Without it the AWS SDK in Pi's install answers. */
     ssoCheck?: (profile: string, signal: AbortSignal) => Promise<SsoState>;
+    /** `aws configure list-profiles`, for tests. */
+    listProfiles?: ListProfiles;
+    /** The same listing with /login's longer timeout, for tests. */
+    loginListProfiles?: ListProfiles;
     budget?: BudgetSource;
     statistics?: StatisticsSource;
     events?: EventNames;
@@ -156,6 +162,17 @@ export function createJigBedrock(
             );
             return undefined;
         }
+        // Where the profile comes from, resolved once a session starts: the setting, /login's credential, the AWS
+        // environment, then the default profile. Pi's credential is read through its registry, never from auth.json.
+        const profileEnv = options.env ?? (options.config === undefined ? process.env : {});
+        const profiles = new ProfileResolver({
+            settings: { setting: config.profile, settingSource: config.profileSource, env: profileEnv },
+            ...(options.listProfiles === undefined ? {} : { listProfiles: options.listProfiles }),
+        });
+        const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
+        let lastChoice: ProfileChoice = {};
+        const auth = createProfileAuth(profiles, options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        const identity = { profile: currentProfile, auth };
         const catalog = options.catalog ?? createAwsDiscovery(config);
         const statistics = options.statistics ?? createStatistics(config);
         const budget = options.budget ?? createBudget(config, undefined, undefined, undefined, statistics);
@@ -192,7 +209,6 @@ export function createJigBedrock(
             });
             if (usageEvents) pi.events?.emit(MODEL_NAMES_EVENT, modelNames(models));
         };
-        const authProfile = options.preserveNativeAuth ? undefined : config.profile;
         // A repair the sign-in makes for WSL is told in one line, the way the notices of a waiting request are.
         const say = (line: string): void => {
             if (ctx) noticeFor(ctx)(line, "info");
@@ -206,20 +222,33 @@ export function createJigBedrock(
                       credentials:
                           options.credentials ??
                           (() => {
-                              // One chain, made on the first request: it caches the SSO role's credentials and refreshes them.
-                              let chain: (() => Promise<AwsCredentials>) | undefined;
+                              // One chain per profile, made on the first request: it caches the role's credentials and
+                              // refreshes them. No profile means the SDK's own chain (environment, container, instance).
+                              const host = findPiHost(options.env);
+                              let chain:
+                                  | { profile: string | undefined; load: () => Promise<AwsCredentials> }
+                                  | undefined;
                               return async () => {
-                                  chain ??= loadCredentialProvider(findPiHost(options.env))({
-                                      profile: authProfile ?? config.profile,
-                                  }) as () => Promise<AwsCredentials>;
-                                  return chain();
+                                  const profile = currentProfile();
+                                  let entry = chain;
+                                  if (entry === undefined || entry.profile !== profile) {
+                                      const provider = loadCredentialProvider(host);
+                                      entry = {
+                                          profile,
+                                          load: provider(
+                                              profile === undefined ? {} : { profile },
+                                          ) as () => Promise<AwsCredentials>,
+                                      };
+                                      chain = entry;
+                                  }
+                                  return entry.load();
                               };
                           })(),
                       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
                   })
                 : undefined;
         try {
-            const recovered = await registerBedrockSsoRecovery(pi, recovery, authProfile);
+            const recovered = await registerBedrockSsoRecovery(pi, recovery, currentProfile);
             native = recovered.provider;
             messages = recovered.messages;
             usePiRegistry(native);
@@ -230,7 +259,7 @@ export function createJigBedrock(
                 native,
                 models,
                 catalog.load,
-                authProfile,
+                identity,
                 messages,
                 signedFetch,
             );
@@ -274,7 +303,7 @@ export function createJigBedrock(
                     native,
                     models,
                     catalog.load,
-                    authProfile,
+                    identity,
                     messages,
                     signedFetch,
                 );
@@ -282,20 +311,22 @@ export function createJigBedrock(
             provider();
             return status;
         };
-        // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not in a child:
-        // the parent does it, and a second window from a child would be one nobody expects.
-        if (!child && authProfile !== undefined) {
-            registerSignInAtStart(pi, {
-                signInAtStart: config.signInAtStart,
-                profile: authProfile,
-                recover: shareRecovery(recovery),
-                check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
-                refresh: () => refresh(false),
-            });
-        }
         pi.registerCommand("bedrock-refresh", {
             description: "Refresh your Bedrock models",
             handler: async (_args, context) => {
+                if (!options.preserveNativeAuth) {
+                    // The profile may have just changed at /login: resolve it again before discovery, so a refresh
+                    // does not need a reload.
+                    lastChoice = await resolveProfile(context);
+                    if (lastChoice.ambient !== true && lastChoice.profile === undefined) {
+                        context.ui.notify(NO_PROFILE, "warning");
+                        return;
+                    }
+                    if (lastChoice.profile !== undefined && lastChoice.exists === false) {
+                        context.ui.notify(missingProfileNotice(lastChoice), "warning");
+                        return;
+                    }
+                }
                 const status = await refresh();
                 context.ui.notify(
                     status === "ok"
@@ -305,23 +336,64 @@ export function createJigBedrock(
                 );
             },
         });
-        registerStatisticsCommands(pi, { config, statistics, catalog, models: () => models, budget, publish });
-        pi.on("session_start", (_event, context) => {
+        registerStatisticsCommands(pi, {
+            config,
+            statistics,
+            catalog,
+            models: () => models,
+            budget,
+            publish,
+            profiles,
+            stored: () => profiles.stored,
+            env: profileEnv,
+        });
+        const resolveProfile = async (context: ExtensionContext): Promise<ProfileChoice> => {
+            if (!options.preserveNativeAuth) {
+                // Pi resolves this provider's auth from its credential store; the credential is passed to the provider's
+                // resolve, which records /login's env.AWS_PROFILE here. Nothing reads auth.json.
+                const registry = (
+                    context as {
+                        modelRegistry?: { getProviderAuth?: (id: string) => Promise<unknown> };
+                    }
+                ).modelRegistry;
+                try {
+                    await registry?.getProviderAuth?.(JIG_BEDROCK);
+                } catch {}
+            }
+            const choice = await profiles.resolve({ signal: lifetime.signal });
+            config.profile = choice.profile;
+            lastChoice = choice;
+            return choice;
+        };
+        pi.on("session_start", async (_event, context) => {
             disposed = false;
             ctx = context;
+            const choice = await resolveProfile(context);
             provider();
             if (usageEvents) publish();
             const unavailable = readModels().unavailable;
-            if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
+            if (options.preserveNativeAuth) {
+                // The native provider's own credentials decide; nothing here is reported.
+            } else if (choice.ambient === true) {
+                if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
+            } else if (choice.profile === undefined) {
+                context.ui.notify(NO_PROFILE, "warning");
+            } else if (choice.problem !== undefined) {
+                context.ui.notify(choice.problem, "warning");
+            } else if (choice.exists === false) {
+                context.ui.notify(missingProfileNotice(choice), "warning");
+            } else if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
             else if (unavailable.length > 0)
                 context.ui.notify(
                     `${unavailable.length} Bedrock profiles unavailable: ${unavailable[0]?.reason}`,
                     "warning",
                 );
             else if (!models.length)
-                context.ui.notify("Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.", "warning");
-            // Start in the background; session startup never awaits AWS or usage program.
-            if (backgroundRefresh) void refresh(false).catch(() => {});
+                context.ui.notify("Bedrock models are not loaded yet; checking your AWS profiles now.", "info");
+            // Start in the background; session startup never awaits AWS or usage program. No profile and no ambient
+            // chain means discovery cannot succeed, so it is not started (the notice above already says what to do).
+            const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);
+            if (backgroundRefresh && canRefresh) void refresh(false).catch(() => {});
             if (usageEvents && context.mode === "tui") {
                 const tick = (): void => {
                     if (isJigBedrock(ctx?.model)) {
@@ -336,6 +408,18 @@ export function createJigBedrock(
                 timer.unref();
             }
         });
+        // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not
+        // in a child: the parent does it, and a second window from a child would be one nobody expects. Registered after
+        // the handler above, so the profile it resolves is already in force.
+        if (!child) {
+            registerSignInAtStart(pi, {
+                signInAtStart: config.signInAtStart,
+                profile: () => currentProfile(),
+                recover: shareRecovery(recovery),
+                check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
+                refresh: () => refresh(false),
+            });
+        }
         if (usageEvents) pi.on("model_select", publish);
         pi.on("session_shutdown", () => {
             lifetime.abort();

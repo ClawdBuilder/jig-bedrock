@@ -27,18 +27,21 @@ calling AWS.
 ## Settings
 
 With Jig, add a `bedrock` section to `jig.json`. A plain Pi install has no `jig.json`: put the same keys in
-`~/.pi/agent/bedrock.json`. Nothing is required, but `profile` defaults to a placeholder: set the AWS profile you use.
+`~/.pi/agent/bedrock.json`. Nothing is required: `/login` → Sign in with an API key → Amazon Bedrock
+(jig-bedrock) chooses the AWS profile, or set `bedrock.profile`.
 
 ```json
 { "bedrock": { "profile": "my-aws-profile", "regions": ["us-east-1"] } }
 ```
 
-| Setting   | Default              | Meaning                                                     |
-| --------- | -------------------- | ----------------------------------------------------------- |
-| `profile` | `my-bedrock-profile` | The AWS profile for discovery, requests and sign-in         |
-| `regions` | `["us-east-1"]`      | Where to look for profiles                                  |
-| `team`    | none                 | Your `Team` tag value: narrows discovery to tagged profiles |
-| `api`     | `messages`           | `messages` (cache-friendly) or `converse`                   |
+| Setting   | Default         | Meaning                                                                 |
+| --------- | --------------- | ----------------------------------------------------------------------- |
+| `profile` | unset           | The AWS profile for discovery, requests and sign-in; `/login` stores it |
+| `regions` | `["us-east-1"]` | Where to look for profiles                                              |
+| `team`    | none            | Your `Team` tag value: narrows discovery to tagged profiles             |
+| `api`     | `messages`      | `messages` (cache-friendly) or `converse`                               |
+
+A profile chosen at `/login` is Pi's credential for this provider: the record holds the profile name, never a key.
 
 With no tag settings, discovery lists every AWS-defined cross-region Claude profile in `regions`. `team` or
 `tagKey`/`tagValue` narrows it to tagged application profiles, and `profiles` names profiles explicitly. A successful
