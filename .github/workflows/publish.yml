@@ -1,22 +1,32 @@
-# A tag publishes only a commit whose ci-ok check succeeded, and only when the tag names package.json's version. The tag
-# is the release; there is no branch publish path. npm authenticates through Trusted Publishing (GitHub OIDC), so the
-# job holds no npm token and every publish carries provenance.
+# A tag publishes to npm through Trusted Publishing and then writes the GitHub release from that version's CHANGELOG
+# section. The tag is the release; there is no branch publish path. A manual run writes the page for a tag pushed before
+# this workflow existed: it never publishes to npm, and it does not make an old tag Latest.
 name: Publish
 
 on:
     push:
         tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: The tag to write a release page for, such as v0.2.1.
+                required: true
+                type: string
 
+# Each job asks for what it uses: publishing needs the OIDC token, and only the release job may write the repository.
 permissions:
     contents: read
-    checks: read
-    id-token: write
 
 jobs:
     publish:
         name: Publish
+        if: github.event_name == 'push'
         runs-on: ubuntu-24.04
         timeout-minutes: 30
+        permissions:
+            contents: read
+            checks: read
+            id-token: write
         steps:
             - name: Check out the tagged commit
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +53,9 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
-            - name: The tag and package.json agree
+            # The tag, the manifest and the changelog are three names for one release. A tag that disagrees with either
+            # ships something other than what its notes say, so it fails here, before anything reaches npm.
+            - name: The tag, package.json and the changelog agree
               env:
                   TAG: ${{ github.ref_name }}
               run: |
@@ -53,6 +65,7 @@ jobs:
                     echo "::error::tag ${TAG} does not name package.json's version ${package}"
                     exit 1
                   fi
+                  node scripts/release-notes.mjs "${version}" > /dev/null
 
             - name: Require ci-ok on the tagged commit
               env:
@@ -65,5 +78,113 @@ jobs:
                     exit 1
                   fi
 
-            - name: Publish to npm
-              run: npm publish --provenance --access public
+            # A version already on npm is skipped only when its published tarball hash equals a fresh pack of this tag;
+            # a different hash fails. Re-running a release is therefore safe.
+            - name: Publish to npm, then confirm
+              run: |
+                  version="$(node -p "require('./package.json').version")"
+                  packdir="$(mktemp -d)"
+                  npm pack --json --pack-destination "${packdir}" > "${packdir}/pack.json"
+                  integrity="$(node -p "Object.values(require('${packdir}/pack.json'))[0].integrity")"
+                  published="$(npm view "@clawdbuilder/jig-bedrock@${version}" dist.integrity 2>/dev/null || true)"
+                  if [ -n "${published}" ]; then
+                    if [ "${published}" != "${integrity}" ]; then
+                      echo "::error::@clawdbuilder/jig-bedrock@${version} is already on npm with different content"
+                      echo "tag integrity: ${integrity}"
+                      echo "npm integrity: ${published}"
+                      exit 1
+                    fi
+                    echo "@clawdbuilder/jig-bedrock@${version} is already published with this content; nothing to publish"
+                  else
+                    npm publish --provenance --access public
+                  fi
+                  # npm can take minutes to show a new version. Wait up to ten minutes; a failure still names what npm
+                  # last reported, and re-running skips the publish when the tarball matches.
+                  got=""
+                  for attempt in $(seq 1 300); do
+                    got="$(npm view "@clawdbuilder/jig-bedrock@${version}" version 2>/dev/null || true)"
+                    [ "${got}" = "${version}" ] && break
+                    if [ $((attempt % 10)) -eq 1 ]; then
+                      echo "waiting for npm to report @clawdbuilder/jig-bedrock@${version} (last: ${got:-not found}); attempt ${attempt}/300"
+                    fi
+                    sleep 2
+                  done
+                  if [ "${got}" != "${version}" ]; then
+                    echo "::error::npm does not report @clawdbuilder/jig-bedrock@${version} after 10 minutes (last: ${got:-not found}); the publish may have succeeded, so re-run this job"
+                    exit 1
+                  fi
+
+    release:
+        name: Release
+        needs: publish
+        if: always() && (github.event_name == 'workflow_dispatch' || needs.publish.result == 'success')
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        permissions:
+            contents: write
+        steps:
+            # The tag's own commit, so its package.json and its CHANGELOG are the ones the release is about.
+            - name: Check out the tagged commit
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+                  persist-credentials: false
+
+            # A tag pushed before this workflow existed has no release-notes script of its own, so the script comes from
+            # the default branch and reads the tag's CHANGELOG through --root.
+            - name: Check out the release notes script
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.event.repository.default_branch }}
+                  path: workflow
+                  persist-credentials: false
+
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: 24
+
+            # The oldest tags predate CHANGELOG.md, so their notes come from the default branch's copy, which records
+            # every release. A tag with a changelog always uses its own.
+            - name: Find the changelog this tag has
+              env:
+                  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+              run: |
+                  root=.
+                  if [ ! -f CHANGELOG.md ]; then
+                    root=workflow
+                    echo "::warning::${TAG} has no CHANGELOG.md; its release page uses the default branch's changelog"
+                  fi
+                  echo "NOTES_ROOT=${root}" >> "${GITHUB_ENV}"
+
+            - name: The tag, package.json and the changelog agree
+              env:
+                  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+              run: |
+                  version="${TAG#v}"
+                  package="$(node -p "require('./package.json').version")"
+                  if [ "${version}" != "${package}" ]; then
+                    echo "::error::tag ${TAG} does not name package.json's version ${package}"
+                    exit 1
+                  fi
+                  node workflow/scripts/release-notes.mjs "${version}" --root "${NOTES_ROOT}" > /dev/null
+
+            # A rerun edits the page instead of failing. A page written for an older tag keeps that tag's place: only a
+            # tag push makes the newest version Latest.
+            - name: Write the release
+              env:
+                  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+                  EVENT: ${{ github.event_name }}
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  notes="$(mktemp)"
+                  node workflow/scripts/release-notes.mjs "${TAG#v}" --root "${NOTES_ROOT}" > "${notes}"
+                  latest=()
+                  if [ "${EVENT}" = "workflow_dispatch" ]; then
+                    latest=(--latest=false)
+                  fi
+                  if gh release view "${TAG}" > /dev/null 2>&1; then
+                    gh release edit "${TAG}" --title "${TAG}" --notes-file "${notes}"
+                  else
+                    gh release create "${TAG}" --title "${TAG}" --notes-file "${notes}" "${latest[@]}"
+                  fi
