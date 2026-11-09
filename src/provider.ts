@@ -34,7 +34,7 @@ import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
-import { createProfileAuth, missingProfileNotice, NO_PROFILE, ProfileResolver } from "./profile.ts";
+import { createListProfiles, createProfileAuth, missingProfileNotice, NO_PROFILE, ProfileResolver } from "./profile.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
@@ -65,6 +65,8 @@ export interface BedrockOptions {
     ssoCheck?: (profile: string, signal: AbortSignal) => Promise<SsoState>;
     /** `aws configure list-profiles`, for tests. */
     listProfiles?: ListProfiles;
+    /** The same listing with /login's longer timeout, for tests. */
+    loginListProfiles?: ListProfiles;
     budget?: BudgetSource;
     statistics?: StatisticsSource;
     events?: EventNames;
@@ -169,7 +171,7 @@ export function createJigBedrock(
         });
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
-        const auth = createProfileAuth(profiles);
+        const auth = createProfileAuth(profiles, options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
         const identity = { profile: currentProfile, auth };
         const catalog = options.catalog ?? createAwsDiscovery(config);
         const statistics = options.statistics ?? createStatistics(config);

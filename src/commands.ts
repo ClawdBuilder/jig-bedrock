@@ -5,7 +5,7 @@ import type { TeamBedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { checkLocalDependencies, dependencyLines } from "./doctor.ts";
 import { type Markers, markers } from "./markers.ts";
-import { NO_PROFILE, type ProfileChoice, type ProfileResolver, sourceLabel } from "./profile.ts";
+import { LOGIN_PATH, NO_PROFILE, type ProfileChoice, type ProfileResolver, sourceLabel } from "./profile.ts";
 import { cacheWriteRate } from "./prompt-cache.ts";
 import {
     periodLabels,
@@ -213,7 +213,7 @@ function profileLine(choice: ProfileChoice, m: Markers): string {
     const source = sourceLabel(choice.source);
     if (choice.problem !== undefined) return `${m.fail} Profile: ${choice.profile} (${source}) — ${choice.problem}`;
     if (choice.exists === false)
-        return `${m.fail} Profile: ${choice.profile} (${source}) — not in aws configure list-profiles; run /login to choose one`;
+        return `${m.fail} Profile: ${choice.profile} (${source}) — not in aws configure list-profiles; run ${LOGIN_PATH} to choose one`;
     if (choice.exists === undefined)
         return `${m.warn} Profile: ${choice.profile} (${source}) — aws configure list-profiles did not answer`;
     return `${m.ok} Profile: ${choice.profile} (${source})`;

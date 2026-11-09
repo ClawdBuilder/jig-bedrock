@@ -39,7 +39,8 @@ only the profile name (in Pi's `auth.json`, as `env.AWS_PROFILE`).
 When `profile` is unset, the provider takes the first of these that exists:
 
 1. the `profile` setting (or `JIG_BEDROCK_PROFILE`, which overrides it);
-2. the profile chosen at `/login`, kept in Pi's credential for this provider;
+2. the profile chosen at `/login` (Sign in with an API key → Amazon Bedrock (jig-bedrock)), kept in Pi's credential
+   for this provider;
 3. `AWS_PROFILE`;
 4. `AWS_DEFAULT_PROFILE`;
 5. the `default` profile, when `aws configure list-profiles` names it;

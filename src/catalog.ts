@@ -9,7 +9,7 @@ import type {
     ProviderConfig,
     ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
-import { isJigBedrock, JIG_BEDROCK } from "./identity.ts";
+import { BEDROCK_PROVIDER_NAME, isJigBedrock, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
 
@@ -499,7 +499,7 @@ export async function registerTeamBedrock(
     );
     pi.registerProvider({
         id: JIG_BEDROCK,
-        name: "Bedrock (Jig)",
+        name: BEDROCK_PROVIDER_NAME,
         auth: identity.auth,
         getModels: () => picker,
         getAllModels: () => picker,

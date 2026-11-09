@@ -6,7 +6,7 @@
 
 - With no AWS profile, the start-up notice says which setting is missing and points to `/login` instead of sending you to `/aws-login`; `/aws-login` no longer tries the placeholder `my-bedrock-profile`.
 - `/bedrock-doctor` names the AWS profile and where it came from, the discovery mode and the regions, and marks what is missing (with plain words when the terminal cannot show the symbols).
-- `/login` on Bedrock (Jig) no longer offers a bearer token and never asks for a secret: its one method is an AWS profile, stored as `env.AWS_PROFILE` with no key.
+- `/login` on Amazon Bedrock (jig-bedrock) no longer offers a bearer token and never asks for a secret: its one method is an AWS profile, stored as `env.AWS_PROFILE` with no key.
 - `docs/` is part of the npm package, so the README's More detail links work after an install.
 
 ### Changed

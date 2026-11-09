@@ -27,7 +27,8 @@ calling AWS.
 ## Settings
 
 With Jig, add a `bedrock` section to `jig.json`. A plain Pi install has no `jig.json`: put the same keys in
-`~/.pi/agent/bedrock.json`. Nothing is required: `/login` chooses the AWS profile (or set `bedrock.profile`).
+`~/.pi/agent/bedrock.json`. Nothing is required: `/login` → Sign in with an API key → Amazon Bedrock
+(jig-bedrock) chooses the AWS profile, or set `bedrock.profile`.
 
 ```json
 { "bedrock": { "profile": "my-aws-profile", "regions": ["us-east-1"] } }

@@ -30,9 +30,10 @@ export interface ProfileSettings {
 /** `aws configure list-profiles`, or undefined when the AWS CLI cannot answer. */
 export type ListProfiles = (signal?: AbortSignal) => Promise<string[] | undefined>;
 
+/** The route Pi's /login actually takes to this provider, written out wherever a message sends someone there. */
+export const LOGIN_PATH = "/login → Sign in with an API key → Amazon Bedrock (jig-bedrock)";
 /** The one line every command says when no profile is configured. */
-export const NO_PROFILE =
-    "No AWS profile is configured for Bedrock. Run /login and choose Amazon Bedrock (jig-bedrock), or set bedrock.profile.";
+export const NO_PROFILE = `No AWS profile is configured for Bedrock. Run ${LOGIN_PATH}, or set bedrock.profile.`;
 
 export function sourceLabel(source: ProfileSource | undefined): string {
     switch (source) {
@@ -54,7 +55,7 @@ export function sourceLabel(source: ProfileSource | undefined): string {
 }
 
 export function missingProfileNotice(choice: Pick<ProfileChoice, "profile" | "source">): string {
-    return `${choice.profile} (from ${sourceLabel(choice.source)}) is not in aws configure list-profiles. Run /login to choose a profile, or fix the name.`;
+    return `${choice.profile} (from ${sourceLabel(choice.source)}) is not in aws configure list-profiles. Run ${LOGIN_PATH} to choose a profile, or fix the name.`;
 }
 
 /** Credentials the SDK chain can use without a profile; an instance role needs a call, so it is not checked here. */
@@ -68,14 +69,17 @@ export function hasAmbientCredentials(env: NodeJS.ProcessEnv = process.env): boo
     );
 }
 
-/** Runs the AWS CLI's local profile listing; its output is only names, never a value. */
-export function createListProfiles(env: NodeJS.ProcessEnv = process.env): ListProfiles {
+/**
+ * Runs the AWS CLI's local profile listing; its output is only names, never a value. The start-up check keeps a short
+ * timeout (it must not delay a session); /login passes a long one, because the person is already waiting.
+ */
+export function createListProfiles(env: NodeJS.ProcessEnv = process.env, timeoutMs = 2000): ListProfiles {
     return (signal) =>
         new Promise((resolve) => {
             execFile(
                 "aws",
                 ["configure", "list-profiles"],
-                { encoding: "utf8", timeout: 2000, maxBuffer: 65_536, env, signal },
+                { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
                 (error, stdout) => {
                     if (error) {
                         resolve(undefined);
@@ -172,7 +176,7 @@ export class ProfileResolver {
         return profiles === undefined ? undefined : profiles.includes(profile);
     }
 
-    /** The cached listing, for /login's picker. */
+    /** The cached listing, for the start-up check and status. */
     listing(signal?: AbortSignal): Promise<string[] | undefined> {
         return this.profiles(signal);
     }
@@ -215,6 +219,8 @@ export async function loginWithProfile(
             placeholder: "my-profile",
         });
     }
+    if (listed === undefined)
+        interaction.notify({ type: "info", message: "Could not list your AWS profiles; type the name." });
     name = name.trim();
     if (!profilePattern.test(name)) throw new Error("That is not an AWS profile name.");
     if (listed !== undefined && !listed.includes(name))
@@ -226,11 +232,12 @@ export async function loginWithProfile(
 }
 
 /** The provider auth: one method, an AWS profile; the credential holds only the name, in env.AWS_PROFILE. */
-export function createProfileAuth(resolver: ProfileResolver): ProviderAuth {
+export function createProfileAuth(resolver: ProfileResolver, loginList?: ListProfiles): ProviderAuth {
     return {
         apiKey: {
             name: "AWS profile",
-            login: (interaction) => loginWithProfile(interaction, (signal) => resolver.listing(signal)),
+            // /login may wait for the AWS CLI; the resolver's cached listing keeps a short timeout for start-up.
+            login: (interaction) => loginWithProfile(interaction, loginList ?? ((signal) => resolver.listing(signal))),
             // Pi asks this before each request and for /model; the listing is cached, so it is a local check.
             resolve: async ({ credential, signal }) => {
                 const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });

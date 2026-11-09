@@ -60,7 +60,7 @@ test("start-up with no profile names the setting and points to /login", async ()
         const { notices } = await startWith({ dir, env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
         const text = notices.join("\n");
         assert.match(text, /No AWS profile is configured for Bedrock/);
-        assert.match(text, /\/login/);
+        assert.match(text, /\/login → Sign in with an API key → Amazon Bedrock \(jig-bedrock\)/);
         assert.match(text, /bedrock\.profile/);
         assert.doesNotMatch(text, /run \/aws-login/);
     } finally {
@@ -85,12 +85,13 @@ test("start-up with a profile that does not exist says so and does not send you 
     }
 });
 
-test("the Bedrock (Jig) /login offers only an AWS profile, never a bearer token", async () => {
+test("Amazon Bedrock (jig-bedrock) /login offers only an AWS profile, never a bearer token", async () => {
     const dir = home();
     try {
         const { providers } = await startWith({ dir, listing: ["work"], env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
         const provider = providers.find((entry) => entry?.id === "jig-bedrock");
         assert.ok(provider, "the jig-bedrock provider is registered");
+        assert.equal(provider.name, "Amazon Bedrock (jig-bedrock)");
         assert.equal(provider.auth.oauth, undefined);
         assert.equal(provider.auth.apiKey.name, "AWS profile");
         assert.doesNotMatch(String(provider.auth.apiKey.login), /bearer/i);

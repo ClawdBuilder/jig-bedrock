@@ -1,13 +1,19 @@
 // The profile chain: setting, JIG_BEDROCK_PROFILE, /login's credential, AWS_PROFILE, AWS_DEFAULT_PROFILE, the default
 // profile, then the ambient chain. The listing is cached, and /login asks for a name, never for a secret.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAwsDiscovery } from "../src/aws-discovery.ts";
 import { loadConfig } from "../src/config.ts";
-import { createProfileAuth, loginWithProfile, ProfileResolver, type ProfileSettings } from "../src/profile.ts";
+import {
+    createListProfiles,
+    createProfileAuth,
+    loginWithProfile,
+    ProfileResolver,
+    type ProfileSettings,
+} from "../src/profile.ts";
 
 /** A resolver with a fixed AWS profile listing, and a count of how often the listing was asked for. */
 function resolver(settings: ProfileSettings, listing: string[] | undefined = []) {
@@ -153,8 +159,9 @@ test("/login can type a profile, and says when it is not listed yet", async () =
     assert.match(notices.join("\n"), /typed-profile is not in aws configure list-profiles/);
 });
 
-test("/login with no AWS CLI answer asks for a name, and never for a secret", async () => {
+test("/login with no AWS CLI answer asks for a name, says why, and never asks for a secret", async () => {
     const kinds: string[] = [];
+    const notices: string[] = [];
     const credential = await loginWithProfile(
         {
             signal: new AbortController().signal,
@@ -162,11 +169,12 @@ test("/login with no AWS CLI answer asks for a name, and never for a secret", as
                 kinds.push(prompt.type);
                 return "my-profile";
             },
-            notify: () => {},
+            notify: (event) => notices.push(event.message),
         },
         async () => undefined,
     );
     assert.deepEqual(kinds, ["text"]);
+    assert.match(notices.join("\n"), /Could not list your AWS profiles; type the name/);
     assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "my-profile" } });
 });
 
@@ -201,6 +209,38 @@ test("the auth never uses a key and never offers a bearer token", async () => {
         }),
         undefined,
     );
+});
+
+test("/login uses its own long listing, not the short cached one", async () => {
+    const resolver = new ProfileResolver({
+        settings: { env: {} },
+        listProfiles: async () => undefined,
+    });
+    const prompts: string[][] = [];
+    const credential = await createProfileAuth(resolver, async () => ["demo-sso"]).apiKey?.login({
+        signal: new AbortController().signal,
+        prompt: async (prompt) => {
+            prompts.push((prompt.options ?? []).map((option) => option.id));
+            return prompt.type === "select" ? "profile:demo-sso" : "";
+        },
+        notify: () => {},
+    });
+    assert.deepEqual(prompts, [["profile:demo-sso", "type"]]);
+    assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "demo-sso" } });
+});
+
+test("the profile listing has a short timeout and a long one for /login", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-slow-aws-"));
+    try {
+        const script = join(dir, "aws");
+        writeFileSync(script, "#!/bin/sh\nsleep 1.5\nprintf 'demo-sso\\n'\n");
+        chmodSync(script, 0o755);
+        const env = { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` };
+        assert.equal(await createListProfiles(env, 400)(), undefined, "the start-up listing gives up early");
+        assert.deepEqual(await createListProfiles(env, 5_000)(), ["demo-sso"], "/login waits for the CLI");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 test("ambient credentials resolve without a profile and without a key", async () => {
