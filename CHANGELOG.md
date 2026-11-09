@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2] - 2026-11-09
+
+### Changed
+
+- The README is 95 lines; the detail is in `docs/` (settings, how it works, not verified).
+- Releases publish from CI with npm Trusted Publishing and provenance.
+
 ## [0.2.1] - 2026-11-08
 
 ### Fixed
