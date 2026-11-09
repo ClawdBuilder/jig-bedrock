@@ -31,13 +31,19 @@ function harness() {
 }
 
 /** Runs every session_start hook in order, as Pi does, and returns the notices. */
-async function startWith(options: { env: NodeJS.ProcessEnv; listing?: string[]; dir: string }) {
+async function startWith(options: {
+    env: NodeJS.ProcessEnv;
+    listing?: string[];
+    loginListing?: string[];
+    dir: string;
+}) {
     const { pi, hooks, commands, providers } = harness();
     const notices: string[] = [];
     await (
         jigBedrock({
             env: options.env,
             listProfiles: async () => options.listing,
+            ...(options.loginListing === undefined ? {} : { loginListProfiles: async () => options.loginListing }),
             catalog: { load: () => undefined, refresh: async () => "ok" },
         }) as never
     )(pi as never);
@@ -118,10 +124,15 @@ test("start-up with a real profile says the models are loading, not that a setti
 });
 
 /** The doctor's report text, from the command's notification. */
-async function doctor(env: NodeJS.ProcessEnv, listing: string[]): Promise<string> {
+async function doctor(env: NodeJS.ProcessEnv, listing: string[], loginListing?: string[]): Promise<string> {
     const dir = home();
     try {
-        const { commands } = await startWith({ dir, listing, env: { HOME: dir, PI_CODING_AGENT_DIR: dir, ...env } });
+        const { commands } = await startWith({
+            dir,
+            listing,
+            ...(loginListing === undefined ? {} : { loginListing }),
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir, ...env },
+        });
         const notices: string[] = [];
         const ctx = { ui: { notify: (text: string) => notices.push(text) }, mode: "print" };
         await commands.get("bedrock-doctor")!.handler("", ctx);
@@ -149,6 +160,11 @@ test("the doctor says none when no profile is configured", async () => {
     const text = await doctor({ LANG: "C.UTF-8" }, []);
     assert.match(text, /✗ Profile: none — No AWS profile is configured for Bedrock/);
     assert.match(text, /\/login/);
+});
+
+test("the doctor uses the longer listing /login uses when the short one did not answer", async () => {
+    const text = await doctor({ JIG_BEDROCK_PROFILE: "work-profile", LANG: "C.UTF-8" }, undefined, ["work-profile"]);
+    assert.match(text, /✓ Profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
 });
 
 test("the doctor uses words when the locale is not UTF-8", async () => {

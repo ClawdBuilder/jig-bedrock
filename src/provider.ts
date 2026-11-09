@@ -7,10 +7,11 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { createAwsDiscovery, discoveryHelp } from "./aws-discovery.ts";
+import { checkedRecovery, profileProblem } from "./aws-profile.ts";
 import { createSignedFetch } from "./bedrock-fetch.ts";
 import type { BudgetSource } from "./budget.ts";
 import { createBudget } from "./budget.ts";
@@ -34,7 +35,14 @@ import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
-import { createListProfiles, createProfileAuth, missingProfileNotice, NO_PROFILE, ProfileResolver } from "./profile.ts";
+import {
+    createListProfiles,
+    createProfileAuth,
+    memoizedList,
+    missingProfileNotice,
+    NO_PROFILE,
+    ProfileResolver,
+} from "./profile.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
@@ -171,7 +179,14 @@ export function createJigBedrock(
         });
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
-        const auth = createProfileAuth(profiles, options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        let afterProfileLogin:
+            | ((profile: string, interaction: ProviderAuthInteraction, signal: AbortSignal) => Promise<void>)
+            | undefined;
+        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        const auth = createProfileAuth(profiles, loginListProfiles, {
+            afterLogin: (profile, interaction, signal) =>
+                afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
+        });
         const identity = { profile: currentProfile, auth };
         const catalog = options.catalog ?? createAwsDiscovery(config);
         const statistics = options.statistics ?? createStatistics(config);
@@ -214,6 +229,10 @@ export function createJigBedrock(
             if (ctx) noticeFor(ctx)(line, "info");
         };
         const recovery = options.ssoRecover ?? createRecovery(config, { ...options.login, say });
+        // The same preflight guards both the command and the automatic repair: the profile must exist (when a person is
+        // waiting) and be an SSO profile, or no `aws sso login` child starts.
+        const recoveryForLogin =
+            options.ssoRecover ?? checkedRecovery(recovery, { manualList: loginListProfiles, env: profileEnv });
         // The Messages route signs with the profile's SSO credentials; the credential chain is loaded from Pi's install on the
         // first request, so nothing here reaches AWS at registration. Tests supply both.
         const signedFetch =
@@ -248,7 +267,12 @@ export function createJigBedrock(
                   })
                 : undefined;
         try {
-            const recovered = await registerBedrockSsoRecovery(pi, recovery, currentProfile);
+            const recovered = await registerBedrockSsoRecovery(
+                pi,
+                recoveryForLogin,
+                currentProfile,
+                (profile, signal) => profileProblem(profile, { list: loginListProfiles, env: profileEnv, signal }),
+            );
             native = recovered.provider;
             messages = recovered.messages;
             usePiRegistry(native);
@@ -311,6 +335,41 @@ export function createJigBedrock(
             provider();
             return status;
         };
+        afterProfileLogin = async (profile, interaction, signal) => {
+            config.profile = profile;
+            profiles.stored = profile;
+            lastChoice = { profile, source: "login", exists: true };
+            interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
+            let settled = true;
+            const timeout = new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                    settled = false;
+                    resolve();
+                }, 20_000);
+                timer.unref();
+            });
+            await Promise.race([
+                refresh(true)
+                    .then(() => undefined)
+                    .catch(() => undefined),
+                timeout,
+            ]);
+            if (signal.aborted) return;
+            const message =
+                models.length > 0
+                    ? `Bedrock models loaded: ${models.length}. Choose one with /model.`
+                    : settled
+                      ? "Bedrock models are not loaded yet; run /aws-login, then /bedrock-refresh."
+                      : "Loading Bedrock models; /model lists them in a moment.";
+            interaction.notify({ type: "info", message });
+            // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
+            // the dialog's teardown cannot clear the only lasting explanation of what happened.
+            const context = ctx;
+            if (context) {
+                const timer = setTimeout(() => context.ui.notify(message, "info"), 300);
+                timer.unref();
+            }
+        };
         pi.registerCommand("bedrock-refresh", {
             description: "Refresh your Bedrock models",
             handler: async (_args, context) => {
@@ -345,6 +404,7 @@ export function createJigBedrock(
             publish,
             profiles,
             stored: () => profiles.stored,
+            listProfiles: loginListProfiles,
             env: profileEnv,
         });
         const resolveProfile = async (context: ExtensionContext): Promise<ProfileChoice> => {

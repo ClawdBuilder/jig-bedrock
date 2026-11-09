@@ -61,7 +61,7 @@ Every setting, the three discovery modes and the environment variables: [Setting
 | `/bedrock-usage [period]` | Show the usage program's daily, weekly or monthly figures (default monthly)              |
 | `/bedrock-stats`          | Compare local Pi session usage with the usage program's monthly figure                   |
 | `/bedrock-profiles`       | Show the discovered profiles, the mode and catalog age, and why a profile is unavailable |
-| `/aws-login`              | Start the owning AWS CLI's `sso login` for the configured profile                        |
+| `/aws-login`              | Renew the configured profile's IAM Identity Center session; it checks the profile first  |
 | `/bedrock-doctor`         | Probe Node, AWS CLI, bash, jq and the optional usage program; it does not call AWS       |
 
 The footer and `/bedrock-usage` read an executable `usage` in `usageDir`; without one, models and sign-in still work.

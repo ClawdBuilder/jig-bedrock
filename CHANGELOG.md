@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- `/aws-login` checks that the profile exists and is an IAM Identity Center (SSO) profile before starting the AWS CLI, and the automatic repair after an expired session uses the same check; a missing or key-based profile gets a plain message instead of a failed login.
+- After `/login` chooses a profile, jig-bedrock starts discovery itself, says “Loading Bedrock models…”, and then either names the model count or says what to run next; the profile listing now shows “Looking up your AWS profiles…” while the CLI answers.
 - With no AWS profile, the start-up notice says which setting is missing and points to `/login` instead of sending you to `/aws-login`; `/aws-login` no longer tries the placeholder `my-bedrock-profile`.
 - `/bedrock-doctor` names the AWS profile and where it came from, the discovery mode and the regions, and marks what is missing (with plain words when the terminal cannot show the symbols).
 - `/login` on Amazon Bedrock (jig-bedrock) no longer offers a bearer token and never asks for a secret: its one method is an AWS profile, stored as `env.AWS_PROFILE` with no key.

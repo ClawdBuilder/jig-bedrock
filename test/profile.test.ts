@@ -118,8 +118,9 @@ test("the listing is cached until invalidated", async () => {
     assert.equal(calls(), 2);
 });
 
-test("/login picks a listed profile and stores only its name", async () => {
+test("/login says it is looking up profiles, then picks a listed one and stores only its name", async () => {
     const prompts: string[] = [];
+    const notices: Array<{ type: string; message?: string }> = [];
     const credential = await loginWithProfile(
         {
             signal: new AbortController().signal,
@@ -132,11 +133,14 @@ test("/login picks a listed profile and stores only its name", async () => {
                 );
                 return "profile:work";
             },
-            notify: () => assert.fail("a listed profile needs no warning"),
+            notify: (event) => notices.push({ type: event.type, message: event.message }),
         },
         async () => ["work"],
     );
     assert.deepEqual(prompts, ["select"]);
+    assert.equal(notices[0]?.type, "progress");
+    assert.match(notices[0]?.message ?? "", /Looking up your AWS profiles…/);
+    assert.equal(notices.length, 1, "a listed profile needs no warning");
     assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "work" } });
     assert.doesNotMatch(JSON.stringify(credential), /"key"/);
 });
@@ -209,6 +213,22 @@ test("the auth never uses a key and never offers a bearer token", async () => {
         }),
         undefined,
     );
+});
+
+test("after /login the provider can start discovery before the credential is returned", async () => {
+    const resolver = new ProfileResolver({ settings: { env: {} }, listProfiles: async () => ["demo-sso"] });
+    const seen: Array<{ profile: string; aborted: boolean }> = [];
+    const credential = await createProfileAuth(resolver, async () => ["demo-sso"], {
+        afterLogin: async (profile, _interaction, signal) => {
+            seen.push({ profile, aborted: signal.aborted });
+        },
+    }).apiKey?.login({
+        signal: new AbortController().signal,
+        prompt: async () => "profile:demo-sso",
+        notify: () => {},
+    });
+    assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "demo-sso" } });
+    assert.deepEqual(seen, [{ profile: "demo-sso", aborted: false }]);
 });
 
 test("/login uses its own long listing, not the short cached one", async () => {

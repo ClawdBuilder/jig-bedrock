@@ -17,20 +17,24 @@ export type Recover = (
     signal?: AbortSignal,
     source?: "request" | "manual" | "warmup",
 ) => Promise<void>;
-export type RecoveryCategory = "runtime" | "helper" | "browser" | "timeout" | "cancelled" | "login";
+export type RecoveryCategory = "runtime" | "helper" | "browser" | "timeout" | "cancelled" | "login" | "profile";
 export class SsoRecoveryError extends Error {
     category: RecoveryCategory;
     streamed: boolean;
-    constructor(category: RecoveryCategory, streamed = false) {
-        super(`AWS SSO recovery did not complete (${category}).`);
+    /** The plain message for a profile that cannot be used, when the category alone cannot say it. */
+    detail?: string;
+    constructor(category: RecoveryCategory, streamed = false, detail?: string) {
+        super(detail ?? `AWS SSO recovery did not complete (${category}).`);
         this.category = category;
         this.streamed = streamed;
+        this.detail = detail;
     }
 }
 export function recoveryCategory(error: unknown): RecoveryCategory {
     return error instanceof SsoRecoveryError ? error.category : "login";
 }
 export function recoveryHint(error: unknown): string {
+    if (error instanceof SsoRecoveryError && error.detail !== undefined) return error.detail;
     switch (recoveryCategory(error)) {
         case "runtime":
             return "AWS SSO recovery could not use a private runtime directory. Check ownership and permissions of your home runtime directory, then run /aws-login.";
@@ -42,6 +46,8 @@ export function recoveryHint(error: unknown): string {
             return "AWS SSO recovery timed out. Check browser sign-in and network access, then run /aws-login.";
         case "cancelled":
             return "AWS SSO recovery cancelled.";
+        case "profile":
+            return "Check the AWS profile: it must exist and be an IAM Identity Center (SSO) profile, then run /aws-login.";
         default:
             return "AWS SSO recovery did not complete. Finish browser sign-in or run /aws-login, then continue.";
     }
@@ -72,6 +78,7 @@ export function shareRecovery(recovery: Recover): Recover {
                     throw new SsoRecoveryError(
                         controller.signal.aborted ? "cancelled" : recoveryCategory(error),
                         current.requested,
+                        error instanceof SsoRecoveryError ? error.detail : undefined,
                     );
                 })
                 .finally(() => {
@@ -262,6 +269,7 @@ export async function registerBedrockSsoRecovery(
     pi: ExtensionAPI,
     recovery: Recover,
     defaultProfile?: () => string | undefined,
+    check?: (profile: string, signal?: AbortSignal) => Promise<string | undefined>,
 ): Promise<RecoveredBedrock> {
     // Not worth deferring: Pi has already loaded both modules, so inside Pi these imports and builtinProviders() take about 1-5 ms
     // together (measured), while the models for /model need the native provider's metadata at registration anyway.
@@ -297,6 +305,11 @@ export async function registerBedrockSsoRecovery(
             }
             if (!profilePattern.test(profile)) {
                 ctx.ui.notify("Use /aws-login [AWS profile name].", "warning");
+                return;
+            }
+            const problem = await check?.(profile, ctx.signal);
+            if (problem !== undefined) {
+                ctx.ui.notify(problem, "warning");
                 return;
             }
             ctx.ui.notify(`Restoring AWS SSO (${profile}); complete any browser sign-in.`, "info");

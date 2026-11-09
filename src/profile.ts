@@ -96,6 +96,20 @@ export function createListProfiles(env: NodeJS.ProcessEnv = process.env, timeout
         });
 }
 
+/** One slow CLI start serves the /aws-login preflight and the recovery that follows it; a failure is retried. */
+export function memoizedList(list: ListProfiles, ttlMs = 5_000, now = Date.now): ListProfiles {
+    let cached: { at: number; value: Promise<string[] | undefined> } | undefined;
+    return (signal) => {
+        if (cached !== undefined && now() - cached.at < ttlMs) return cached.value;
+        const entry = { at: now(), value: list(signal) };
+        cached = entry;
+        void entry.value.then((value) => {
+            if (value === undefined && cached === entry) cached = undefined;
+        });
+        return entry.value;
+    };
+}
+
 export interface ResolverOptions {
     settings: ProfileSettings;
     listProfiles?: ListProfiles;
@@ -195,6 +209,7 @@ export async function loginWithProfile(
     listProfiles: ListProfiles,
 ): Promise<ApiKeyCredential> {
     interaction.signal.throwIfAborted();
+    interaction.notify({ type: "progress", message: "Looking up your AWS profiles…" });
     const listed = await listProfiles(interaction.signal);
     interaction.signal.throwIfAborted();
     let name: string;
@@ -232,12 +247,27 @@ export async function loginWithProfile(
 }
 
 /** The provider auth: one method, an AWS profile; the credential holds only the name, in env.AWS_PROFILE. */
-export function createProfileAuth(resolver: ProfileResolver, loginList?: ListProfiles): ProviderAuth {
+export function createProfileAuth(
+    resolver: ProfileResolver,
+    loginList?: ListProfiles,
+    options: {
+        /** Runs before the credential is returned, so discovery can start while the login dialog is still open. */
+        afterLogin?: (profile: string, interaction: ProviderAuthInteraction, signal: AbortSignal) => Promise<void>;
+    } = {},
+): ProviderAuth {
     return {
         apiKey: {
             name: "AWS profile",
             // /login may wait for the AWS CLI; the resolver's cached listing keeps a short timeout for start-up.
-            login: (interaction) => loginWithProfile(interaction, loginList ?? ((signal) => resolver.listing(signal))),
+            login: async (interaction) => {
+                const credential = await loginWithProfile(
+                    interaction,
+                    loginList ?? ((signal) => resolver.listing(signal)),
+                );
+                const profile = credential.env?.AWS_PROFILE;
+                if (profile !== undefined) await options.afterLogin?.(profile, interaction, interaction.signal);
+                return credential;
+            },
             // Pi asks this before each request and for /model; the listing is cached, so it is a local check.
             resolve: async ({ credential, signal }) => {
                 const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });
