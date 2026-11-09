@@ -1,5 +1,6 @@
 # A tag publishes only a commit whose ci-ok check succeeded, and only when the tag names package.json's version. The tag
-# is the release; there is no branch publish path.
+# is the release; there is no branch publish path. npm authenticates through Trusted Publishing (GitHub OIDC), so the
+# job holds no npm token and every publish carries provenance.
 name: Publish
 
 on:
@@ -30,6 +31,15 @@ jobs:
                   registry-url: https://registry.npmjs.org
                   cache: npm
 
+            - name: npm supports Trusted Publishing
+              run: |
+                  version="$(npm --version)"
+                  echo "npm ${version}"
+                  if [ "$(printf '%s\n' "11.5.1" "${version}" | sort -V | head -n1)" != "11.5.1" ]; then
+                    echo "::error::npm ${version} cannot publish with Trusted Publishing; the job needs npm 11.5.1 or later"
+                    exit 1
+                  fi
+
             - name: Install dependencies
               run: npm ci
 
@@ -56,6 +66,4 @@ jobs:
                   fi
 
             - name: Publish to npm
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: npm publish --provenance --access public
