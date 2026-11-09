@@ -41,7 +41,10 @@
         "provenance": true,
         "access": "public"
     },
-    "repository": "git+https://github.com/ClawdBuilder/jig-bedrock.git",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ClawdBuilder/jig-bedrock.git"
+    },
     "homepage": "https://github.com/ClawdBuilder/jig-bedrock#readme",
     "engines": {
         "node": ">=22.19.0"

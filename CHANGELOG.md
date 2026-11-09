@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Each release has a GitHub release page with that version's changelog.
+
 ## [0.2.2] - 2026-11-09
 
 ### Changed
