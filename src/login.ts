@@ -1,17 +1,20 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, lstatSync, mkdirSync, openSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, lstatSync, mkdirSync, openSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicCache } from "./cache.ts";
 import { boundedRegular } from "./catalog.ts";
 import { profilePattern, type ResolvedConfig } from "./config.ts";
 import { type Recover, SsoRecoveryError, shareRecovery } from "./sso.ts";
 import { loginEnvironment, systemWsl, type WslDeps } from "./wsl.ts";
-/** Never create an inherited system runtime path or repair unrelated permissions. */
+/**
+ * Never create an inherited system runtime path or repair unrelated permissions. The home folder, `.local` and `state` are
+ * the user's own: a link there (a state folder on another disk) is followed. From `jig-bedrock` down, a link is refused.
+ */
 export function ssoRuntime(env: NodeJS.ProcessEnv = process.env): string {
-    const safe = (path: string, privateMode = false) => {
+    const safe = (path: string, privateMode = false, followLink = false) => {
         try {
-            const meta = lstatSync(path);
+            const meta = followLink ? statSync(path) : lstatSync(path);
             return (
                 meta.isDirectory() &&
                 !meta.isSymbolicLink() &&
@@ -24,7 +27,7 @@ export function ssoRuntime(env: NodeJS.ProcessEnv = process.env): string {
     };
     if (env.XDG_RUNTIME_DIR?.startsWith("/") && safe(env.XDG_RUNTIME_DIR, true)) return env.XDG_RUNTIME_DIR;
     const home = env.HOME;
-    if (!home?.startsWith("/") || !safe(home)) throw new SsoRecoveryError("runtime");
+    if (!home?.startsWith("/") || !safe(home, false, true)) throw new SsoRecoveryError("runtime");
     let path = home;
     for (const component of [".local", "state", "jig-bedrock", "sso-runtime"]) {
         path = join(path, component);
@@ -33,7 +36,7 @@ export function ssoRuntime(env: NodeJS.ProcessEnv = process.env): string {
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new SsoRecoveryError("runtime");
         }
-        if (!safe(path)) throw new SsoRecoveryError("runtime");
+        if (!safe(path, false, component === ".local" || component === "state")) throw new SsoRecoveryError("runtime");
     }
     if (!safe(path, true)) throw new SsoRecoveryError("runtime");
     return path;

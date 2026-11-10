@@ -13,9 +13,10 @@ registerHooks({ resolve: hostHooks.resolveSync });
 // cache live) and the Windows side of WSL. A program that would reach a real system fails, first on the PATH; a test that
 // needs one puts its own fake before it.
 // Every temporary folder a test makes is under the real path of the system's: on macOS TMPDIR is /var/folders/..., and /var is a
-// link to /private/var. The catalog and its cache refuse a path with a link in it from this package's own folder down (src/cache.ts,
-// src/catalog.ts), and the tests give them explicit paths under the temporary folder, so with the linked path every test that reads
-// a cache would find none. Setting TMPDIR here changes what os.tmpdir() answers for the whole test process.
+// link to /private/var. The package resolves the user's cache and state roots itself and follows links there (src/cache-root.ts),
+// but a test that hands the catalog or the cache an explicit file under the temporary folder gets the strict guard on the whole
+// path (src/cache.ts, src/catalog.ts: no link anywhere above the file), so with the linked path every such test would find no
+// cache. Setting TMPDIR here changes what os.tmpdir() answers for the whole test process.
 // The folder this process makes is also the temporary folder of its tests: whatever a test creates in os.tmpdir() lives inside it
 // and is removed with it when the process exits, so a test that forgets its own cleanup leaves nothing behind.
 const dir = mkdtempSync(path.join(realpathSync(tmpdir()), "jig-bedrock-isolated-"));

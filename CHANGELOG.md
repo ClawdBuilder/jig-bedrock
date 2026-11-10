@@ -41,6 +41,8 @@
 
 - Starting Pi with this package is much faster. It ran `aws configure list-profiles` several times at once at every start (each run takes over a second), and Pi waited for them. The profile names are now read from the AWS config and credentials files (`[default]`, `[profile NAME]`, `[NAME]`), so no program starts at Pi's start-up, in `/login` or in `/bedrock-doctor` for the profile list. Model discovery still starts the AWS CLI in the background when no fresh catalog is cached.
 
+- The catalog cache now works when your cache folder is a link (`~/.cache` on another disk, or the temporary folder under `/var` on macOS). Before, any link in the path made the package ignore its cache, so discovery ran again at every start. The folder you name (`XDG_CACHE_HOME`, else `~/.cache`) is followed; the package's own `jig-bedrock` folder and the file in it must still not be links. The cache now follows `XDG_CACHE_HOME`, which it ignored before. The SSO sign-in's runtime folder follows a link at your home, `~/.local` or `~/.local/state` the same way.
+
 ### Development
 
 - CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.
