@@ -128,7 +128,7 @@ export function routeOf(
     if (settings.messagesModels?.includes(id)) return { route: "messages", reason: "your setting" };
     if (MESSAGES_EXCEPTIONS.has(id)) return { route: "converse", reason: "known exception" };
     const entry = anthropicRegistry[id] as { compat?: Record<string, unknown> } | undefined;
-    if (entry === undefined) return { route: "converse", reason: "this Pi does not know the model" };
+    if (entry === undefined) return { route: "converse", reason: "Pi has no Messages entry" };
     return entry.compat?.supportsMidConvoToolChanges === true
         ? { route: "messages", reason: "Pi lists tool changes" }
         : { route: "converse", reason: "not on the Messages route" };

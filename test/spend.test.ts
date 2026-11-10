@@ -394,7 +394,7 @@ test("the doctor names why the spend command failed", async (t) => {
         signal: new AbortController().signal,
         ui: { notify: (text: string) => notices.push(text) },
     } as never);
-    assert.match(notices[0]!, /Spend command: exit code 2/);
+    assert.match(notices.at(-1)!, /Spend command: exit code 2/);
 });
 
 test("the provider records a reply and updates the footer", async (t) => {

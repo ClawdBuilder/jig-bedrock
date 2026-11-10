@@ -1,7 +1,7 @@
 /* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // Every failure the doctor must name in plain words, with stubbed AWS answers so no call leaves the machine.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -110,21 +110,23 @@ test("a failing spend command", async (t) => {
 test("invalid settings JSON is a doctor row, not a silent disable", async (t) => {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-json-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
-    const file = join(root, "bedrock.json");
+    const file = join(root, "x".repeat(140), "bedrock.json");
+    mkdirSync(join(root, "x".repeat(140)), { recursive: true });
     writeFileSync(file, "{ broken");
     const notice: string[] = [];
     const handler = registerBrokenCommands({ registerCommand() {} } as never, {
         file,
         error: `${file} is not valid JSON; fix it or remove it.`,
-        env: { HOME: root, PI_CODING_AGENT_DIR: root },
+        env: { HOME: root, PI_CODING_AGENT_DIR: root, LANG: "C.UTF-8", TERM: "xterm-256color" },
     });
     await handler("doctor", {
         hasUI: true,
         mode: "rpc",
         ui: { notify: (text: string) => notice.push(text) },
     } as never);
-    assert.match(notice[0]!, /1 problem/);
-    assert.match(notice[0]!, /not valid J/);
+    assert.match(notice[0]!, /^Bedrock doctor\n✗ Settings file is not valid JSON\./);
+    assert.match(notice[0]!, /1 problem\./);
+    assert.match(notice[0]!, /– File: .*…/);
 });
 
 test("an AWS CLI version timeout is not a problem and never says install", async (t) => {

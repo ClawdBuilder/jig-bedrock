@@ -49,6 +49,15 @@ const clean = (value: unknown, max = 100): string =>
         .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ")
         .slice(0, max);
 const money = formatMoney;
+const displayPath = (file: string, env: NodeJS.ProcessEnv, max = 80): string => {
+    const home = env.HOME;
+    const shown = home !== undefined && file.startsWith(home) ? `~${file.slice(home.length)}` : file;
+    const text = clean(shown, 10_000);
+    if (text.length <= max) return text;
+    const keep = max - 1;
+    const head = Math.ceil(keep / 2);
+    return `${text.slice(0, head)}…${text.slice(text.length - (keep - head))}`;
+};
 const route = (model: BedrockModel | undefined, settings: ResolvedConfig): string =>
     model === undefined ? "unknown" : routeOf(model, settings).route === "messages" ? "Messages" : "Converse";
 const routeReason = (model: BedrockModel | undefined, settings: ResolvedConfig): string =>
@@ -168,7 +177,7 @@ export function registerBedrockCommands(
             const model = list.find((entry) => entry.id === selected.id);
             if (model) rows.push(`${m.ok} Selected model: ${clean(model.id)} · ${route(model, config)} route`);
             else {
-                rows.push(`${m.warn} Selected model: ${clean(selected.id)} is not in your model list`);
+                rows.push(`${m.warn} Selected model is not in your model list: ${clean(selected.id)}`);
                 problems++;
             }
         } else if (selected?.provider === undefined || selected.provider === "unknown") {
@@ -211,7 +220,9 @@ export function registerBedrockCommands(
         });
         const rejected = sources.unavailable?.() ?? [];
         for (const entry of rejected.slice(0, 3))
-            rows.push(`${m.skip} ${clean(entry.profile)} · ${clean(entry.region)} — this Pi does not know the model`);
+            rows.push(
+                `${m.skip} This Pi does not know the model: ${clean(entry.profile, 60)}, ${clean(entry.region, 20)}`,
+            );
         if (rejected.length > 3) rows.push(`${m.skip} ... and ${rejected.length - 3} more`);
         if (list.length === 0) rows.push(`${m.warn} No models loaded.`);
         emit(ctx, `Bedrock models · ${list.length} · price per million tokens, in / out`, rows);
@@ -219,12 +230,14 @@ export function registerBedrockCommands(
     const settings = async (ctx: ExtensionCommandContext): Promise<void> => {
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
-            emit(ctx, "Bedrock settings", [`${markers(env).fail} ${doc.error}`]);
+            emit(ctx, "Bedrock settings", [
+                `${markers(env).fail} Settings file is not valid JSON.`,
+                `${markers(env).skip} File: ${displayPath(doc.file, env)}`,
+            ]);
             return;
         }
         const m = markers(env);
-        const home = env.HOME;
-        const shownPath = home && doc.file.startsWith(home) ? `~${doc.file.slice(home.length)}` : doc.file;
+        const shownPath = displayPath(doc.file, env);
         const envNames: Record<string, string> = {
             tagKey: "JIG_BEDROCK_TAG_KEY",
             tagValue: "JIG_BEDROCK_TAG_VALUE",
@@ -261,7 +274,7 @@ export function registerBedrockCommands(
             .map(({ key, source, value }) =>
                 source === undefined
                     ? `${m.skip} ${key}: not set`
-                    : `${source === "default" ? m.skip : m.ok} ${key}: ${clean(show(key, value ?? defaults[key]), 72)} (${source})`,
+                    : `${source === "default" ? m.skip : m.ok} ${key}: ${clean(show(key, value ?? defaults[key]), 55)} (${source})`,
             );
         const title = `Bedrock settings · ${shownPath}`;
         emit(
@@ -295,12 +308,15 @@ export function registerBedrockCommands(
         const key = match[1] as string;
         const value = match[2] as string;
         if (!(FIELDS as readonly string[]).includes(key)) {
-            emit(ctx, "Bedrock settings", [`✗ ${key} is not a setting.`]);
+            emit(ctx, "Bedrock settings", [`✗ Unknown setting: ${clean(key, 60)}`]);
             return;
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
-            emit(ctx, "Bedrock settings", [`✗ ${doc.error}`]);
+            emit(ctx, "Bedrock settings", [
+                "✗ Settings file is not valid JSON.",
+                `– File: ${displayPath(doc.file, env)}`,
+            ]);
             return;
         }
         const parsed = parseSetting(key, value);
@@ -335,7 +351,7 @@ export function registerBedrockCommands(
             "messagesModels",
         ].includes(key);
         emit(ctx, "Bedrock settings", [
-            `✓ ${key}: ${clean(shown, 72)} (saved to bedrock.json)`,
+            `✓ ${key}: ${clean(shown, 55)} (saved to bedrock.json)`,
             ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
         ]);
     };
@@ -343,13 +359,16 @@ export function registerBedrockCommands(
         const key = args.trim();
         if (!(FIELDS as readonly string[]).includes(key)) {
             emit(ctx, "Bedrock settings", [
-                `✗ ${key === "" ? "Usage: /bedrock unset <key>" : `${key} is not a setting.`}`,
+                key === "" ? "✗ Usage: /bedrock unset <key>" : `✗ Unknown setting: ${clean(key, 60)}`,
             ]);
             return;
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
-            emit(ctx, "Bedrock settings", [`✗ ${doc.error}`]);
+            emit(ctx, "Bedrock settings", [
+                "✗ Settings file is not valid JSON.",
+                `– File: ${displayPath(doc.file, env)}`,
+            ]);
             return;
         }
         delete doc.target[key];
@@ -433,6 +452,7 @@ export function registerBedrockCommands(
         const offline = words.includes("offline");
         const call = words.includes("call");
         if (call) noticeLine(ctx, "This sends one tiny request (a fraction of a cent).");
+        if (!offline) emit(ctx, "Bedrock doctor", ["– Checking AWS…"]);
         const health = await (sources.check ?? checkLocalDependencies)({
             signal: ctx.signal,
             env,
@@ -453,12 +473,12 @@ export function registerBedrockCommands(
         const doc = readSettingsDocument(env);
         const home = env.HOME;
         const file = "file" in doc ? doc.file : join(home ?? "", ".pi/agent/bedrock.json");
-        rows.push(`${m.ok} Settings: ${home && file.startsWith(home) ? `~${file.slice(home.length)}` : file}`);
+        rows.push(`${m.ok} Settings: ${displayPath(file, env, 70)}`);
         const last = sources.lastChoice?.() ?? { profile: config.profile };
         const profile = last.profile ?? config.profile;
         if (profile === undefined) rows.push(`${m.fail} AWS profile: none chosen; run /login`);
         else if (last.exists === false)
-            rows.push(`${m.fail} AWS profile: ${clean(profile)} is not in ~/.aws/config; run /login`);
+            rows.push(`${m.fail} AWS profile: ${clean(profile, 40)} is not in ~/.aws/config; run /login`);
         else {
             const source =
                 last.source === "env"
@@ -710,9 +730,13 @@ export function registerBrokenCommands(
     const fallback: BedrockCommand = async (args, ctx) => {
         const [command = "", ...rest] = args.trim().split(/\s+/);
         const tail = rest.join(" ");
+        const message = options.error.includes("not valid JSON")
+            ? "Settings file is not valid JSON."
+            : "Settings file is not valid.";
         const errorRows = [
-            `${m.fail} ${options.error}`,
-            `${m.skip} File: ${options.file}`,
+            `${m.fail} ${message}`,
+            ...(options.error.includes("not valid JSON") ? [] : [`${m.skip} ${clean(options.error, 80)}`]),
+            `${m.skip} File: ${displayPath(options.file, options.env)}`,
             "Next: /bedrock set <key> <value>",
         ];
         switch (command) {
@@ -722,7 +746,9 @@ export function registerBrokenCommands(
                 return;
             case "doctor":
                 emit(ctx, "Bedrock doctor", [
-                    `${m.fail} ${options.error}`,
+                    `${m.fail} ${message}`,
+                    ...(options.error.includes("not valid JSON") ? [] : [`${m.skip} ${clean(options.error, 80)}`]),
+                    `${m.skip} File: ${displayPath(options.file, options.env)}`,
                     `${m.skip} AWS not checked: broken settings`,
                     "1 problem.",
                     "Next: /bedrock set <key> <value>",
@@ -731,7 +757,10 @@ export function registerBrokenCommands(
             case "settings": {
                 const doc = readSettingsDocument(options.env);
                 if ("error" in doc) {
-                    emit(ctx, "Bedrock settings", [`${m.fail} ${doc.error}`]);
+                    emit(ctx, "Bedrock settings", [
+                        `${m.fail} Settings file is not valid JSON.`,
+                        `${m.skip} File: ${displayPath(doc.file, options.env)}`,
+                    ]);
                     return;
                 }
                 emit(ctx, "Bedrock settings", [
@@ -748,12 +777,19 @@ export function registerBrokenCommands(
                 if (command === "unset") {
                     const key = tail;
                     if (!(FIELDS as readonly string[]).includes(key)) {
-                        emit(ctx, "Bedrock settings", [`${m.fail} ${key || "Usage: /bedrock unset <key>"}`]);
+                        emit(ctx, "Bedrock settings", [
+                            key === ""
+                                ? `${m.fail} Usage: /bedrock unset <key>`
+                                : `${m.fail} Unknown setting: ${clean(key, 60)}`,
+                        ]);
                         return;
                     }
                     const doc = readSettingsDocument(options.env);
                     if ("error" in doc) {
-                        emit(ctx, "Bedrock settings", [`${m.fail} ${doc.error}`]);
+                        emit(ctx, "Bedrock settings", [
+                            `${m.fail} Settings file is not valid JSON.`,
+                            `${m.skip} File: ${displayPath(doc.file, options.env)}`,
+                        ]);
                         return;
                     }
                     delete doc.target[key];
@@ -777,7 +813,10 @@ export function registerBrokenCommands(
                 }
                 const doc = readSettingsDocument(options.env);
                 if ("error" in doc) {
-                    emit(ctx, "Bedrock settings", [`${m.fail} ${doc.error}`]);
+                    emit(ctx, "Bedrock settings", [
+                        `${m.fail} Settings file is not valid JSON.`,
+                        `${m.skip} File: ${displayPath(doc.file, options.env)}`,
+                    ]);
                     return;
                 }
                 doc.target[key] =

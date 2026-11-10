@@ -104,7 +104,7 @@ test("a model Pi does not know, and a model that is not Claude, use Converse and
     await registries();
     assert.deepEqual(routeOf({ foundation_model_id: "anthropic.claude-sonnet-9" }, {}), {
         route: "converse",
-        reason: "this Pi does not know the model",
+        reason: "Pi has no Messages entry",
     });
     assert.deepEqual(routeOf({ foundation_model_id: "amazon.nova-pro-v1:0" }, {}), {
         route: "converse",
@@ -116,7 +116,7 @@ test("a model Pi does not know, and a model that is not Claude, use Converse and
     try {
         assert.deepEqual(routeOf({ foundation_model_id: "anthropic.claude-sonnet-5-5" }, {}), {
             route: "converse",
-            reason: "this Pi does not know the model",
+            reason: "Pi has no Messages entry",
         });
     } finally {
         await usePiAnthropicRegistry();

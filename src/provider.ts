@@ -582,7 +582,7 @@ export function createBedrockProvider(
                     const model = models.find((entry) => entry.arn === first.profile || entry.id === first.profile);
                     rows.push({
                         ok: false,
-                        text: `One inference profile (${model?.id ?? first.profile}) — ${first.message ?? "could not read"}; ask your AWS administrator for bedrock:GetInferenceProfile`,
+                        text: `Access denied for inference profile ${model?.id ?? first.profile}: ${first.message ?? "could not read"}; ask your AWS administrator for bedrock:GetInferenceProfile`,
                     });
                 }
                 return rows;
