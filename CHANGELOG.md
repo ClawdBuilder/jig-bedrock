@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-10
+
+Faster discovery on real AWS, the same thinking settings as Pi's own Anthropic provider, and a clearer public package.
+
 ### Fixed
 
 - On the Messages route, a model whose Pi Anthropic entry disables temperature no longer sends one: Sonnet 5.5, Haiku 5.5, Opus 4.7/4.8/5.x and Sonnet 5 (in Pi 1.5.1) are affected; older Claude models keep temperature.
