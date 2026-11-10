@@ -2,6 +2,7 @@
 // `aws sts get-caller-identity`, then ask what discovery should list. jig-bedrock never asks for, sees or stores a secret;
 // the AWS CLI owns the credentials, and the credential this flow returns holds only a profile name in AWS_PROFILE.
 import type { ApiKeyCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
+import { type ConfigSection, type ConfigWriteResult, renderSections } from "./aws-config-write.ts";
 import type { VerifyResult } from "./aws-profile.ts";
 import { isSsoProfile } from "./aws-profile.ts";
 import { profilePattern } from "./config.ts";
@@ -20,13 +21,19 @@ export interface LoginFlowOptions {
     saveDiscovery?: (settings: DiscoverySettings) => SaveDiscoveryResult;
     /** The configured regions, used as the default answer. */
     regions?: string[];
+    /** Where the AWS config is, for the confirmation text. */
+    configFile?: string;
+    /** Append the confirmed sections; without it the create-a-profile methods are unavailable. */
+    writeConfig?: (sections: ConfigSection[]) => ConfigWriteResult;
 }
 
 const methods = [
     { id: "existing", label: "An AWS profile that already works" },
     { id: "sso", label: "Sign in to an existing IAM Identity Center (SSO) profile" },
+    { id: "sso-new", label: "Create an IAM Identity Center (SSO) profile" },
     { id: "keys", label: "Set up access keys with the AWS CLI" },
     { id: "role", label: "Use an IAM role profile" },
+    { id: "role-new", label: "Create an IAM role profile" },
     { id: "chain", label: "Use the AWS credential chain (no profile)" },
     { id: "key", label: "Use a Bedrock API key with Pi's own provider" },
 ] as const;
@@ -86,6 +93,52 @@ async function requiredText(
         interaction.notify({ type: "info", message: "A value is required." });
     }
     throw new Error("No value entered.");
+}
+
+const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d$/;
+const roleNamePattern = /^[\w+=,.@-]{1,64}$/;
+const roleArnPattern = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]+$/;
+
+function say(interaction: ProviderAuthInteraction, message: string): void {
+    interaction.notify({ type: "info", message });
+}
+
+async function askName(interaction: ProviderAuthInteraction, message: string, placeholder = "my-profile") {
+    const name = (await interaction.prompt({ type: "text", message, placeholder })).trim();
+    interaction.signal.throwIfAborted();
+    if (!profilePattern.test(name)) {
+        say(interaction, "An AWS profile name uses letters, numbers and _-./@; choose another.");
+        return undefined;
+    }
+    return name;
+}
+
+async function confirmConfig(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+    sections: ConfigSection[],
+): Promise<boolean> {
+    const answer = await interaction.prompt({
+        type: "select",
+        message: `Add these lines to ${options.configFile ?? "~/.aws/config"}?\n\n${renderSections(sections)}\n\nA backup of the current file is kept.`,
+        options: [
+            { id: "write", label: "Write these lines" },
+            { id: "back", label: "Back to the sign-in methods" },
+        ],
+    });
+    interaction.signal.throwIfAborted();
+    if (answer !== "write") return false;
+    const result = options.writeConfig?.(sections);
+    if (result === undefined) {
+        say(interaction, "This build cannot write the AWS config; choose another sign-in method.");
+        return false;
+    }
+    if (!result.written) {
+        say(interaction, `The AWS config was not written: ${result.error ?? result.file}`);
+        return false;
+    }
+    say(interaction, `Wrote ${result.file}${result.backup === undefined ? "" : `; backup at ${result.backup}`}.`);
+    return true;
 }
 
 async function askDiscovery(interaction: ProviderAuthInteraction, options: LoginFlowOptions): Promise<void> {
@@ -233,6 +286,209 @@ export async function runLoginFlow(
             }
             await askDiscovery(interaction, options);
             return profileCredential(name);
+        }
+        if (method === "sso-new") {
+            const profile = await askName(interaction, "New SSO profile name");
+            if (profile === undefined) continue;
+            const typedSession = (
+                await interaction.prompt({ type: "text", message: "SSO session name", placeholder: "my-sso" })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            const session = typedSession === "" ? profile : typedSession;
+            if (!profilePattern.test(session)) {
+                say(interaction, "An SSO session name uses letters, numbers and _-./@; choose another.");
+                continue;
+            }
+            const startUrl = (
+                await interaction.prompt({
+                    type: "text",
+                    message: "SSO start URL",
+                    placeholder: "https://my-sso-portal.awsapps.com/start",
+                })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            if (!/^https:\/\/\S+$/.test(startUrl)) {
+                say(interaction, "The SSO start URL must start with https://.");
+                continue;
+            }
+            const ssoRegion =
+                (
+                    await interaction.prompt({
+                        type: "text",
+                        message: "SSO region",
+                        placeholder: options.regions?.[0] ?? "us-east-1",
+                    })
+                ).trim() ||
+                (options.regions?.[0] ?? "us-east-1");
+            interaction.signal.throwIfAborted();
+            if (!regionPattern.test(ssoRegion)) {
+                say(interaction, "Use an AWS region such as us-east-1.");
+                continue;
+            }
+            const accountId = (
+                await interaction.prompt({
+                    type: "text",
+                    message: "SSO account ID",
+                    placeholder: "123456789012",
+                })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            if (!/^\d{12}$/.test(accountId)) {
+                say(interaction, "Use the 12-digit AWS account ID.");
+                continue;
+            }
+            const ssoRole = (
+                await interaction.prompt({ type: "text", message: "SSO role name", placeholder: "ReadOnly" })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            if (!roleNamePattern.test(ssoRole)) {
+                say(interaction, "Use the IAM role name (letters, numbers and +=,.@-).");
+                continue;
+            }
+            const region = (
+                await interaction.prompt({ type: "text", message: "Profile region", placeholder: ssoRegion })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            const profileRegion = region === "" ? ssoRegion : region;
+            if (!regionPattern.test(profileRegion)) {
+                say(interaction, "Use an AWS region such as us-east-1.");
+                continue;
+            }
+            const sections: ConfigSection[] = [
+                {
+                    header: `profile ${profile}`,
+                    entries: [
+                        ["sso_session", session],
+                        ["sso_account_id", accountId],
+                        ["sso_role_name", ssoRole],
+                        ["region", profileRegion],
+                    ],
+                },
+                {
+                    header: `sso-session ${session}`,
+                    entries: [
+                        ["sso_region", ssoRegion],
+                        ["sso_start_url", startUrl],
+                    ],
+                },
+            ];
+            if (!(await confirmConfig(interaction, options, sections))) continue;
+            interaction.notify({
+                type: "progress",
+                message: `Signing in to ${profile}; complete the browser sign-in.`,
+            });
+            try {
+                await options.signIn?.(profile, interaction.signal);
+            } catch (error) {
+                interaction.notify({ type: "info", message: recoveryHint(error) });
+                continue;
+            }
+            interaction.notify({ type: "progress", message: `Checking ${profile} with AWS…` });
+            const check = await options.verify(profile, interaction.signal);
+            if (!check.ok) {
+                say(interaction, check.message);
+                continue;
+            }
+            await askDiscovery(interaction, options);
+            return profileCredential(profile);
+        }
+        if (method === "role-new") {
+            const profile = await askName(interaction, "New role profile name");
+            if (profile === undefined) continue;
+            const roleArn = (
+                await interaction.prompt({
+                    type: "text",
+                    message: "Role ARN",
+                    placeholder: "arn:aws:iam::123456789012:role/MyRole",
+                })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            if (!roleArnPattern.test(roleArn)) {
+                say(interaction, "Use a role ARN such as arn:aws:iam::123456789012:role/MyRole.");
+                continue;
+            }
+            let source: string;
+            if (listed !== undefined && listed.length > 0) {
+                const answer = await interaction.prompt({
+                    type: "select",
+                    message: "Which profile is the source (source_profile)?",
+                    options: [
+                        ...listed.map((name) => ({ id: `profile:${name}`, label: name })),
+                        { id: "type", label: "Type another profile name" },
+                    ],
+                });
+                interaction.signal.throwIfAborted();
+                source =
+                    answer === "type"
+                        ? (
+                              await interaction.prompt({
+                                  type: "text",
+                                  message: "Source profile name",
+                                  placeholder: "my-source-profile",
+                              })
+                          ).trim()
+                        : answer.replace(/^profile:/, "");
+            } else {
+                source = (
+                    await interaction.prompt({
+                        type: "text",
+                        message: "Source profile name",
+                        placeholder: "my-source-profile",
+                    })
+                ).trim();
+            }
+            interaction.signal.throwIfAborted();
+            if (!profilePattern.test(source) || (listed !== undefined && !listed.includes(source))) {
+                say(interaction, `${source} is not in aws configure list-profiles; source_profile must already exist.`);
+                continue;
+            }
+            const region =
+                (
+                    await interaction.prompt({
+                        type: "text",
+                        message: "Role region",
+                        placeholder: options.regions?.[0] ?? "us-east-1",
+                    })
+                ).trim() ||
+                (options.regions?.[0] ?? "us-east-1");
+            interaction.signal.throwIfAborted();
+            if (!regionPattern.test(region)) {
+                say(interaction, "Use an AWS region such as us-east-1.");
+                continue;
+            }
+            const mfaSerial = (
+                await interaction.prompt({
+                    type: "text",
+                    message: "MFA serial number (optional; leave empty for none)",
+                    placeholder: "arn:aws:iam::123456789012:mfa/my-user",
+                })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            const externalId = (
+                await interaction.prompt({
+                    type: "text",
+                    message: "External ID (optional; leave empty for none)",
+                    placeholder: "",
+                })
+            ).trim();
+            interaction.signal.throwIfAborted();
+            const entries: Array<[string, string]> = [
+                ["role_arn", roleArn],
+                ["source_profile", source],
+                ["region", region],
+            ];
+            if (mfaSerial !== "") entries.push(["mfa_serial", mfaSerial]);
+            if (externalId !== "") entries.push(["external_id", externalId]);
+            const sections: ConfigSection[] = [{ header: `profile ${profile}`, entries }];
+            if (!(await confirmConfig(interaction, options, sections))) continue;
+            interaction.notify({ type: "progress", message: `Checking ${profile} with AWS…` });
+            const check = await options.verify(profile, interaction.signal);
+            if (!check.ok) {
+                say(interaction, check.message);
+                continue;
+            }
+            await askDiscovery(interaction, options);
+            return profileCredential(profile);
         }
         const name = await askProfile(interaction, listed);
         interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
