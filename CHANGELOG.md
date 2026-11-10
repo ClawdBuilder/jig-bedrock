@@ -13,6 +13,12 @@
 - The subagent-child environment check and the remaining internal names were removed; the scan still covers the public tree.
 - The AWS SDK's credential chain (`@aws-sdk/credential-provider-node`) is now this package's own dependency, installed with it, instead of being looked up in Pi's install folder. A new Pi that moves or drops that dependency no longer breaks sign-in checks or signed requests; the install is about 5 MB larger. `PI_HOST_DIR` is no longer read.
 
+### Fixed
+
+- Adding a profile to `~/.aws/config` from `/login` now keeps a separate backup for each write, named with the time (for example `config.jig-bedrock-backup-20261110T171500Z`), instead of replacing one backup each time. The five newest are kept and older ones this package made are deleted; no other file is touched. The old `config.jig-bedrock.bak` is left where it is.
+- A config file that is a symbolic link (for example into a dotfiles folder) is written through: its target gets the new profile and the link stays a link, where before it was replaced by a plain file.
+- Two Pi processes can no longer write the config at the same moment: a lock file beside it is held during the write, and a second writer is told "Another program is changing <file>; try again." A lock older than 30 seconds is treated as left by a crashed writer and taken over.
+
 ## [0.2.5] - 2026-11-10
 
 Faster discovery on real AWS, the same thinking settings as Pi's own Anthropic provider, and a clearer public package.
