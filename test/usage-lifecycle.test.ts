@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 
 type Hook = (...args: any[]) => any;
 
@@ -21,7 +21,7 @@ test("session shutdown cancels its pending background usage program report and s
         events: { emit() {} },
         setModel: () => false,
     };
-    await createJigBedrock({
+    await createBedrockProvider({
         env: {},
         backgroundRefresh: false,
         config: {
@@ -71,7 +71,7 @@ test("the poll only runs while a Bedrock model is selected, and only in the term
         events: { emit() {} },
         setModel: () => false,
     };
-    await createJigBedrock({
+    await createBedrockProvider({
         env: {},
         backgroundRefresh: false,
         config: {

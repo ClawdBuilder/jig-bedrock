@@ -20,7 +20,7 @@ export interface ProfileChoice {
 }
 
 export interface ProfileSettings {
-    /** `bedrock.profile` from the settings file or Jig's section. */
+    /** `bedrock.profile` from the settings file. */
     setting?: string;
     /** `env` when JIG_BEDROCK_PROFILE supplied the setting; `setting` otherwise. */
     settingSource?: "setting" | "env";
@@ -162,7 +162,7 @@ export class ProfileResolver {
         if (value) this.stored = undefined;
     }
 
-    /** Jig's `bedrock` section can appear after this resolver is built; the next resolve uses the new setting. */
+    /** The settings can change on a reload; the next resolve uses the new setting. */
     updateSetting(setting: string | undefined, source: "setting" | "env" | undefined): void {
         this.settings.setting = setting;
         this.settings.settingSource = source;

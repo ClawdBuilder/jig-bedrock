@@ -39,7 +39,6 @@ function run(log: string, list?: string, text?: string): { status: number; outpu
 
 const line = (sha: string, author: string, committer: string) => `${sha}\x1f${author}\x1f${committer}\n`;
 const good = line("a".repeat(40), "noreply@example.com", "someone@users.noreply.github.com");
-const maintainer = line("b".repeat(40), "mrigankamondal10@gmail.com", "mrigankamondal10@gmail.com");
 const badAuthor = line("c".repeat(40), "person@private.example", "noreply@example.com");
 const badCommitter = line("d".repeat(40), "noreply@example.com", "person@private.example");
 
@@ -57,12 +56,6 @@ test("a private word in the committer email fails", () => {
 
 test("without the list only public identities pass", () => {
     const result = run(good);
-    assert.equal(result.status, 0);
-    assert.doesNotMatch(result.output, /^warn /m);
-});
-
-test("the maintainer's public address passes without the list", () => {
-    const result = run(maintainer);
     assert.equal(result.status, 0);
     assert.doesNotMatch(result.output, /^warn /m);
 });

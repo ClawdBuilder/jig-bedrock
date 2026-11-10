@@ -10,7 +10,7 @@ import type { Catalog as BedrockCatalog } from "../src/catalog.ts";
 import { bedrockStream, discoveredProfiles, resolveSelection, usePiRegistry } from "../src/catalog.ts";
 import type { ResolvedConfig } from "../src/config.ts";
 import { JIG_BEDROCK } from "../src/identity.ts";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 import { hostImport } from "./support/pi-host.ts";
 
 const ACCOUNT = "123456789012";
@@ -138,19 +138,26 @@ test("a version-suffixed profile id survives the cache, the model id, saved sele
         const selected = withColon;
         assert.equal(resolveSelection(models, selected.id)?.arn, selected.arn);
 
+        let recordedId: string | undefined;
         let wireId: string | undefined;
         const stream = bedrockStream(
             models,
             {
-                converse: (wire: { id: string }) => {
-                    wireId = wire.id;
+                converse: async (wire: { id: string }, _context: unknown, options: { onPayload?: Function }) => {
+                    recordedId = wire.id;
+                    const command = (await options.onPayload?.({ modelId: wire.id }, wire)) as { modelId: string };
+                    wireId = command.modelId;
                     throw new Error("captured");
                 },
             } as never,
             source.load,
             () => "my-profile",
         );
-        assert.throws(() => stream({ ...selected, provider: JIG_BEDROCK } as never, {} as never), /captured/);
+        await assert.rejects(
+            async () => stream({ ...selected, provider: JIG_BEDROCK } as never, {} as never, {} as never),
+            /captured/,
+        );
+        assert.equal(recordedId, selected.id, "the recorded model is the short id");
         assert.equal(wireId, selected.arn, "the request model is the ARN, colon included");
         assert.doesNotMatch(selected.baseUrl, /inference-profile/, "the URL still has no profile id");
     } finally {
@@ -356,7 +363,7 @@ test("a failed refresh shows the discovery reason once, without the raw status",
     const dir = mkdtempSync(join(tmpdir(), "real-discovery-provider-"));
     try {
         const h = providerHarness();
-        await createJigBedrock({
+        await createBedrockProvider({
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
             config: { ...config, team: undefined } as ResolvedConfig,
             listProfiles: async () => ["my-profile"],
@@ -403,7 +410,7 @@ test("a partial catalog reports one summary naming at most three profiles", asyn
             profiles: [],
             errors,
         };
-        await createJigBedrock({
+        await createBedrockProvider({
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
             config: { ...config, team: undefined } as ResolvedConfig,
             listProfiles: async () => ["my-profile"],

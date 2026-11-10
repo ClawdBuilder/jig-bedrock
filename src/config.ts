@@ -1,4 +1,4 @@
-// The Bedrock provider's settings: the `bedrock` section of jig.json, over the package defaults, over which environment
+// The Bedrock provider's settings: bedrock.json, over the package defaults, over which environment
 // variables win. Diagnostics name fields and never echo configuration values or parser output.
 //
 //   team               your exact AWS "Team" tag value: the inference profiles that carry it (and Active=true) are the models
@@ -8,7 +8,7 @@
 //   usageDir             a folder holding an executable named usage that prints the usage JSON (optional; default ~/.local/share/usage-tool)
 //   monthlyBudgetUsd   a figure to show in the footer next to the month's spend; not an AWS limit (optional)
 //   ssoLoginCommand    the argv of the login, with {profile} for the profile (default aws sso login --profile {profile})
-//   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default true)
+//   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default false)
 //   browser            the program that opens the sign-in address, as BROWSER for the login (optional; under WSL the Windows browser)
 //   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
 //
@@ -77,7 +77,7 @@ export const DEFAULTS = {
     regions: ["us-east-1"],
     usageDir: "~/.local/share/usage-tool",
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
-    signInAtStart: true,
+    signInAtStart: false,
     api: "messages" as BedrockApi,
 };
 
@@ -109,6 +109,12 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     ) {
         problems.push("bedrock.team must be your exact AWS tag value (1-256 characters, no control characters)");
     }
+    if (team !== undefined && (tagKey !== undefined || tagValue !== undefined))
+        problems.push("bedrock.team cannot be combined with bedrock.tagKey or bedrock.tagValue");
+    if ((tagKey === undefined) !== (tagValue === undefined))
+        problems.push("bedrock.tagKey and bedrock.tagValue must be set together");
+    if ((activeTagKey === undefined) !== (activeTagValue === undefined))
+        problems.push("bedrock.activeTagKey and bedrock.activeTagValue must be set together");
     for (const [name, value] of [
         ["tagKey", tagKey],
         ["tagValue", tagValue],
@@ -189,7 +195,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     return problems;
 }
 
-/** The check the `bedrock` section goes through when jig-core reads jig.json. The package defaults fill what is left out. */
+/** Validate a settings object; the package defaults fill what is left out. */
 export const checkBedrock: Check = (raw, errors) => {
     if (!isObject(raw)) {
         errors.push("bedrock must be an object");
@@ -199,7 +205,7 @@ export const checkBedrock: Check = (raw, errors) => {
     errors.push(...problemsOf({ ...DEFAULTS, ...raw }));
 };
 
-/** The same check as jig-core's `registerSection` wants it: the messages, empty when the section is fine. */
+/** The messages for a settings object, empty when it is fine. */
 export function validateBedrock(raw: unknown): string[] {
     const errors: string[] = [];
     checkBedrock(raw, errors);
@@ -241,6 +247,12 @@ export function loadConfig(
     }
     const [problem] = problemsOf(c);
     if (problem !== undefined) return { error: `${problem}.` };
+    if (typeof c.team === "string") {
+        c.tagKey = "Team";
+        c.tagValue = c.team;
+        c.activeTagKey = "Active";
+        c.activeTagValue = "true";
+    }
     const team = typeof c.team === "string" && c.team !== "" ? c.team : undefined;
     const tagValue = typeof c.tagValue === "string" && c.tagValue !== "" ? c.tagValue : team;
     const explicit = Array.isArray(c.profiles) && c.profiles.length > 0;

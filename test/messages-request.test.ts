@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { Catalog, TeamBedrockModel } from "../src/catalog.ts";
+import type { BedrockModel, Catalog } from "../src/catalog.ts";
 import { discoveredProfiles, usePiAnthropicRegistry, usePiRegistry } from "../src/catalog.ts";
 import { hostImport } from "./support/pi-host.ts";
 
@@ -49,7 +49,7 @@ function transcript() {
 }
 
 async function requestBody(
-    model: TeamBedrockModel,
+    model: BedrockModel,
     context: unknown,
     options: { reasoning?: string; temperature?: number } = {},
 ): Promise<Record<string, unknown>> {
@@ -102,7 +102,7 @@ test("without the mid-conversation flags nothing changes: no binding beta and th
     try {
         const [base] = discoveredProfiles(catalog(), dir).available;
         assert.ok(base);
-        const model: TeamBedrockModel = {
+        const model: BedrockModel = {
             ...base,
             compat: {
                 supportsEagerToolInputStreaming: true,

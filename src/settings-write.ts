@@ -15,7 +15,6 @@ export interface DiscoverySettings {
 export interface SaveDiscoveryResult {
     file: string;
     written: boolean;
-    /** Keys jig.json's `bedrock` section also sets; that section wins over this file. */
     shadowed: string[];
     error?: string;
 }
@@ -35,12 +34,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Merge the discovery choice into bedrock.json; returns what was written and which keys jig.json overrides. */
-export function saveDiscoverySettings(
-    env: NodeJS.ProcessEnv,
-    settings: DiscoverySettings,
-    jigSection?: Record<string, unknown>,
-): SaveDiscoveryResult {
+/** Merge the discovery choice into bedrock.json. */
+export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: DiscoverySettings): SaveDiscoveryResult {
     const file = bedrockFile(env);
     let document: Record<string, unknown> = {};
     try {
@@ -70,7 +65,7 @@ export function saveDiscoverySettings(
     }
     target.regions = settings.regions;
     const keys = new Set<string>([...modeKeys, "regions"]);
-    const shadowed = jigSection === undefined ? [] : [...keys].filter((key) => Object.hasOwn(jigSection, key)).sort();
+    const shadowed: string[] = [];
     try {
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
         const temporary = `${file}.${process.pid}.tmp`;

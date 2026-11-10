@@ -18,7 +18,7 @@ import { createBudget, parseBudget } from "../src/budget.ts";
 import { bedrockStream, discoveredProfiles, registerBedrockSelectionGuard, usePiRegistry } from "../src/catalog.ts";
 import { checkBedrock, loadConfig } from "../src/config.ts";
 import { createRecovery } from "../src/login.ts";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 import { hostImport } from "./support/pi-host.ts";
 import { elsewhere } from "./support/wsl.ts";
 
@@ -443,17 +443,26 @@ test("standalone stream blocks unknown, removed and cross-scope profiles before 
     const stream = bedrockStream(
         models,
         {
-            converse: ((m: any, _ctx: any, opts: any) => {
+            converse: (async (m: any, _ctx: any, opts: any) => {
                 calls++;
-                assert.equal(m.id, arn());
+                assert.equal(m.id, models[0].id, "the recorded model stays the short id");
                 assert.equal(opts.profile, config.profile);
+                const command = await opts.onPayload({ modelId: m.id }, m);
+                assert.equal(command.modelId, arn(), "the wire carries the ARN");
                 return "ok";
             }) as any,
         },
         source.load,
         () => config.profile,
     );
-    assert.equal(stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), "ok");
+    assert.equal(await stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any, {} as any), "ok");
+    assert.equal(
+        await stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any, {
+            env: { AWS_PROFILE: config.profile, AWS_BEARER_TOKEN_BEDROCK: "test-token" },
+        }),
+        "ok",
+        "an ambient Bedrock key does not stop this package's profile models",
+    );
     assert.throws(
         () => stream({ ...models[0], provider: "amazon-bedrock" } as any, {} as any),
         /not in your model list/,
@@ -465,7 +474,7 @@ test("standalone stream blocks unknown, removed and cross-scope profiles before 
     f.state.empty = true;
     await source.refresh(true);
     assert.throws(() => stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), /not in your model list/);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
 });
 test("removed selection blocks after Pi changes model until a user chooses", () => {
     const hooks = new Map<string, Hook>();

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource } from "./aws-discovery.ts";
 import type { BudgetSource } from "./budget.ts";
-import type { TeamBedrockModel } from "./catalog.ts";
+import type { BedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { checkLocalDependencies, dependencyLines } from "./doctor.ts";
 import { type Markers, markers } from "./markers.ts";
@@ -41,7 +41,7 @@ const totalCost = (report: UsageReport) => {
         : money(report.totals.costUsd);
 };
 /** The 5-minute cache write rate and, for models with a 1-hour tier (PI_CACHE_RETENTION=long), Pi's 1-hour rate: twice the input rate. */
-function writeRates(m: TeamBedrockModel): string {
+function writeRates(m: BedrockModel): string {
     const rate = (value: number) => String(Number(value.toFixed(4)));
     if (m.promptCache?.long === undefined)
         return `write $${rate(m.cost.cacheWrite)}${m.promptCache ? " (5 min only)" : ""}`;
@@ -77,7 +77,7 @@ function sessionLines(ctx: ExtensionCommandContext): string[] {
         unknown = 0;
     for (const entry of ctx.sessionManager.getBranch()) {
         const message = entry.type === "message" ? (entry as { message?: Json }).message : undefined;
-        if (message?.role !== "assistant" || !["jig-bedrock", "amazon-bedrock"].includes(message.provider)) continue;
+        if (message?.role !== "assistant" || message.provider !== "jig-bedrock") continue;
         const usage = message.usage;
         if (!usage) continue;
         requests++;
@@ -243,7 +243,7 @@ export function registerStatisticsCommands(
         config: ResolvedConfig;
         statistics: StatisticsSource;
         catalog: CatalogSource;
-        models(): TeamBedrockModel[];
+        models(): BedrockModel[];
         budget: BudgetSource;
         publish(): void;
         /** Resolves the profile for the doctor; absent in a test that only exercises another command. */

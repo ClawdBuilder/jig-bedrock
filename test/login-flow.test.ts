@@ -265,7 +265,7 @@ test("a Bedrock API key is refused, and the flow offers the methods again", asyn
     assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
     assert.match(
         fake.prompts.map((prompt) => prompt.message ?? "").join("\n"),
-        /not supported by this package/,
+        /Use Pi's built-in Amazon Bedrock provider for an API key/,
         "the reason stays on screen in the next method prompt",
     );
 });
@@ -322,16 +322,6 @@ test("tag and explicit discovery choices are saved with the regions", async () =
         if (mode === "tag") assert.deepEqual([saved[0]?.tagKey, saved[0]?.tagValue], ["Team", "my-team"]);
         else assert.equal(saved[0]?.profiles?.length, 2);
     }
-});
-
-test("a Jig section that shadows a saved key is named", async () => {
-    const fake = interaction(profileAnswer("keys"));
-    const result: SaveDiscoveryResult = { file: "/tmp/bedrock.json", written: true, shadowed: ["regions"] };
-    await runLoginFlow(fake.value as never, { ...options(), saveDiscovery: () => result });
-    assert.match(
-        fake.notices.map((notice) => notice.message).join("\n"),
-        /jig\.json's bedrock section sets regions and wins/,
-    );
 });
 
 test("no prompt ever asks for a secret and no credential carries a key", async () => {

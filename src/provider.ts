@@ -1,10 +1,9 @@
 // The Bedrock model provider: your inference profiles as Pi models, AWS SSO recovery, a monthly spend figure and
-// the commands around them. Its settings are the `bedrock` section when Jig is present, or the extension's own settings (see config.ts); it also
-// publishes the optional display events in events.ts.
+// the commands around them. Its settings are bedrock.json and the JIG_BEDROCK_* environment (see config.ts).
 //
 // The factory registers and reads settings, and no more: AWS, usage program and the browser are touched in `session_start`, in the
 // background, or by a command the user types.
-import { readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
@@ -23,24 +22,20 @@ import {
 import { createSignedFetch } from "./bedrock-fetch.ts";
 import type { BudgetSource } from "./budget.ts";
 import { createBudget } from "./budget.ts";
-import type { TeamBedrockModel } from "./catalog.ts";
+import type { BedrockModel } from "./catalog.ts";
 import {
     discoveredProfiles,
+    registerBedrockProvider,
     registerBedrockSelectionGuard,
-    registerTeamBedrock,
     updateModels,
     usePiAnthropicRegistry,
     usePiRegistry,
 } from "./catalog.ts";
 import { isObject } from "./check.ts";
-import { isSubagentChild } from "./child.ts";
 import { registerStatisticsCommands } from "./commands.ts";
 import type { BedrockApi, ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
-import { MODEL_NAMES_EVENT, modelNames, SEGMENT_EVENT, spendSegment } from "./events.ts";
-import { isJigBedrock, JIG_BEDROCK } from "./identity.ts";
-import { jigApi } from "./jig/client.ts";
-import type { JigApi } from "./jig/types.ts";
+import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { runLoginFlow } from "./login-flow.ts";
@@ -68,17 +63,10 @@ import { registerSwitchNotice } from "./switch-cost.ts";
 
 export type { BudgetSource, CatalogSource, Recover, ResolvedConfig, StatisticsSource };
 
-export interface EventNames {
-    provider: string;
-    usage: string;
-}
-
 export interface BedrockOptions {
     catalog?: CatalogSource;
-    /** The settings, already resolved. Without them they are read from the `bedrock` section through `api`. */
+    /** The settings, already resolved. Without them they are read from bedrock.json and the environment. */
     config?: ResolvedConfig;
-    /** jig-core's API, for reading the settings. */
-    api?: JigApi;
     ssoRecover?: Recover;
     /** The parts of the default sign-in a test replaces: the program that starts the login, its lock, its environment, WSL. */
     login?: Omit<RecoveryOptions, "say">;
@@ -94,11 +82,9 @@ export interface BedrockOptions {
     signInProfile?: (profile: string, signal: AbortSignal) => Promise<void>;
     budget?: BudgetSource;
     statistics?: StatisticsSource;
-    events?: EventNames;
     selection?: { agentDir?: string; explicitSelection?: () => boolean };
-    transformModels?: (models: TeamBedrockModel[]) => TeamBedrockModel[];
+    transformModels?: (models: BedrockModel[]) => BedrockModel[];
     backgroundRefresh?: boolean;
-    usageEvents?: boolean;
     preserveNativeAuth?: boolean;
     /** The AWS credentials of the Messages route; the SDK's default provider for the profile unless a test supplies them. */
     credentials?: () => Promise<AwsCredentials>;
@@ -108,10 +94,8 @@ export interface BedrockOptions {
 }
 
 export interface BedrockHandle {
-    models: TeamBedrockModel[];
+    models: BedrockModel[];
     refresh: (force?: boolean) => Promise<Status>;
-    /** Re-read the settings; `live` also resolves the profile and refreshes when a session is already running. */
-    applySettings: (live?: boolean) => void;
     failed: boolean;
 }
 
@@ -148,43 +132,87 @@ function userSettings(env: NodeJS.ProcessEnv): Record<string, unknown> | undefin
     return userSettingsFile(env).settings;
 }
 
-/** Jig's section without the two keys that start programs. */
-function safeSection(api: JigApi | undefined): { section?: Record<string, unknown>; dropped: string[] } {
-    const raw = api?.config.section("bedrock");
-    if (!isObject(raw)) return { dropped: [] };
-    const section = { ...raw };
-    const dropped = ["ssoLoginCommand", "usageDir", "browser"].filter((key) => key in section);
-    delete section.ssoLoginCommand;
-    delete section.usageDir;
-    delete section.browser;
-    return { section, dropped };
+/** The 0.2.x file this release only reads to offer a copy; it is plain JSON, never imported. */
+function oldSettings(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+    try {
+        const file = path.join(agentFolder(env), "jig.json");
+        const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
+        const value = isObject(raw) && isObject(raw.bedrock) ? raw.bedrock : undefined;
+        return value;
+    } catch {
+        return undefined;
+    }
 }
 
-/** The user's bedrock.json first; jig-core's section on top, except the two program keys. */
-export function settingsFrom(
-    api: JigApi | undefined,
-    env: NodeJS.ProcessEnv = process.env,
-): Record<string, unknown> | undefined {
-    const { section } = safeSection(api);
-    const user = userSettings(env);
-    if (user === undefined) return section;
-    return section === undefined ? user : { ...user, ...section };
+/** `team` was the 0.2.x short form: the migration writes the generic keys and the Active rule. */
+function migratedSettings(source: Record<string, unknown>): Record<string, unknown> {
+    const out = { ...source };
+    if (typeof out.team === "string" && out.team !== "") {
+        const team = out.team;
+        delete out.team;
+        out.tagKey = "Team";
+        out.tagValue = team;
+        out.activeTagKey = "Active";
+        out.activeTagValue = "true";
+    }
+    return out;
 }
 
-export function createJigBedrock(
+function registerMigration(pi: Pick<ExtensionAPI, "on" | "registerCommand">, env: NodeJS.ProcessEnv): void {
+    const destination = path.join(agentFolder(env), "bedrock.json");
+    const notice = (): void => {
+        if (existsSync(destination)) return;
+        if (oldSettings(env) === undefined) return;
+        // The only jig.json wording in the package: a one-release migration notice.
+        pi.on("session_start", (_event, context) =>
+            context.ui.notify(
+                "Your Bedrock settings are in jig.json. This version reads bedrock.json only. Run /bedrock migrate to copy them.",
+                "warning",
+            ),
+        );
+    };
+    notice();
+    pi.registerCommand("bedrock", {
+        description: "Copy Bedrock settings from jig.json to bedrock.json",
+        handler: async (args, context) => {
+            if (args.trim() !== "migrate") {
+                context.ui.notify("Usage: /bedrock migrate", "warning");
+                return;
+            }
+            const source = oldSettings(env);
+            if (source === undefined) {
+                context.ui.notify("No jig.json Bedrock settings to copy.", "warning");
+                return;
+            }
+            try {
+                mkdirSync(path.dirname(destination), { recursive: true });
+                const text = `${JSON.stringify(migratedSettings(source), null, 4)}\n`;
+                writeFileSync(destination, text, { mode: 0o600, flag: "wx" });
+                chmodSync(destination, 0o600);
+                context.ui.notify(`Copied Bedrock settings to ${destination}. Run /reload to use them.`, "info");
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "EEXIST")
+                    context.ui.notify(`${destination} already exists; it was not overwritten.`, "warning");
+                else context.ui.notify(`Could not write ${destination}; check permissions.`, "warning");
+            }
+        },
+    });
+}
+
+export function createBedrockProvider(
     options: BedrockOptions = {},
 ): (pi: ExtensionAPI) => Promise<BedrockHandle | undefined> {
     return async (pi) => {
         const resolved: ConfigResult = options.config
             ? { config: options.config }
             : loadConfig({
-                  raw: settingsFrom(options.api, options.env),
-                  ...(options.env === undefined ? {} : { env: options.env }),
+                  raw: userSettings(options.env ?? process.env),
+                  env: options.env ?? process.env,
               });
         const config = resolved.config;
+        registerMigration(pi, options.env ?? process.env);
         const currentApi = (): BedrockApi => config?.api ?? "messages";
-        const events = options.events ?? { provider: "jig-bedrock:provider", usage: "jig-bedrock:usage" };
-        const models: TeamBedrockModel[] = [];
+        const models: BedrockModel[] = [];
         let discoverySlow = false;
         let refreshInFlight: Promise<Status> | undefined;
         let guard: ReturnType<typeof registerBedrockSelectionGuard>;
@@ -201,7 +229,7 @@ export function createJigBedrock(
             });
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
-            const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;
+            const where = `Fix ${file}, then /reload.`;
             pi.on("session_start", (_event, ctx) =>
                 ctx.ui.notify(`Bedrock provider disabled: ${resolved.error} ${where}`, "warning"),
             );
@@ -235,8 +263,7 @@ export function createJigBedrock(
                     options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
                 signIn: (profile, signal) =>
                     options.signInProfile?.(profile, signal) ?? recoveryForLogin(profile, signal, "manual"),
-                saveDiscovery: (settings) =>
-                    saveDiscoverySettings(profileEnv, settings, safeSection(apiForSettings()).section),
+                saveDiscovery: (settings) => saveDiscoverySettings(profileEnv, settings),
                 regions: config.regions,
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
@@ -247,38 +274,12 @@ export function createJigBedrock(
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
         const identity = { profile: currentProfile, auth };
-        // jig-core can appear after this provider (the install order is Pi's load order). Re-read the settings then, and
-        // at every session start: the same `bedrock` section must win in either order.
-        const apiForSettings = (): JigApi | undefined => options.api ?? jigApi();
-        const applySettings = (live = false): void => {
-            if (options.config !== undefined) return;
-            const next = loadConfig({
-                raw: settingsFrom(apiForSettings(), options.env),
-                ...(options.env === undefined ? {} : { env: options.env }),
-                ...(config.agentDir === undefined ? {} : { agentDir: config.agentDir }),
-            });
-            if (!next.config) {
-                if (ctx) ctx.ui.notify(`Bedrock settings were not applied: ${next.error}`, "warning");
-                return;
-            }
-            for (const key of Object.keys(config)) delete (config as unknown as Record<string, unknown>)[key];
-            Object.assign(config, next.config);
-            profiles.updateSetting(config.profile, config.profileSource);
-            if (live && ctx) {
-                void resolveProfile(ctx)
-                    .then(() => (backgroundRefresh ? refresh(false) : undefined))
-                    .catch(() => undefined);
-            }
-        };
         const catalog = options.catalog ?? createAwsDiscovery(config);
         const statistics = options.statistics ?? createStatistics(config);
         const budget = options.budget ?? createBudget(config, undefined, undefined, undefined, statistics);
         registerSwitchNotice(pi, { env: options.env });
         const lifetime = new AbortController();
-        // A subagent child never refreshes the catalog, polls usage program or publishes usage: the parent does, and nothing there shows it.
-        const child = isSubagentChild(options.env);
-        const usageEvents = options.usageEvents !== false && !child;
-        const backgroundRefresh = options.backgroundRefresh !== false && !child;
+        const backgroundRefresh = options.backgroundRefresh !== false;
         let ctx: ExtensionContext | undefined;
         let native: Provider | undefined;
         let messages: RecoveredBedrock["messages"];
@@ -289,22 +290,6 @@ export function createJigBedrock(
             const result = discoveredProfiles(catalog.load(), config.usageDir, currentApi());
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
-        };
-        const publish = (): void => {
-            if (!ctx) return;
-            const spent = budget.load();
-            pi.events?.emit(events.usage, { sessionId: ctx.sessionManager.getSessionId(), budget: spent });
-            pi.events?.emit(SEGMENT_EVENT, spendSegment(spent, Date.now()));
-        };
-        const provider = (): void => {
-            pi.events?.emit(events.provider, {
-                sessionId: ctx?.sessionManager.getSessionId(),
-                budget: budget.load(),
-                models,
-                unavailable: readModels().unavailable,
-                status: failed ? "failed" : models.length ? "ready" : "absent",
-            });
-            if (usageEvents) pi.events?.emit(MODEL_NAMES_EVENT, modelNames(models));
         };
         // A repair the sign-in makes for WSL is told in one line, the way the notices of a waiting request are.
         const say = (line: string): void => {
@@ -355,7 +340,7 @@ export function createJigBedrock(
             await usePiAnthropicRegistry();
             usePiRegistry(native);
             models.push(...readModels().available);
-            await registerTeamBedrock(
+            await registerBedrockProvider(
                 pi,
                 config.agentDir || "",
                 native,
@@ -388,7 +373,7 @@ export function createJigBedrock(
                 }
                 const updated = readModels().available;
                 const selected = ctx?.model;
-                if (isJigBedrock(selected)) {
+                if (isOwnModel(selected)) {
                     const previous = models.find((m) => m.id === selected?.id);
                     const replacement = updated.find((m) => m.id === selected?.id);
                     if (
@@ -420,7 +405,7 @@ export function createJigBedrock(
                     ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
                 }
                 if (change.changed && native) {
-                    await registerTeamBedrock(
+                    await registerBedrockProvider(
                         pi,
                         config.agentDir || "",
                         native,
@@ -431,7 +416,6 @@ export function createJigBedrock(
                         signedFetch,
                     );
                 }
-                provider();
                 return status;
             })().finally(() => {
                 refreshInFlight = undefined;
@@ -444,9 +428,7 @@ export function createJigBedrock(
             profiles.stored = profile;
             lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
-            // The guided flow saved discovery choices to bedrock.json; read them before the first refresh. A
-            // bedrock.profile setting still wins over the profile just chosen, as it does everywhere else.
-            applySettings(false);
+            // A bedrock.profile setting still wins over the profile just chosen, as it does everywhere else.
             if (profile !== undefined && ctx) {
                 const resolved = await resolveProfile(ctx);
                 if (resolved.profile !== undefined && resolved.profile !== profile)
@@ -507,7 +489,7 @@ export function createJigBedrock(
             catalog,
             models: () => models,
             budget,
-            publish,
+            publish: () => {},
             profiles,
             stored: () => profiles.stored,
             listProfiles: loginListProfiles,
@@ -533,17 +515,8 @@ export function createJigBedrock(
         };
         pi.on("session_start", async (_event, context) => {
             disposed = false;
-            applySettings(false);
             ctx = context;
-            const dropped = safeSection(apiForSettings()).dropped;
-            if (dropped.length > 0)
-                context.ui.notify(
-                    `Bedrock ignores ${dropped.join(" and ")} from a project's jig.json; set them in ${path.join(agentFolder(options.env), "bedrock.json")} or the environment.`,
-                    "warning",
-                );
             const choice = await resolveProfile(context);
-            provider();
-            if (usageEvents) publish();
             const unavailable = readModels().unavailable;
             if (options.preserveNativeAuth) {
                 // The native provider's own credentials decide; nothing here is reported.
@@ -567,13 +540,10 @@ export function createJigBedrock(
             // chain means discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);
             if (backgroundRefresh && canRefresh) void refresh(false).catch(() => {});
-            if (usageEvents && context.mode === "tui") {
+            if (context.mode === "tui") {
                 const tick = (): void => {
-                    if (isJigBedrock(ctx?.model)) {
-                        void budget
-                            .refresh({ signal: lifetime.signal })
-                            .then(publish)
-                            .catch(() => {});
+                    if (isOwnModel(ctx?.model)) {
+                        void budget.refresh({ signal: lifetime.signal }).catch(() => {});
                     }
                 };
                 tick();
@@ -588,25 +558,21 @@ export function createJigBedrock(
             deferStartupWarning: () => refreshInFlight !== undefined && models.length === 0,
             discoverySlow: () => discoverySlow,
         });
-        // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not
-        // in a child: the parent does it, and a second window from a child would be one nobody expects. Registered after
-        // the handler above, so the profile it resolves is already in force.
-        if (!child) {
-            registerSignInAtStart(pi, {
-                signInAtStart: config.signInAtStart,
-                profile: () => currentProfile(),
-                recover: shareRecovery(recovery),
-                check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
-                refresh: () => refresh(false),
-            });
-        }
-        if (usageEvents) pi.on("model_select", publish);
+        // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share.
+        // Registered after the handler above, so the profile it resolves is already in force.
+        registerSignInAtStart(pi, {
+            signInAtStart: config.signInAtStart,
+            profile: () => currentProfile(),
+            recover: shareRecovery(recovery),
+            check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
+            refresh: () => refresh(false),
+        });
         pi.on("session_shutdown", () => {
             lifetime.abort();
             disposed = true;
             ctx = undefined;
             if (timer) clearInterval(timer);
         });
-        return { models, refresh, applySettings, failed };
+        return { models, refresh, failed };
     };
 }

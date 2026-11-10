@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { registerTeamBedrock } from "../src/catalog.ts";
+import { registerBedrockProvider } from "../src/catalog.ts";
 import { createProfileAuth, ProfileResolver } from "../src/profile.ts";
 import { hostImport } from "./support/pi-host.ts";
 
@@ -16,7 +16,7 @@ test("the provider's auth hands on only the profile, never a key", async () => {
         settings: { setting: "fixture-profile", env: {} },
         listProfiles: async () => ["fixture-profile"],
     });
-    await registerTeamBedrock(
+    await registerBedrockProvider(
         {
             registerProvider: (p: any) => {
                 if (typeof p === "object") provider = p;
@@ -75,7 +75,7 @@ test("the provider has no repository imports or internal environment dependencie
     }
 });
 test("refresh replacing a selected ARN keeps input blocked without switching models", async (t) => {
-    const { createJigBedrock } = await import("../src/provider.ts");
+    const { createBedrockProvider } = await import("../src/provider.ts");
     const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
     const foundation = builtinProviders()
         .find((p: any) => p.id === "amazon-bedrock")
@@ -107,7 +107,7 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
         events: { emit() {} },
         setModel: () => assert.fail("silent model switch"),
     };
-    const controller = await createJigBedrock({
+    const controller = await createBedrockProvider({
         config: {
             team: "fixture",
             profile: "fixture",
