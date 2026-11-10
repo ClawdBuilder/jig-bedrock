@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- Converse requests no longer use an ambient `AWS_BEARER_TOKEN_BEDROCK`: Pi's Converse client reads it through `getProviderEnvValue`, where an empty scoped value falls back to `process.env`. The package hides that variable only while its own Converse request is in flight, signs with the configured AWS profile, and restores the variable on the response or stream end, so the built-in provider still sees it. The Messages signed fetch already removes `Authorization` and signs with SigV4; a real HTTP-layer test covers both routes.
 - Adding a profile to `~/.aws/config` from `/login` now keeps a separate backup for each write, named with the time (for example `config.jig-bedrock-backup-20261110T171500Z`), instead of replacing one backup each time. The five newest are kept and older ones this package made are deleted; no other file is touched. The old `config.jig-bedrock.bak` is left where it is.
 - A config file that is a symbolic link (for example into a dotfiles folder) is written through: its target gets the new profile and the link stays a link, where before it was replaced by a plain file.
 - Two Pi processes can no longer write the config at the same moment: a lock file beside it is held during the write, and a second writer is told "Another program is changing <file>; try again." A lock older than 30 seconds is treated as left by a crashed writer and taken over.
