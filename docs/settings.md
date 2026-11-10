@@ -48,10 +48,10 @@ When `profile` is unset, the provider takes the first of these that exists:
 6. with none of those, the AWS credential chain (environment, container or instance role).
 
 A configured profile that is in neither your AWS config nor your credentials file (`[profile NAME]` or `[NAME]`; `aws configure list-profiles` prints the same names) resolves to no models: the start-up notice and
-`/bedrock-doctor` say which profile is missing and point to `/login`.
+`/bedrock doctor` say which profile is missing and point to `/login`.
 
-`signInAtStart: true` refreshes an expired session when Pi starts; the default leaves sign-in to a failing request or `/aws-login`. The start-up check still runs read-only, and
-an expired session shows “Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.”
+`signInAtStart: true` refreshes an expired session when Pi starts; the default leaves sign-in to a failing request or `/bedrock login`. The start-up check still runs read-only, and
+an expired session shows “Bedrock models not loaded yet; run /bedrock login, then /bedrock refresh.”
 
 ## The three discovery modes
 

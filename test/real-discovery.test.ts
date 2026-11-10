@@ -224,7 +224,7 @@ test("a failed listing names the step and the plain reason", async () => {
     }
 });
 
-test("the result summary names at most three short ids, then points at /bedrock-profiles", () => {
+test("the result summary names at most three short ids, then points at /bedrock models", () => {
     const summary =
         problemSummary([
             { profile: arn("orders-api-1"), message: "its model address has an unexpected form" },
@@ -236,7 +236,7 @@ test("the result summary names at most three short ids, then points at /bedrock-
     assert.match(summary, /orders-api-1: its model address has an unexpected form/);
     assert.match(summary, /orders-api-3: AWS timed out/);
     assert.doesNotMatch(summary, /orders-api-4/);
-    assert.match(summary, /and 2 more: \/bedrock-profiles lists them/);
+    assert.match(summary, /and 2 more: \/bedrock models lists them/);
     assert.doesNotMatch(summary, /\b123456789012\b/);
 });
 

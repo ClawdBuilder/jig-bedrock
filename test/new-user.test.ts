@@ -36,6 +36,8 @@ async function startWith(options: {
     listing?: string[];
     loginListing?: string[];
     dir: string;
+    refreshStatus?: "ok" | "credentials" | "sso_expired" | "permission_denied";
+    failure?: string;
 }) {
     const { pi, hooks, commands, providers } = harness();
     const notices: string[] = [];
@@ -44,7 +46,11 @@ async function startWith(options: {
             env: options.env,
             listProfiles: async () => options.listing,
             ...(options.loginListing === undefined ? {} : { loginListProfiles: async () => options.loginListing }),
-            catalog: { load: () => undefined, refresh: async () => "ok" },
+            catalog: {
+                load: () => undefined,
+                refresh: async () => options.refreshStatus ?? "ok",
+                ...(options.failure === undefined ? {} : { failure: () => options.failure }),
+            },
         }) as never
     )(pi as never);
     const ctx = {
@@ -54,6 +60,7 @@ async function startWith(options: {
         sessionManager: { getBranch: () => [], getSessionId: () => "test", getSessionDir: () => options.dir },
     };
     for (const hook of hooks.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     return { notices, commands, providers, pi, hooks };
 }
 
@@ -67,7 +74,7 @@ test("start-up with no profile names the setting and points to /login", async ()
         const { notices } = await startWith({ dir, env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
         const text = notices.join("\n");
         assert.match(text, /Bedrock: run \/login, choose Amazon Bedrock \(jig-bedrock\), then \/model\./);
-        assert.doesNotMatch(text, /run \/aws-login/);
+        assert.doesNotMatch(text, /run \/bedrock login/);
         const second = await startWith({ dir, env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
         assert.doesNotMatch(second.notices.join("\n"), /Bedrock: run \/login/, "once per agent folder");
     } finally {
@@ -75,7 +82,63 @@ test("start-up with no profile names the setting and points to /login", async ()
     }
 });
 
-test("start-up with a profile that does not exist says so and does not send you to /aws-login", async () => {
+test("an automatically picked default profile that fails gets only the /login notice", async () => {
+    const dir = home();
+    try {
+        const { notices } = await startWith({
+            dir,
+            listing: ["default"],
+            refreshStatus: "credentials",
+            failure: "Could not check the AWS account: the AWS profile has no credentials.",
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
+        });
+        const text = notices.join("\n");
+        assert.match(text, /Bedrock: run \/login, choose Amazon Bedrock \(jig-bedrock\), then \/model\./);
+        assert.doesNotMatch(text, /has no credentials|Warning/);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a chosen profile that has no credentials says so by name", async () => {
+    const dir = home();
+    try {
+        const { notices } = await startWith({
+            dir,
+            listing: ["work-profile"],
+            refreshStatus: "credentials",
+            failure: "Could not check the AWS account: the AWS profile has no credentials.",
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
+        });
+        assert.match(notices.join("\n"), /Bedrock: the AWS profile work-profile has no credentials\./);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a chosen profile with an expired sign-in or a refusal says so by name", async () => {
+    const dir = home();
+    try {
+        const expired = await startWith({
+            dir,
+            listing: ["work-profile"],
+            refreshStatus: "sso_expired",
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
+        });
+        assert.match(expired.notices.join("\n"), /the AWS profile work-profile sign-in expired\./);
+        const refused = await startWith({
+            dir,
+            listing: ["work-profile"],
+            refreshStatus: "permission_denied",
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
+        });
+        assert.match(refused.notices.join("\n"), /the AWS profile work-profile was refused by AWS\./);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("start-up with a profile that does not exist says so and does not send you to /bedrock login", async () => {
     const dir = home();
     try {
         const { notices } = await startWith({
@@ -86,7 +149,7 @@ test("start-up with a profile that does not exist says so and does not send you 
         const text = notices.join("\n");
         assert.match(text, /missing-profile \(from JIG_BEDROCK_PROFILE\) is not in aws configure list-profiles/);
         assert.match(text, /\/login/);
-        assert.doesNotMatch(text, /run \/aws-login/);
+        assert.doesNotMatch(text, /run \/bedrock login/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -118,7 +181,7 @@ test("start-up with a real profile says the models are loading, not that a setti
         const text = notices.join("\n");
         assert.match(text, /Bedrock: reading the models from AWS \(first start\)/);
         assert.doesNotMatch(text, /No AWS profile is configured/);
-        assert.doesNotMatch(text, /run \/aws-login/);
+        assert.doesNotMatch(text, /run \/bedrock login/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -173,10 +236,10 @@ test("the doctor uses words when the locale is not UTF-8", async () => {
     assert.doesNotMatch(text, /✗/);
 });
 
-test("the doctor uses words when NO_COLOR is set", async () => {
+test("the doctor keeps symbols when NO_COLOR is set", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C.UTF-8", NO_COLOR: "1" }, [
         "other-profile",
     ]);
-    assert.match(text, /failure AWS profile:/);
-    assert.doesNotMatch(text, /✗/);
+    assert.match(text, /✗ AWS profile:/);
+    assert.doesNotMatch(text, /failure AWS profile:/);
 });

@@ -1,4 +1,4 @@
-// User-facing Bedrock commands. Part B adds `/bedrock usage` and `/bedrock budget`; /bedrock-usage and /bedrock-stats
+// User-facing Bedrock commands. Part B adds `/bedrock usage` and `/bedrock budget`; /bedrock usage and /bedrock stats
 // call the same code. Every block is a title, marker rows, at most one Next, and plain words; without a UI the same text
 // goes to standard output.
 import { writeSync } from "node:fs";

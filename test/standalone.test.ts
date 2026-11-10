@@ -279,7 +279,7 @@ test("discovery rejects returned tags outside the configured team and safely dis
         ["AccessDeniedException private-canary", "permission_denied", /administrator/],
         ["The config profile (private-canary) could not be found", "configuration", /profile/],
         ["spawn aws ENOENT private-canary", "configuration", /PATH/],
-        ["SSO token expired private-canary", "sso_expired", /aws-login/],
+        ["SSO token expired private-canary", "sso_expired", /bedrock login/],
         ["Could not connect private-canary", "network", /network/],
     ] as const) {
         const result = await createAwsDiscovery(

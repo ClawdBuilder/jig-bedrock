@@ -29,7 +29,7 @@ A successful catalog is cached for 24 hours in `${XDG_CACHE_HOME:-~/.cache}/jig-
 permissions and an atomic rename. Your cache folder may be a link (to another disk, say) and is followed; the package's own
 `jig-bedrock` folder and the file in it must not be links. The cache records the AWS profile, regions and discovery settings, so a changed setting discards it; a
 changed account is detected at the next discovery and the file is removed. Until a background refresh finishes, the
-cached models stay in `/model`. `/bedrock-refresh` forces a new run.
+cached models stay in `/model`. `/bedrock refresh` forces a new run.
 
 ## Routes
 

@@ -23,7 +23,7 @@ Requirements: Node 22.19 or later, Pi 1.5 or later, and the AWS CLI v2 for disco
 use; **SSO is one option, not a requirement**. Linux and WSL2 are supported. macOS is expected to work but is not
 tested; reports and fixes are welcome. Native Windows is not supported ([why](docs/settings.md#windows)).
 
-Run `/bedrock-doctor` after installing; it checks Node and the AWS CLI without calling AWS.
+Run `/bedrock doctor` after installing; it checks Node and the AWS CLI without calling AWS.
 
 ## Settings
 
@@ -56,10 +56,10 @@ migrate` copies that section to `bedrock.json`, once, and leaves `jig.json` alon
 With no tag settings, discovery lists every AWS-defined cross-region Claude profile in `regions`.
 `tagKey`/`tagValue` narrow it to tagged application profiles, and `profiles` names profiles explicitly. A 0.2.x `team`
 value is still read once as the old short form; `/bedrock migrate` rewrites it. A successful
-catalog is cached for 24 hours; `/bedrock-refresh` forces a new run.
+catalog is cached for 24 hours; `/bedrock refresh` forces a new run.
 
 Sign-in is repaired when an SSO session has expired: the provider checks at start and retries once before a response,
-and `/aws-login` starts the login. `signInAtStart: false` (the default) leaves it to the failing request. Requests use the AWS SDK's
+and `/bedrock login` starts the login. `signInAtStart: false` (the default) leaves it to the failing request. Requests use the AWS SDK's
 credential chain; discovery uses the AWS CLI, so the profile must work in both.
 
 Every setting, the three discovery modes and the environment variables: [Settings](docs/settings.md).
@@ -98,8 +98,8 @@ One command, with completions:
 | `/bedrock migrate`                                    | Copy a 0.2.x `jig.json` section once                                        |
 | `/bedrock help`                                       | The short table                                                             |
 
-The old names `/bedrock-doctor`, `/bedrock-usage`, `/bedrock-stats`, `/bedrock-profiles`,
-`/bedrock-refresh` and `/aws-login` still work for this release and name their replacement.
+The old names `/bedrock doctor`, `/bedrock usage`, `/bedrock stats`, `/bedrock models`,
+`/bedrock refresh` and `/bedrock login` still work for this release and name their replacement.
 
 ## IAM
 

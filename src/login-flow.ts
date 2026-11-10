@@ -54,7 +54,7 @@ async function askProfile(
             message,
             options: [
                 ...listed.map((profile) => ({ id: `profile:${profile}`, label: profile })),
-                { id: "type", label: "Type another profile name" },
+                { id: "type", label: "Type another AWS profile name" },
             ],
         });
         interaction.signal.throwIfAborted();
@@ -145,11 +145,11 @@ async function confirmConfig(
 async function askDiscovery(interaction: ProviderAuthInteraction, options: LoginFlowOptions): Promise<void> {
     const mode = await interaction.prompt({
         type: "select",
-        message: "Which Bedrock profiles should be listed?",
+        message: "Which inference profiles should Bedrock list?",
         options: [
             { id: "system", label: "All AWS-defined Claude inference profiles" },
-            { id: "tag", label: "Profiles with a tag I name" },
-            { id: "explicit", label: "A list of profile ARNs or ids" },
+            { id: "tag", label: "Inference profiles with a tag I name" },
+            { id: "explicit", label: "Inference profiles I list by ARN or id" },
         ],
     });
     interaction.signal.throwIfAborted();
@@ -255,7 +255,7 @@ export async function runLoginFlow(
                 });
                 continue;
             }
-            const name = await askProfile(interaction, ssoListed, "Which SSO profile do you want to sign in to?");
+            const name = await askProfile(interaction, ssoListed, "Which AWS SSO profile do you want to sign in to?");
             if (!(options.isSso?.(name) ?? false)) {
                 interaction.notify({
                     type: "info",
@@ -283,7 +283,7 @@ export async function runLoginFlow(
             return profileCredential(name);
         }
         if (method === "sso-new") {
-            const profile = await askName(interaction, "New SSO profile name");
+            const profile = await askName(interaction, "New AWS SSO profile name");
             if (profile === undefined) continue;
             const typedSession = (
                 await interaction.prompt({ type: "text", message: "SSO session name", placeholder: "my-sso" })
@@ -341,7 +341,7 @@ export async function runLoginFlow(
                 continue;
             }
             const region = (
-                await interaction.prompt({ type: "text", message: "Profile region", placeholder: ssoRegion })
+                await interaction.prompt({ type: "text", message: "AWS profile region", placeholder: ssoRegion })
             ).trim();
             interaction.signal.throwIfAborted();
             const profileRegion = region === "" ? ssoRegion : region;
@@ -388,7 +388,7 @@ export async function runLoginFlow(
             return profileCredential(profile);
         }
         if (method === "role-new") {
-            const profile = await askName(interaction, "New role profile name");
+            const profile = await askName(interaction, "New AWS role profile name");
             if (profile === undefined) continue;
             const roleArn = (
                 await interaction.prompt({
@@ -406,10 +406,10 @@ export async function runLoginFlow(
             if (listed !== undefined && listed.length > 0) {
                 const answer = await interaction.prompt({
                     type: "select",
-                    message: "Which profile is the source (source_profile)?",
+                    message: "Which AWS profile is the source (source_profile)?",
                     options: [
                         ...listed.map((name) => ({ id: `profile:${name}`, label: name })),
-                        { id: "type", label: "Type another profile name" },
+                        { id: "type", label: "Type another AWS profile name" },
                     ],
                 });
                 interaction.signal.throwIfAborted();
@@ -418,7 +418,7 @@ export async function runLoginFlow(
                         ? (
                               await interaction.prompt({
                                   type: "text",
-                                  message: "Source profile name",
+                                  message: "Source AWS profile name",
                                   placeholder: "my-source-profile",
                               })
                           ).trim()
@@ -427,7 +427,7 @@ export async function runLoginFlow(
                 source = (
                     await interaction.prompt({
                         type: "text",
-                        message: "Source profile name",
+                        message: "Source AWS profile name",
                         placeholder: "my-source-profile",
                     })
                 ).trim();

@@ -1,4 +1,4 @@
-// The preflight both sign-in paths share: `/aws-login` and the automatic repair after an expired session only start the
+// The preflight both sign-in paths share: `/bedrock login` and the automatic repair after an expired session only start the
 // AWS CLI when the profile is an IAM Identity Center (SSO) profile in the AWS config. It reads the config (never the
 // credentials file) and, when a person is waiting, the profile list, so a wrong name does not start a login.
 import { execFile } from "node:child_process";
@@ -83,7 +83,7 @@ export async function profileProblem(
     if (options.list !== undefined) {
         const listed = await options.list(options.signal);
         if (listed === undefined)
-            return "Could not list your AWS profiles. Check that the AWS CLI v2 is installed (aws configure list-profiles), then run /aws-login again.";
+            return "Could not list your AWS profiles. Check that the AWS CLI v2 is installed (aws configure list-profiles), then run /bedrock login again.";
         if (!listed.includes(profile))
             return `${profile} is not in aws configure list-profiles. Run ${LOGIN_PATH} to choose a profile, or set bedrock.profile.`;
     }
@@ -91,22 +91,22 @@ export async function profileProblem(
     try {
         text = readFileSync(awsConfigFile(env), "utf8");
     } catch {
-        return `${profile} is not in the AWS config, so it is not an IAM Identity Center (SSO) profile. /aws-login only renews SSO sessions.`;
+        return `${profile} is not in the AWS config, so it is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions.`;
     }
     const sections = parseAwsConfig(text);
     const section = sections.get(`profile:${profile}`) ?? sections.get(profile);
     if (section === undefined)
-        return `${profile} has no profile section in the AWS config, so it is not an IAM Identity Center (SSO) profile. /aws-login only renews SSO sessions.`;
+        return `${profile} has no profile section in the AWS config, so it is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions.`;
     const session = section.get("sso_session");
     if (session === undefined && section.get("sso_start_url") === undefined)
-        return `${profile} is not an IAM Identity Center (SSO) profile. /aws-login only renews SSO sessions; a profile with keys or a role does not need it.`;
+        return `${profile} is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions; a profile with keys or a role does not need it.`;
     if (session !== undefined && session !== "" && !sections.has(`sso-session:${session}`))
         return `${profile} names the SSO session ${session}, but [sso-session ${session}] is not in the AWS config. Run aws configure sso again.`;
     return undefined;
 }
 
 /**
- * Wrap a recovery so both callers share the preflight. A manual `/aws-login` checks the profile list too (the person is
+ * Wrap a recovery so both callers share the preflight. A manual `/bedrock login` checks the profile list too (the person is
  * waiting, and a wrong name should not start a login); the automatic repair checks the config only, so a slow or missing
  * AWS CLI cannot block it — the CLI itself will report an unknown profile if there is one.
  */

@@ -11,6 +11,11 @@
 
 ### Changed
 
+- Every user-facing string names the current commands; the old names remain only as alias registrations.
+- An AWS profile the package picked by itself and that fails now shows only the once-per-agent-folder `/login` notice; a profile the user chose names the problem (`has no credentials`, `sign-in expired`, `was refused by AWS`) and the profile.
+- Model menu names are short (`Claude Sonnet 5.5`, `Claude Sonnet 5.5 · global`) instead of repeating the region and AWS name.
+- `NO_COLOR` removes colour only; the `✓`/`✗`/`–` markers stay unless `TERM=dumb` or the locale is not UTF-8.
+- The `/login` prompts say "inference profiles" and "AWS profile" instead of bare "profiles".
 - AWS-defined models now have short second ids (`claude-haiku-4-5-global`), with the old long id kept as an alias when two profiles would otherwise collide.
 - `/bedrock` exists with broken settings; `status`, `doctor`, `settings`, `set` and `unset` can repair it.
 - Spend amounts under one cent print `<$0.01`, budgets start at $1, and a `Next:` line appears only when there is an action.

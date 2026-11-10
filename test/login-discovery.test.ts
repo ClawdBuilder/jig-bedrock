@@ -91,7 +91,7 @@ test("choosing a profile at /login starts discovery and says what is happening",
             prompt: async (prompt: any) => {
                 if (prompt.type === "select") {
                     if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
-                    if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+                    if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
                     return "profile:work";
                 }
                 return "";

@@ -85,11 +85,11 @@ export function createListProfiles(
 export function loginOutcomeMessage(modelCount: number, settled: boolean): string {
     if (modelCount > 0) return `Bedrock models loaded: ${modelCount}. Choose one with /model.`;
     return settled
-        ? "Bedrock models are not loaded yet; run /aws-login, then /bedrock-refresh."
+        ? "Bedrock models are not loaded yet; run /bedrock login, then /bedrock refresh."
         : "Loading Bedrock models; /model lists them in a moment.";
 }
 
-/** One slow CLI start serves the /aws-login preflight and the recovery that follows it; a failure is retried. */
+/** One slow CLI start serves the /bedrock login preflight and the recovery that follows it; a failure is retried. */
 export function memoizedList(list: ListProfiles, ttlMs = 5_000, now = Date.now): ListProfiles {
     let cached: { at: number; value: Promise<string[] | undefined> } | undefined;
     return (signal) => {

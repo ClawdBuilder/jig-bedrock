@@ -110,7 +110,7 @@ export function createRecovery(config: ResolvedConfig, options: RecoveryOptions 
                             const result = JSON.parse(boundedRegular(`${lock}.result`, 1024, true) || "{}");
                             if (result.token === waited && result.ok === true) return;
                         } catch {}
-                        throw new Error("Shared SSO login did not complete; run /aws-login");
+                        throw new Error("Shared SSO login did not complete; run /bedrock login");
                     }
                 }
             }

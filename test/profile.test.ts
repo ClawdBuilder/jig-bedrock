@@ -278,7 +278,7 @@ test("/login uses its own long listing, not the short cached one", async () => {
 
 test("the login outcome has three plain endings", () => {
     assert.equal(loginOutcomeMessage(2, true), "Bedrock models loaded: 2. Choose one with /model.");
-    assert.match(loginOutcomeMessage(0, true), /not loaded yet; run \/aws-login/);
+    assert.match(loginOutcomeMessage(0, true), /not loaded yet; run \/bedrock login/);
     assert.match(loginOutcomeMessage(0, false), /Loading Bedrock models; \/model lists them in a moment/);
 });
 

@@ -261,6 +261,7 @@ export function createBedrockProvider(
         });
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
+        let autoProfile = false;
         let afterProfileLogin:
             | ((
                   profile: string | undefined,
@@ -402,11 +403,21 @@ export function createBedrockProvider(
                 if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
                     failureNotice = true;
                     const reason = catalog.failure?.();
-                    const message =
-                        status === "timeout"
-                            ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh."
-                            : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
-                    ctx.ui.notify(message, "warning");
+                    if (autoProfile) firstRunNotice(ctx);
+                    else {
+                        const name = lastChoice.profile ?? config.profile ?? "the configured AWS profile";
+                        const message =
+                            status === "timeout"
+                                ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh."
+                                : status === "credentials"
+                                  ? `Bedrock: the AWS profile ${name} has no credentials.`
+                                  : status === "sso_expired"
+                                    ? `Bedrock: the AWS profile ${name} sign-in expired.`
+                                    : status === "permission_denied"
+                                      ? `Bedrock: the AWS profile ${name} was refused by AWS.`
+                                      : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
+                        ctx.ui.notify(message, "warning");
+                    }
                 }
                 const updated = readModels().available;
                 const selected = ctx?.model;
@@ -638,6 +649,11 @@ export function createBedrockProvider(
             const choice = await profiles.resolve({ signal: lifetime.signal });
             config.profile = choice.profile;
             lastChoice = choice;
+            autoProfile =
+                choice.ambient === true ||
+                choice.source === "default" ||
+                choice.source === "AWS_PROFILE" ||
+                choice.source === "AWS_DEFAULT_PROFILE";
             return choice;
         };
         pi.on("session_start", async (_event, context) => {
@@ -655,7 +671,8 @@ export function createBedrockProvider(
             } else if (choice.exists === false) {
                 context.ui.notify(missingProfileNotice(choice), "warning");
             } else if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
-            else if (!models.length) context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
+            else if (!models.length && !autoProfile)
+                context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
             // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
             // discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);

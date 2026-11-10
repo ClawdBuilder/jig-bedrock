@@ -2,7 +2,7 @@
 // involved, and nothing in src/ looks for one.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -38,7 +38,7 @@ test("the credential chain loads from this package's node_modules, with no Pi on
     const sdk = createRequire(path.join(root, "src/credential-provider.ts")).resolve(
         "@aws-sdk/credential-provider-node",
     );
-    assert.ok(sdk.startsWith(path.join(root, "node_modules") + path.sep), sdk);
+    assert.ok(sdk.startsWith(path.join(realpathSync(path.join(root, "node_modules")), path.sep)), sdk);
 
     // A fresh Node in an empty folder: no PI_HOST_DIR, no Pi beside it, only this Node on the PATH, and keys in the
     // environment so the chain resolves with no file and no network.

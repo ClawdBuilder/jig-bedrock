@@ -37,19 +37,19 @@ export function recoveryHint(error: unknown): string {
     if (error instanceof SsoRecoveryError && error.detail !== undefined) return error.detail;
     switch (recoveryCategory(error)) {
         case "runtime":
-            return "AWS SSO recovery could not use a private runtime directory. Check ownership and permissions of your home runtime directory, then run /aws-login.";
+            return "AWS SSO recovery could not use a private runtime directory. Check ownership and permissions of your home runtime directory, then run /bedrock login.";
         case "browser":
-            return "AWS SSO recovery could not find a usable browser opener. Check the configured opener and desktop or WSL interop, then run /aws-login.";
+            return "AWS SSO recovery could not find a usable browser opener. Check the configured opener and desktop or WSL interop, then run /bedrock login.";
         case "helper":
-            return "AWS SSO login helper is unavailable. Check the workstation AWS SSO installation, then run /aws-login.";
+            return "AWS SSO login helper is unavailable. Check the workstation AWS SSO installation, then run /bedrock login.";
         case "timeout":
-            return "AWS SSO recovery timed out. Check browser sign-in and network access, then run /aws-login.";
+            return "AWS SSO recovery timed out. Check browser sign-in and network access, then run /bedrock login.";
         case "cancelled":
             return "AWS SSO recovery cancelled.";
         case "profile":
-            return "Check the AWS profile: it must exist and be an IAM Identity Center (SSO) profile, then run /aws-login.";
+            return "Check the AWS profile: it must exist and be an IAM Identity Center (SSO) profile, then run /bedrock login.";
         default:
-            return "AWS SSO recovery did not complete. Finish browser sign-in or run /aws-login, then continue.";
+            return "AWS SSO recovery did not complete. Finish browser sign-in or run /bedrock login, then continue.";
     }
 }
 const shared = new WeakMap<Recover, Recover>();
@@ -329,7 +329,7 @@ export async function registerBedrockSsoRecovery(
                 return;
             }
             if (!profilePattern.test(profile)) {
-                ctx.ui.notify("Use /aws-login [AWS profile name].", "warning");
+                ctx.ui.notify("Use /bedrock login [AWS profile name].", "warning");
                 return;
             }
             const problem = await check?.(profile, ctx.signal);
