@@ -503,11 +503,59 @@ export function bedrockStream(
             } as typeof options);
         }
         const previous = (options as Json)?.onPayload as ((payload: unknown, selected: unknown) => unknown) | undefined;
-        return streams.converse({ ...logical, api: "bedrock-converse-stream" }, context, {
+        // Pi's Converse client reads AWS_BEARER_TOKEN_BEDROCK through getProviderEnvValue, where an empty scoped value
+        // falls through to process.env. Hide the ambient key only while this request builds and sends its HTTP call,
+        // then restore it; the built-in provider outside this call still sees it.
+        const hadBearer = Object.hasOwn(process.env, "AWS_BEARER_TOKEN_BEDROCK");
+        const bearer = process.env.AWS_BEARER_TOKEN_BEDROCK;
+        if (hadBearer) delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+        let restored = false;
+        const restore = () => {
+            if (restored) return;
+            restored = true;
+            if (hadBearer) process.env.AWS_BEARER_TOKEN_BEDROCK = bearer;
+        };
+        const response = (options as Json)?.onResponse as ((...args: unknown[]) => Promise<void>) | undefined;
+        const nativeOptions = {
             ...scoped,
             onPayload: async (payload: unknown, selected: unknown) => {
                 const next = previous === undefined ? payload : await previous(payload, selected);
                 return { ...((next ?? payload) as Record<string, unknown>), modelId: physical.arn };
+            },
+            ...(hadBearer
+                ? {
+                      onResponse: async (...args: unknown[]) => {
+                          restore();
+                          await response?.(...args);
+                      },
+                  }
+                : {}),
+        };
+        let stream: ReturnType<typeof streams.converse>;
+        try {
+            stream = streams.converse({ ...logical, api: "bedrock-converse-stream" }, context, nativeOptions);
+        } catch (error) {
+            restore();
+            throw error;
+        }
+        if (!hadBearer) return stream;
+        // The SDK reads the variable after the factory returns. Hold the old environment until the stream ends, then
+        // restore it. A proxy keeps the object's methods bound to the real stream.
+        const timer = setTimeout(restore, 60_000);
+        timer.unref?.();
+        return new Proxy(stream, {
+            get(target, property) {
+                if (property === Symbol.asyncIterator)
+                    return async function* () {
+                        try {
+                            yield* target;
+                        } finally {
+                            clearTimeout(timer);
+                            restore();
+                        }
+                    };
+                const value = Reflect.get(target, property, target);
+                return typeof value === "function" ? value.bind(target) : value;
             },
         });
     };
