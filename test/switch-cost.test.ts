@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cacheWriteRate, promptCacheFor, retentionOf } from "../src/prompt-cache.ts";
+import { cacheWriteRate, promptCacheFor, retentionFor, retentionOf } from "../src/prompt-cache.ts";
 import { registerSwitchNotice, switchNotice, tokensLabel } from "../src/switch-cost.ts";
 
 type Hook = (...args: any[]) => any;
@@ -11,6 +11,13 @@ test("retention follows PI_CACHE_RETENTION exactly as Pi's Bedrock stream reads 
     assert.equal(retentionOf({ PI_CACHE_RETENTION: "long" }), "long");
     assert.equal(retentionOf({ PI_CACHE_RETENTION: "short" }), "short");
     assert.equal(retentionOf({ PI_CACHE_RETENTION: "LONG" }), "short");
+});
+test("the Messages route sends 5-minute checkpoints whatever PI_CACHE_RETENTION says; Converse follows it", () => {
+    const long = { PI_CACHE_RETENTION: "long" };
+    assert.equal(retentionFor({ api: "anthropic-messages" }, long), "short");
+    assert.equal(retentionFor({ api: "bedrock-converse-stream" }, long), "long");
+    assert.equal(retentionFor({}, long), "long");
+    assert.equal(retentionFor(undefined, {}), "short");
 });
 test("cache write rate is the model's 5-minute rate or twice the input rate for one hour, in the tier the request falls into", () => {
     const flat = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 };
@@ -143,4 +150,29 @@ test("an expired cache is rewritten whichever model answers, so there is nothing
     assert.equal(h.notices.length, 2, "a failed response never touched the cache");
     h.select(event, h.ctx(190_000, []));
     assert.equal(h.notices.length, 3, "unknown age: warn rather than guess");
+});
+test("a Messages-route model has no 1-hour cache: the notice prices the 5-minute write, and its old cache lives 5 minutes", () => {
+    const h = harness({ PI_CACHE_RETENTION: "long" });
+    const messages = (id: string) =>
+        h.model(id, {
+            api: "anthropic-messages",
+            promptCache: promptCacheFor("anthropic.claude-opus-5-5", "messages"),
+        });
+    // The target is on Messages: 190k tokens at the 5-minute rate (5 per million), not twice the input rate (10).
+    h.select(
+        { model: messages("opus"), previousModel: h.model("sonnet"), source: "set" },
+        h.ctx(190_000, [response(30 * 60_000)]),
+    );
+    assert.match(h.notices[0] ?? "", /about \$0\.95/);
+    // The old model is on Messages: its cache lasted 5 minutes whatever the setting says, so 30 minutes later it is gone.
+    h.select(
+        { model: h.model("opus"), previousModel: messages("sonnet"), source: "set" },
+        h.ctx(190_000, [response(30 * 60_000)]),
+    );
+    assert.equal(h.notices.length, 1, "an expired cache needs no warning");
+    h.select(
+        { model: h.model("opus"), previousModel: messages("sonnet"), source: "set" },
+        h.ctx(190_000, [response(2 * 60_000)]),
+    );
+    assert.match(h.notices[1] ?? "", /about \$1\.90/, "a Converse target still writes the hour");
 });

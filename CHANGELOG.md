@@ -7,6 +7,9 @@
 - A local spend record: one private JSONL line per Bedrock reply under the user's state folder, with the month, session, short model id, region, route, token counts, Pi's cost and a priced flag. Earlier replies in this agent's session files are imported once, bounded and marked.
 - `/bedrock usage [day|week|month]` and `/bedrock budget [amount|off]`; `/bedrock-usage` and `/bedrock-stats` call the same code. The footer shows the month's local spend and budget, with warning/error colours; the budget notices are once per threshold per month per machine.
 - `spendCommand` can supply this month's spend from a command the user names; it runs without a shell, at most every ten minutes, and its JSON contract is documented with an example.
+- `converseModels` and `messagesModels` settings: short model ids (for example `claude-opus-5`) that stay on Converse, and short model ids that go on Messages for a model newer than the installed Pi knows. A model on both lists is an error.
+- `routeOf` in `src/catalog.ts` answers which route a model uses and why, in a few words ("Pi lists tool changes", "not on the Messages route", "your setting", "this Pi does not know the model", "known exception"); the model list uses it, so there is one rule.
+- `scripts/real-check-messages.mjs` takes a comma-separated list of models and a `--thinking high,off` list, runs one session per pair and prints one table (route, calls, thinking, tool call, the call after the tool load, cost, result). `--retention long` sets `PI_CACHE_RETENTION`.
 
 ### Changed
 
@@ -21,6 +24,9 @@
 - A one-release migration reads a 0.2.x `jig.json` only to show one notice and copy its `bedrock` section to `bedrock.json` through `/bedrock migrate`; the copy is private and never overwrites an existing file.
 - The subagent-child environment check and the remaining internal names were removed; the scan still covers the public tree.
 - The AWS SDK's credential chain (`@aws-sdk/credential-provider-node`) is now this package's own dependency, installed with it, instead of being looked up in Pi's install folder. A new Pi that moves or drops that dependency no longer breaks sign-in checks or signed requests; the install is about 5 MB larger. `PI_HOST_DIR` is no longer read.
+- **Route by model.** A Claude model uses the Messages route (which keeps the prompt cache when a tool is loaded in the middle of a session) when Pi's own Anthropic entry for it lists mid-conversation tool changes; every other model uses Converse. The rule is the same for AWS-defined and application profiles; AWS-defined profiles are no longer kept on Converse for being AWS-defined. On the real runs of 2026-11-10 (a prompt of about 34,000 tokens), the first request after a tool load read 34,216 tokens from the cache on Messages and wrote 275, where Converse wrote 34,321 (a session cost of $0.0051 against $0.0090). That holds today for Haiku 5.5, Sonnet 5.5, Opus 5.5 and Opus 4.8. Pi lists the flag for the Fable models too, so they use Messages, but the real run could not test them: an account data-retention setting refused them on both routes. Sonnet 5, Opus 4.7, Opus 4.6, Sonnet 4.6 and Haiku 4.5 return a 400 on Messages as soon as a tool is loaded mid-session, and Opus 4.5, Sonnet 4.5 and Opus 4.1 return a 404, so they use Converse. Opus 5 has the flag but returned a 400 on Messages with thinking high, so it uses Converse until that is understood. A model the installed Pi does not list uses Converse.
+- The Messages route no longer claims mid-conversation system messages and tool changes for every model; it copies them from Pi's entry, as it already did for the effort flag.
+- On the Messages route a model declares only the 5-minute cache lifetime. The route does not send the 1-hour checkpoint (Pi's `ttl: "1h"` stays off for it), so the model-switch notice prices a Messages model's cache write at the 5-minute rate and expects its cache to expire after 5 minutes, whatever `PI_CACHE_RETENTION` says; Pi's cache warming no longer plans for an hour on those models. Converse models keep both lifetimes.
 
 ### Fixed
 
@@ -28,6 +34,8 @@
 - Adding a profile to `~/.aws/config` from `/login` now keeps a separate backup for each write, named with the time (for example `config.jig-bedrock-backup-20261110T171500Z`), instead of replacing one backup each time. The five newest are kept and older ones this package made are deleted; no other file is touched. The old `config.jig-bedrock.bak` is left where it is.
 - A config file that is a symbolic link (for example into a dotfiles folder) is written through: its target gets the new profile and the link stays a link, where before it was replaced by a plain file.
 - Two Pi processes can no longer write the config at the same moment: a lock file beside it is held during the write, and a second writer is told "Another program is changing <file>; try again." A lock older than 30 seconds is treated as left by a crashed writer and taken over.
+- Application profiles of Sonnet 5, Sonnet 4.6, Sonnet 4.5, Opus 4.7, Opus 4.6, Opus 4.5, Opus 4.1 and Haiku 4.5 (0.2.4 and 0.2.5 sent every application profile to Messages) no longer fail with a 400 or 404 once a tool is loaded mid-session; they use Converse.
+- `scripts/real-check-messages.mjs --team` wrote `team` together with `tagKey` and `tagValue`, which the settings reject; it writes the tag pair only.
 
 ### Development
 

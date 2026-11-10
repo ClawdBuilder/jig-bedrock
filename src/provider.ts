@@ -31,7 +31,7 @@ import {
 } from "./catalog.ts";
 import { isObject } from "./check.ts";
 import { type BedrockCommand, registerBedrockCommands } from "./commands.ts";
-import type { BedrockApi, ConfigResult, ResolvedConfig } from "./config.ts";
+import type { ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
@@ -219,7 +219,6 @@ export function createBedrockProvider(
                 else await migration(args, context);
             },
         });
-        const currentApi = (): BedrockApi => config?.api ?? "messages";
         const models: BedrockModel[] = [];
         let discoverySlow = false;
         let refreshInFlight: Promise<Status> | undefined;
@@ -293,7 +292,7 @@ export function createBedrockProvider(
         let failed = false;
         let disposed = false;
         const readModels = () => {
-            const result = discoveredProfiles(catalog.load(), "", currentApi());
+            const result = discoveredProfiles(catalog.load(), "", config);
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
         };

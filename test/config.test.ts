@@ -131,3 +131,55 @@ describe("bedrock.api", () => {
         }
     });
 });
+
+describe("bedrock.converseModels and bedrock.messagesModels", () => {
+    test("are absent by default and carry short model ids through", () => {
+        const plain = loadConfig({ raw: { team: "t" }, env: {} }).config;
+        assert.equal(plain?.converseModels, undefined);
+        assert.equal(plain?.messagesModels, undefined);
+        const set = loadConfig({
+            raw: {
+                team: "t",
+                converseModels: ["claude-opus-5"],
+                messagesModels: ["claude-sonnet-6", "claude-haiku-6"],
+            },
+            env: {},
+        });
+        assert.deepEqual(set.config?.converseModels, ["claude-opus-5"]);
+        assert.deepEqual(set.config?.messagesModels, ["claude-sonnet-6", "claude-haiku-6"]);
+        assert.equal(set.unknown, undefined, "both are known settings");
+        assert.deepEqual(validateBedrock({ team: "t", converseModels: [], messagesModels: [] }), []);
+    });
+
+    test("a mistake names the key and never the value", () => {
+        for (const name of ["converseModels", "messagesModels"]) {
+            for (const value of [
+                "claude-opus-5",
+                [1],
+                [""],
+                ["anthropic.claude-opus-5"],
+                ["us.anthropic.claude-opus-5-v1:0"],
+                ["Claude-Opus-5"],
+                ["claude-opus-5", "claude-opus-5"],
+                Array.from({ length: 65 }, (_, i) => `claude-m-${i}`),
+                [`claude-${"a".repeat(80)}`],
+            ]) {
+                const problems = validateBedrock({ team: "t", [name]: value });
+                assert.equal(problems.length, 1, `${name} ${JSON.stringify(value).slice(0, 40)}`);
+                assert.match(
+                    problems[0] ?? "",
+                    new RegExp(`^bedrock\\.${name} must be a list of up to 64 unique short`),
+                );
+                assert.doesNotMatch(problems[0] ?? "", /anthropic|Claude-Opus/);
+                assert.equal(loadConfig({ raw: { team: "t", [name]: value }, env: {} }).config, undefined);
+            }
+        }
+    });
+
+    test("one model on both lists is a mistake", () => {
+        assert.deepEqual(
+            validateBedrock({ team: "t", converseModels: ["claude-opus-5"], messagesModels: ["claude-opus-5"] }),
+            ["bedrock.converseModels and bedrock.messagesModels name the same model; choose one route"],
+        );
+    });
+});

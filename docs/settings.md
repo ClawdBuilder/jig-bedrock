@@ -28,6 +28,8 @@ top level or inside a `bedrock` object.
 | `signInAtStart`    | `false`                                         | Refresh an expired SSO session when Pi starts           |
 | `browser`          | unset                                           | The program that opens the sign-in address              |
 | `api`              | `messages`                                      | `messages` (the Anthropic Messages route) or `converse` |
+| `converseModels`   | none                                            | Short model ids (`claude-opus-5`) that stay on Converse |
+| `messagesModels`   | none                                            | Short model ids to put on Messages, for a newer model   |
 
 The package never handles a password or token: `ssoLoginCommand` starts the owning tool's login, and `/login` stores
 only the profile name (in Pi's `auth.json`, as `env.AWS_PROFILE`).

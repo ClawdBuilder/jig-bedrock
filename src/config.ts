@@ -10,6 +10,8 @@
 //   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default false)
 //   browser            the program that opens the sign-in address, as BROWSER for the login (optional; under WSL the Windows browser)
 //   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
+//   converseModels     short model ids (claude-opus-5) that stay on Converse
+//   messagesModels     short model ids that go on Messages even where Pi does not list tool changes for them
 //
 // Environment variables override the settings: JIG_BEDROCK_TEAM, JIG_BEDROCK_PROFILE, JIG_BEDROCK_REGIONS (comma
 // separated).
@@ -41,6 +43,10 @@ export interface ResolvedConfig {
     browser?: string;
     /** Set by loadConfig; a hand-written fixture may leave it out, and the provider then uses messages. */
     api?: BedrockApi;
+    /** Short model ids that stay on Converse, whatever the model list says. */
+    converseModels?: string[];
+    /** Short model ids that go on Messages, for a model newer than the installed Pi knows. */
+    messagesModels?: string[];
     agentDir?: string;
 }
 
@@ -71,6 +77,8 @@ export const FIELDS = [
     "signInAtStart",
     "browser",
     "api",
+    "converseModels",
+    "messagesModels",
 ] as const;
 
 export const DEFAULTS = {
@@ -79,6 +87,9 @@ export const DEFAULTS = {
     signInAtStart: false,
     api: "messages" as BedrockApi,
 };
+
+/** A short model id: Claude's name and version, as in `claude-opus-5` or `claude-sonnet-5-5`. */
+const shortModelPattern = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: config values reject control characters
 const control = /[\x00-\x1f\x7f]/;
@@ -101,6 +112,8 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         signInAtStart,
         browser,
         api,
+        converseModels,
+        messagesModels,
     } = c;
     if (
         team !== undefined &&
@@ -199,6 +212,26 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     if (api !== undefined && api !== "messages" && api !== "converse") {
         problems.push('bedrock.api must be "messages" (the Anthropic Messages route) or "converse" (the older route)');
     }
+    for (const [name, value] of [
+        ["converseModels", converseModels],
+        ["messagesModels", messagesModels],
+    ] as const)
+        if (
+            value !== undefined &&
+            (!Array.isArray(value) ||
+                value.length > 64 ||
+                value.some((id) => typeof id !== "string" || id.length > 64 || !shortModelPattern.test(id)) ||
+                new Set(value).size !== value.length)
+        )
+            problems.push(
+                `bedrock.${name} must be a list of up to 64 unique short model ids such as claude-opus-5 (no region, no provider prefix, no version suffix)`,
+            );
+    if (
+        Array.isArray(converseModels) &&
+        Array.isArray(messagesModels) &&
+        converseModels.some((id) => messagesModels.includes(id))
+    )
+        problems.push("bedrock.converseModels and bedrock.messagesModels name the same model; choose one route");
     return problems;
 }
 
