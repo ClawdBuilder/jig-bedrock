@@ -59,12 +59,109 @@ jobs:
             - name: Tests
               run: npm test
 
+    # The peer ranges for Pi are `*` and the README says "Pi 1.5 or later", while the dev dependency pins one exact Pi.
+    # This runs the same tests against the oldest Pi the package supports and against the newest one on npm right now,
+    # so a Pi release that breaks the package shows here before a user finds it. `latest` is asked of the registry at run
+    # time; a failure on it is a real incompatibility to fix or to document, and it is not allowed to pass quietly.
+    # Run it locally: `node scripts/install-pi.mjs 1.5.0 && npm test` (use a clean checkout: it replaces Pi in node_modules).
+    pi-versions:
+        name: Pi ${{ matrix.pi }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                pi: ["1.5.0", "latest"]
+        steps:
+            - name: Check out the repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Install Pi ${{ matrix.pi }} over the pinned one
+              run: node scripts/install-pi.mjs "${{ matrix.pi }}"
+
+            - name: Tests
+              run: npm test
+
+    # The package as a user gets it: `npm pack`, then a stock Pi's own `pi install npm:` of that tarball into a temporary
+    # HOME and agent folder, then Pi's rpc mode proves the extension loaded and the published files are right. Run it
+    # locally with `npm run check:packed`. Both Pi versions, because a user has whichever is current.
+    packed-install:
+        name: Packed install (Pi ${{ matrix.pi }})
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                pi: ["1.5.0", "latest"]
+        steps:
+            - name: Check out the repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Install Pi ${{ matrix.pi }} over the pinned one
+              run: node scripts/install-pi.mjs "${{ matrix.pi }}"
+
+            - name: Pack, install into a stock Pi, and load
+              run: npm run check:packed
+
+    # Pi runs on macOS, and the tests and the type and style checks should too. Linux-only assumptions show here.
+    macos:
+        name: macOS (Node 24)
+        runs-on: macos-latest
+        timeout-minutes: 20
+        steps:
+            - name: Check out the repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            - name: Show the versions
+              run: |
+                  node --version
+                  npm --version
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Types and Biome
+              run: npm run check
+
+            - name: Tests
+              run: npm test
+
     # One name for branch protection to require, whatever matrix entries there are: `ci-ok` is the check to require. It runs
     # even when a job failed or was cancelled, and fails unless every job it needs succeeded.
     ci-ok:
         name: ci-ok
         if: ${{ always() }}
-        needs: [checks]
+        needs: [checks, pi-versions, packed-install, macos]
         runs-on: ubuntu-24.04
         timeout-minutes: 5
         permissions: {}

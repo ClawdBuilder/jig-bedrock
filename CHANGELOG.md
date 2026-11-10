@@ -29,6 +29,11 @@
 - A config file that is a symbolic link (for example into a dotfiles folder) is written through: its target gets the new profile and the link stays a link, where before it was replaced by a plain file.
 - Two Pi processes can no longer write the config at the same moment: a lock file beside it is held during the write, and a second writer is told "Another program is changing <file>; try again." A lock older than 30 seconds is treated as left by a crashed writer and taken over.
 
+### Development
+
+- CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.
+- The tests use the real path of the system temporary folder, so they pass where it is a link (macOS), and read Pi's prompt-cache lifetime function from `pi-ai` when Pi 1.5.2 or later exports it there.
+
 ## [0.2.5] - 2026-11-10
 
 Faster discovery on real AWS, the same thinking settings as Pi's own Anthropic provider, and a clearer public package.
