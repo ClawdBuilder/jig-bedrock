@@ -1,12 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.4] - 2026-11-10
+
+Choose how you sign in to AWS from `/login`, and create an SSO or role profile without leaving Pi.
 
 ### Added
 
-- `/login` can create an IAM Identity Center (SSO) profile or an IAM role profile from non-secret answers. It shows the exact lines first, writes only after you confirm, appends to the AWS config (respecting `AWS_CONFIG_FILE`), keeps comments and unknown sections, preserves the file mode, and leaves a backup.
-
-- `/login` now asks how you sign in to AWS: an existing profile, a sign-in to an existing IAM Identity Center (SSO) profile, access keys or a role set up in the AWS CLI, or the ambient credential chain. It refuses a Bedrock API key and names the alternatives, checks the profile with `aws sts get-caller-identity`, and saves the discovery mode and regions it asks for. Access-key and role instructions stay on screen until you say the profile exists, then the list is fetched.
+- `/login` now asks how you sign in to AWS: an existing profile, an IAM Identity Center (SSO) sign-in, an SSO profile created there, access keys or a role set up in the AWS CLI, a role profile created there, or the ambient credential chain. It refuses a Bedrock API key and names the alternatives, checks the profile with `aws sts get-caller-identity`, and saves the discovery mode and regions it asks for. Access-key and role instructions stay on screen until you say the profile exists.
+- Creating an SSO or role profile shows the exact lines first and writes only after you confirm. It respects `AWS_CONFIG_FILE`, keeps comments, unknown sections and the file mode, and leaves a backup.
 
 ### Changed
 
