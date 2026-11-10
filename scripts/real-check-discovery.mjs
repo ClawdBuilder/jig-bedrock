@@ -44,9 +44,15 @@ const config = {
 
 let calls = 0;
 let failedCalls = 0;
+const byKind = { account: 0, "system listing": 0, "tag listing": 0, "profile read": 0, other: 0 };
 const started = Date.now();
 const runner = async (program, argv, runOptions) => {
     calls++;
+    if (argv.includes("get-caller-identity")) byKind.account++;
+    else if (argv.includes("list-inference-profiles")) byKind["system listing"]++;
+    else if (argv.includes("get-resources")) byKind["tag listing"]++;
+    else if (argv.includes("get-inference-profile")) byKind["profile read"]++;
+    else byKind.other++;
     const at = Date.now();
     try {
         return await runFile(program, argv, runOptions);
@@ -66,6 +72,9 @@ console.log("");
 console.log(`status: ${status}`);
 console.log(`calls: ${calls} (${failedCalls} failed)`);
 console.log(`seconds: ${seconds}`);
+console.log(
+    `calls by kind: account ${byKind.account}, system listing ${byKind["system listing"]}, tag listing ${byKind["tag listing"]}, profile read ${byKind["profile read"]}${byKind.other ? `, other ${byKind.other}` : ""}`,
+);
 console.log(`profiles: ${catalog?.profiles.length ?? 0}`);
 console.log(`profile errors: ${catalog?.errors?.length ?? 0}`);
 const summary = problemSummary(catalog?.errors ?? []);

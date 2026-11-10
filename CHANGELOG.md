@@ -15,7 +15,8 @@
 
 ### Changed
 
-- Profile reads run four at a time: with a 2.4-second AWS CLI call, 12 profiles took 12 seconds instead of 34.
+- AWS-defined discovery builds the catalog from the `list-inference-profiles` rows themselves: one identity call and one listing call per region, instead of one `get-inference-profile` per profile. The real 33-profile run took 47 seconds; the same account should now take under 10 seconds per region. Tag and explicit discovery still read at most four profiles at once.
+- A listing larger than the 1 MiB per-call limit (8 MiB in total) shows “Could not list inference profiles: the listing is larger than the 1 MiB limit.” and leaves the previous catalog in place.
 
 ## [0.2.4] - 2026-11-10
 

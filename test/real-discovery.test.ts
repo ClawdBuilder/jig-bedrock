@@ -40,32 +40,52 @@ function shape(profileId: string, models: string[], type = "SYSTEM_DEFINED") {
     });
 }
 
-function runner(overrides: { list?: string; profile?: Record<string, string>; calls?: string[][] } = {}): Runner {
+function systemRow(id: string, name: string, foundation: string) {
+    return {
+        inferenceProfileArn: arn(id),
+        inferenceProfileName: name,
+        inferenceProfileId: id,
+        status: "ACTIVE",
+        type: "SYSTEM_DEFINED",
+        models: [{ modelArn: `arn:aws:bedrock:${REGION}::foundation-model/${foundation}` }],
+    };
+}
+
+function runner(
+    overrides: { list?: string; profile?: Record<string, string>; malformed?: string[]; calls?: string[][] } = {},
+): Runner {
     return async (_program, args) => {
         overrides.calls?.push(args);
         if (args.includes("get-caller-identity")) return JSON.stringify({ Account: ACCOUNT });
         if (args.includes("list-inference-profiles")) {
             if (overrides.list) throw new Error(overrides.list);
-            return JSON.stringify({
-                inferenceProfileSummaries: [
-                    {
-                        inferenceProfileArn: arn("global.anthropic.claude-haiku-5-5"),
-                        inferenceProfileName: "Global Anthropic Claude Haiku 5.5",
-                    },
-                    {
-                        inferenceProfileArn: arn("us.anthropic.claude-haiku-5-5"),
-                        inferenceProfileName: "US Anthropic Claude Haiku 5.5",
-                    },
-                    {
-                        inferenceProfileArn: arn("us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
-                        inferenceProfileName: "US Anthropic Claude Sonnet 4.5",
-                    },
-                    {
-                        inferenceProfileArn: arn("global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
-                        inferenceProfileName: "Global Anthropic Claude Sonnet 4.5",
-                    },
-                ],
-            });
+            const rows = [
+                systemRow(
+                    "global.anthropic.claude-haiku-5-5",
+                    "Global Anthropic Claude Haiku 5.5",
+                    "anthropic.claude-haiku-5-5",
+                ),
+                systemRow(
+                    "us.anthropic.claude-haiku-5-5",
+                    "US Anthropic Claude Haiku 5.5",
+                    "anthropic.claude-haiku-5-5",
+                ),
+                systemRow(
+                    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "US Anthropic Claude Sonnet 4.5",
+                    "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                ),
+                systemRow(
+                    "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "Global Anthropic Claude Sonnet 4.5",
+                    "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                ),
+            ].map((row) =>
+                (overrides.malformed ?? []).includes(row.inferenceProfileId)
+                    ? { ...row, models: [{ modelArn: "not-an-arn" }] }
+                    : row,
+            );
+            return JSON.stringify({ inferenceProfileSummaries: rows });
         }
         const id = (args[args.indexOf("--inference-profile-identifier") + 1] ?? "").replace(arn(""), "");
         if (overrides.profile?.[id]) throw new Error(overrides.profile[id]);
@@ -143,7 +163,7 @@ test("one profile's unreadable answer is recorded and the others load; the failu
     try {
         const source = createAwsDiscovery(
             { ...config, team: undefined, mode: "system" },
-            runner({ profile: { "us.anthropic.claude-haiku-5-5": "model ARN" } }),
+            runner({ malformed: ["us.anthropic.claude-haiku-5-5"] }),
             file,
         );
         assert.equal(await source.refresh(true), "ok");
@@ -155,12 +175,12 @@ test("one profile's unreadable answer is recorded and the others load; the failu
         const all = createAwsDiscovery(
             { ...config, team: undefined, mode: "system" },
             runner({
-                profile: {
-                    "global.anthropic.claude-haiku-5-5": "model ARN",
-                    "us.anthropic.claude-haiku-5-5": "model ARN",
-                    "us.anthropic.claude-sonnet-4-5-20250929-v1:0": "model ARN",
-                    "global.anthropic.claude-sonnet-4-5-20250929-v1:0": "model ARN",
-                },
+                malformed: [
+                    "global.anthropic.claude-haiku-5-5",
+                    "us.anthropic.claude-haiku-5-5",
+                    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                ],
             }),
             file,
         );
@@ -204,40 +224,104 @@ test("the result summary names at most three short ids, then points at /bedrock-
     assert.doesNotMatch(summary, /\b123456789012\b/);
 });
 
-test("profile reads run four at a time", async () => {
+test("tag profile reads run four at a time", async () => {
     const { dir, file } = directory();
     try {
-        const ids = Array.from({ length: 8 }, (_, i) => `us.anthropic.claude-sonnet-5-5-${i + 1}`);
+        const ids = Array.from({ length: 8 }, (_, i) => `orders-api-${i + 1}`);
+        const appArn = (id: string) => `arn:aws:bedrock:${REGION}:${ACCOUNT}:application-inference-profile/${id}`;
         let inFlight = 0;
         let peak = 0;
         const calls: string[][] = [];
         const slow: Runner = async (_program, args) => {
             calls.push(args);
             if (args.includes("get-caller-identity")) return JSON.stringify({ Account: ACCOUNT });
-            if (args.includes("list-inference-profiles"))
+            if (args.includes("get-resources"))
                 return JSON.stringify({
-                    inferenceProfileSummaries: ids.map((id) => ({
-                        inferenceProfileArn: arn(id),
-                        inferenceProfileName: id,
+                    ResourceTagMappingList: ids.map((id) => ({
+                        ResourceARN: appArn(id),
+                        Tags: [
+                            { Key: "Team", Value: "my-team" },
+                            { Key: "Active", Value: "true" },
+                        ],
                     })),
                 });
             inFlight++;
             peak = Math.max(peak, inFlight);
             await new Promise((resolve) => setTimeout(resolve, 20));
             inFlight--;
-            const id = (args[args.indexOf("--inference-profile-identifier") + 1] ?? "").replace(arn(""), "");
-            return shape(
-                id,
-                [`arn:aws:bedrock:${REGION}::foundation-model/anthropic.claude-sonnet-5-5`],
-                "APPLICATION",
-            );
+            const id = (args[args.indexOf("--inference-profile-identifier") + 1] ?? "").split("/").pop() ?? "";
+            return JSON.stringify({
+                inferenceProfileName: id,
+                inferenceProfileArn: appArn(id),
+                status: "ACTIVE",
+                type: "APPLICATION",
+                models: [{ modelArn: `arn:aws:bedrock:${REGION}::foundation-model/anthropic.claude-sonnet-5-5` }],
+            });
         };
-        const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, slow, file);
+        const source = createAwsDiscovery(
+            { ...config, team: "my-team", tagKey: "Team", tagValue: "my-team" },
+            slow,
+            file,
+        );
         assert.equal(await source.refresh(true), "ok");
         assert.equal(source.load()?.profiles.length, 8);
         assert.ok(peak > 1, `reads were sequential (peak ${peak})`);
         assert.ok(peak <= 4, `more than four reads overlapped (peak ${peak})`);
         assert.equal(calls.filter((args) => args.includes("get-inference-profile")).length, 8);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("system discovery uses one identity and one listing call per region", async () => {
+    const { dir, file } = directory();
+    try {
+        const ids = Array.from({ length: 33 }, (_, i) => `us.anthropic.claude-sonnet-5-5-${i + 1}`);
+        const row = (region: string, id: string) => ({
+            inferenceProfileArn: `arn:aws:bedrock:${region}:${ACCOUNT}:inference-profile/${id}`,
+            inferenceProfileName: id,
+            status: "ACTIVE",
+            type: "SYSTEM_DEFINED",
+            models: [{ modelArn: `arn:aws:bedrock:${region}::foundation-model/anthropic.claude-sonnet-5-5` }],
+        });
+        const calls: string[][] = [];
+        const listing: Runner = async (_program, args) => {
+            calls.push(args);
+            if (args.includes("get-caller-identity")) return JSON.stringify({ Account: ACCOUNT });
+            const region = args[args.indexOf("--region") + 1] ?? REGION;
+            return JSON.stringify({ inferenceProfileSummaries: ids.map((id) => row(region, id)) });
+        };
+        const one = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, listing, file);
+        assert.equal(await one.refresh(true), "ok");
+        assert.equal(one.load()?.profiles.length, 33);
+        assert.equal(calls.length, 2, calls.map((args) => args.slice(0, 2).join(" ")).join("; "));
+        assert.equal(calls.filter((args) => args.includes("get-inference-profile")).length, 0);
+
+        const twoFile = join(dir, "catalog-two.json");
+        const before = calls.length;
+        const two = createAwsDiscovery(
+            { ...config, team: undefined, mode: "system", regions: [REGION, "us-west-2"] },
+            listing,
+            twoFile,
+        );
+        assert.equal(await two.refresh(true), "ok");
+        assert.equal(two.load()?.profiles.length, 66);
+        assert.equal(calls.length - before, 3, "one account check and one listing per region");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("an oversized listing fails the refresh with the 1 MiB reason", async () => {
+    const { dir, file } = directory();
+    try {
+        const runner: Runner = async (_program, args) => {
+            if (args.includes("get-caller-identity")) return JSON.stringify({ Account: ACCOUNT });
+            return "x".repeat(1_048_577);
+        };
+        const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+        assert.equal(await source.refresh(true), "unavailable");
+        assert.match(source.failure?.() ?? "", /1 MiB limit/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

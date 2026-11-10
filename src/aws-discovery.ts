@@ -107,6 +107,7 @@ export function problemSummary(errors: Array<{ profile: string; message: string 
 }
 
 function reasonOf(error: unknown): string {
+    if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
     if (status === "configuration") return "the AWS configuration is missing or wrong";
@@ -255,6 +256,7 @@ export function createAwsDiscovery(
                 region: string;
                 kind: "application" | "system";
                 arn?: string;
+                row?: Json;
             }> = [];
             if (mode === "explicit") {
                 for (const entry of config.profiles ?? []) {
@@ -354,7 +356,7 @@ export function createAwsDiscovery(
                             const arn = row?.inferenceProfileArn;
                             if (typeof arn !== "string") throw new Error("profile scope");
                             if (!/anthropic\.claude/i.test(`${arn} ${row.inferenceProfileName ?? ""}`)) continue;
-                            candidates.push({ profile: arn, region, kind: "system", arn });
+                            candidates.push({ profile: arn, region, kind: "system", arn, row });
                         }
                         token = result.nextToken ?? "";
                         if (!token) break;
@@ -366,7 +368,25 @@ export function createAwsDiscovery(
             }
             await eachLimit(candidates, 4, async (candidate) => {
                 try {
-                    if (candidate.arn) {
+                    if (candidate.row !== undefined) {
+                        // The SYSTEM_DEFINED listing already carries the name, status and model ARNs; one call per
+                        // region is enough, instead of one GetInferenceProfile per row.
+                        const row = candidate.row;
+                        if (row.status !== "ACTIVE") return;
+                        if (row.inferenceProfileArn !== undefined && row.inferenceProfileArn !== candidate.profile)
+                            throw new Error("profile mismatch");
+                        const foundationModelId = await foundation(row);
+                        if (!foundationModelId.startsWith("anthropic.claude")) return;
+                        if (seen.has(candidate.profile) || seen.size >= 256) throw new Error("profile scope");
+                        seen.add(candidate.profile);
+                        profiles.push({
+                            arn: candidate.profile,
+                            profile_name: nameOf(row),
+                            foundation_model_id: foundationModelId,
+                            region: candidate.region,
+                            kind: "system",
+                        });
+                    } else if (candidate.arn) {
                         await add(candidate.arn, candidate.region, candidate.kind);
                     } else {
                         const found = await info(candidate.profile, candidate.region);
