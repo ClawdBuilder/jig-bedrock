@@ -64,6 +64,8 @@ credential chain; discovery uses the AWS CLI, so the profile must work in both.
 
 Every setting, the three discovery modes and the environment variables: [Settings](docs/settings.md).
 The optional spend command and its ten-line example: [Spend command](docs/spend-command.md).
+The first session in a new agent folder with no profile says once: “Bedrock: run /login, choose Amazon Bedrock
+(jig-bedrock), then /model.”
 
 ## Routes and model ids
 
@@ -72,26 +74,32 @@ inference profiles. `api: "messages"` only applies the Messages route where the 
 "converse"` puts every model on Converse.
 
 AWS-defined discovery can show two models for one foundation model, for example `claude-haiku-4-5` and
-`claude-haiku-4-5--us-east-1--global.anthropic.claude-haiku-4-5-20251001-v1:0`. The **short id** is the preferred
-system profile: the geography prefix that matches your first configured region (`us`, `eu`, `apac`, `jp`, `au`,
-`us-gov`), then `global`, then the other regions in the order you configured them. The **long form** is another system
-profile for the same model:
-`<slug>--<region>--<profile id>`. Both are separate AWS inference profiles with their own routing and price, so both
-stay in `/model`.
+`claude-haiku-4-5-global`. The **short id** is the preferred system profile: the geography prefix that matches your
+first configured region (`us`, `eu`, `apac`, `jp`, `au`, `us-gov`), then `global`, then the other regions in the order
+you configured them. The other profile gets a short geography suffix (`-global`, `-eu`, `-apac`, …); if two would
+collide it adds the region, and the old `<slug>--<region>--<profile id>` form is kept as an alias. Both are separate AWS
+inference profiles with their own routing and price, so both stay in `/model`.
 
 ## Commands
 
-| Command                             | What it does                                                                             |
-| ----------------------------------- | ---------------------------------------------------------------------------------------- |
-| `/bedrock migrate`                  | Copy a 0.2.x `jig.json` Bedrock section to `bedrock.json`, once                          |
-| `/bedrock-refresh`                  | Refresh the discovered profiles                                                          |
-| `/bedrock usage [day\|week\|month]` | Show this machine's Bedrock spend and the optional spend command                         |
-| `/bedrock budget [amount\|off]`     | Show, set or clear the display budget                                                    |
-| `/bedrock-usage [period]`           | The old name for `/bedrock usage`                                                        |
-| `/bedrock-stats`                    | The old name for `/bedrock usage`                                                        |
-| `/bedrock-profiles`                 | Show the discovered profiles, the mode and catalog age, and why a profile is unavailable |
-| `/aws-login`                        | Renew the configured profile's IAM Identity Center session; it checks the profile first  |
-| `/bedrock-doctor`                   | Probe Node and the AWS CLI; it does not call AWS                                         |
+One command, with completions:
+
+| Command                                               | Does                                                                        |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| `/bedrock` or `/bedrock status`                       | Profile, sign-in as last seen, models, route, spend and budget; no AWS call |
+| `/bedrock doctor [offline\|call]`                     | Local checks, free AWS checks, or one tiny call                             |
+| `/bedrock models`                                     | Short id, region, route and price; not-usable profiles after                |
+| `/bedrock refresh`                                    | Re-read the profiles from AWS                                               |
+| `/bedrock login`                                      | Renew the chosen AWS sign-in                                                |
+| `/bedrock usage [day\|week\|month]`                   | Spend by model, tokens and cache share                                      |
+| `/bedrock budget [amount\|off]`                       | Show, set or remove the display budget                                      |
+| `/bedrock settings`                                   | Every setting, value and source                                             |
+| `/bedrock set <key> <value>` / `/bedrock unset <key>` | Change `bedrock.json` safely                                                |
+| `/bedrock migrate`                                    | Copy a 0.2.x `jig.json` section once                                        |
+| `/bedrock help`                                       | The short table                                                             |
+
+The old names `/bedrock-doctor`, `/bedrock-usage`, `/bedrock-stats`, `/bedrock-profiles`,
+`/bedrock-refresh` and `/aws-login` still work for this release and name their replacement.
 
 ## IAM
 

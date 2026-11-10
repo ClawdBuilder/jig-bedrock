@@ -28,17 +28,15 @@ export interface LoginFlowOptions {
 }
 
 const methods = [
+    // The common case first; the other rows are the choices that really differ.
     { id: "existing", label: "An AWS profile that already works" },
-    { id: "sso", label: "Sign in to an existing IAM Identity Center (SSO) profile" },
     { id: "sso-new", label: "Create an IAM Identity Center (SSO) profile" },
-    { id: "keys", label: "Set up access keys with the AWS CLI" },
-    { id: "role", label: "Use an IAM role profile" },
     { id: "role-new", label: "Create an IAM role profile" },
     { id: "chain", label: "Use the AWS credential chain (no profile)" },
     { id: "key", label: "Use a Bedrock API key with Pi's own provider" },
 ] as const;
 
-type Method = (typeof methods)[number]["id"];
+type Method = (typeof methods)[number]["id"] | "keys" | "role" | "sso";
 
 const profileCredential = (profile: string): ApiKeyCredential => ({ type: "api_key", env: { AWS_PROFILE: profile } });
 
@@ -75,7 +73,10 @@ async function askProfile(
     }
     interaction.signal.throwIfAborted();
     name = name.trim();
-    if (!profilePattern.test(name)) throw new Error("That is not an AWS profile name.");
+    if (!profilePattern.test(name)) {
+        interaction.notify({ type: "info", message: "That is not an AWS profile name; choose or type another." });
+        return askProfile(interaction, listed, message);
+    }
     if (listed !== undefined && !listed.includes(name))
         interaction.notify({ type: "info", message: `${name} is not in aws configure list-profiles yet.` });
     return name;
@@ -486,7 +487,21 @@ export async function runLoginFlow(
         }
         const name = await askProfile(interaction, listed);
         interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
-        const check = await options.verify(name, interaction.signal);
+        let check = await options.verify(name, interaction.signal);
+        if (!check.ok && (options.isSso?.(name) ?? false)) {
+            interaction.notify({ type: "info", message: `Sign-in expired for ${name}; opening the browser sign-in.` });
+            try {
+                await options.signIn?.(name, interaction.signal);
+                interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
+                check = await options.verify(name, interaction.signal);
+            } catch (error) {
+                interaction.notify({
+                    type: "info",
+                    message: `Sign-in expired for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+                });
+                continue;
+            }
+        }
         if (!check.ok) {
             interaction.notify({ type: "info", message: check.message });
             continue;

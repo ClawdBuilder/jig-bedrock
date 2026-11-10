@@ -130,12 +130,18 @@ test("a version-suffixed profile id survives the cache, the model id, saved sele
         usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
         const models = discoveredProfiles(source.load(), dir).available;
         const versioned = models.find((model) => model.arn === versionedArn);
-        const withColon = models.find((model) => /-v1:0$/.test(model.id));
         assert.ok(versioned);
-        assert.ok(withColon, JSON.stringify(models.map((model) => model.id)));
-        assert.equal(withColon.arn, arn("global.anthropic.claude-sonnet-4-5-20250929-v1:0"));
-        const selected = withColon;
-        assert.equal(resolveSelection(models, selected.id)?.arn, selected.arn);
+        const global = models.find((model) => model.arn === arn("global.anthropic.claude-sonnet-4-5-20250929-v1:0"));
+        assert.ok(global);
+        assert.equal(global.id, "claude-sonnet-4-5-global");
+        assert.equal(resolveSelection(models, global.id)?.arn, global.arn);
+        assert.equal(
+            resolveSelection(models, "claude-sonnet-4-5--us-east-1--global.anthropic.claude-sonnet-4-5-20250929-v1:0")
+                ?.arn,
+            global.arn,
+            "a saved old long id still resolves",
+        );
+        const selected = global;
 
         let recordedId: string | undefined;
         let wireId: string | undefined;

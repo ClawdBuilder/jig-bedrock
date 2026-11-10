@@ -341,6 +341,7 @@ export async function registerBedrockSsoRecovery(
             try {
                 await recover(profile, ctx.signal);
                 ctx.ui.notify("AWS SSO restored. Continue your request.", "info");
+                ctx.ui.notify("This name goes away in the next release: use /bedrock login.", "info");
             } catch (error) {
                 if (!(error instanceof SsoRecoveryError && error.streamed) && !lifetime.signal.aborted)
                     ctx.ui.notify(recoveryHint(error), "warning");

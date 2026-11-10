@@ -49,7 +49,8 @@ async function startWith(options: {
     )(pi as never);
     const ctx = {
         ui: { notify: (text: string) => notices.push(text) },
-        mode: "print",
+        mode: "rpc",
+        hasUI: true,
         sessionManager: { getBranch: () => [], getSessionId: () => "test", getSessionDir: () => options.dir },
     };
     for (const hook of hooks.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
@@ -65,10 +66,10 @@ test("start-up with no profile names the setting and points to /login", async ()
     try {
         const { notices } = await startWith({ dir, env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
         const text = notices.join("\n");
-        assert.match(text, /No AWS profile is configured for Bedrock/);
-        assert.match(text, /\/login → Sign in with an API key → Amazon Bedrock \(jig-bedrock\)/);
-        assert.match(text, /bedrock\.profile/);
+        assert.match(text, /Bedrock: run \/login, choose Amazon Bedrock \(jig-bedrock\), then \/model\./);
         assert.doesNotMatch(text, /run \/aws-login/);
+        const second = await startWith({ dir, env: { HOME: dir, PI_CODING_AGENT_DIR: dir } });
+        assert.doesNotMatch(second.notices.join("\n"), /Bedrock: run \/login/, "once per agent folder");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -152,13 +153,13 @@ test("the doctor names the profile, its source, the mode and the regions", async
 
 test("the doctor fails a missing profile and points at /login", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C.UTF-8" }, ["other-profile"]);
-    assert.match(text, /✗ AWS profile: missing-profile \(JIG_BEDROCK_PROFILE\) — not listed/);
+    assert.match(text, /✗ AWS profile: missing-profile \(JIG_BEDROCK_PROFILE\) — not in/);
     assert.match(text, /\/login/);
 });
 
 test("the doctor says none when no profile is configured", async () => {
     const text = await doctor({ LANG: "C.UTF-8" }, []);
-    assert.match(text, /✗ AWS profile: none chosen. No AWS profile is configured for Bedrock/);
+    assert.match(text, /✗ AWS profile: none chosen. Run \/login, choose Amazon Bedrock./);
     assert.match(text, /\/login/);
 });
 
