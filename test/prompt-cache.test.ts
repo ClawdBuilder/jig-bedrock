@@ -35,7 +35,12 @@ test("models Bedrock does not list for caching stay undeclared, so Pi never warm
 });
 test("a real Pi session sees the declared lifetimes, which is what turns on its cache warming", async (t) => {
     const sdk = await hostImport("@earendil-works/pi-coding-agent");
-    const { getPromptCacheTtlMs } = await import(pathToFileURL(hostFile("dist/core/cache-warmer.js")).href);
+    // Pi 1.5.0 defines this in its own cache-warmer module; from 1.5.2 it is exported by pi-ai and the module only imports it.
+    const piAi = await hostImport("@earendil-works/pi-ai");
+    const { getPromptCacheTtlMs } =
+        typeof piAi.getPromptCacheTtlMs === "function"
+            ? piAi
+            : await import(pathToFileURL(hostFile("dist/core/cache-warmer.js")).href);
     const dir = mkdtempSync(join(tmpdir(), "bedrock-session-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const region = "us-east-1",
