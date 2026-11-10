@@ -43,10 +43,10 @@ When `profile` is unset, the provider takes the first of these that exists:
    for this provider;
 3. `AWS_PROFILE`;
 4. `AWS_DEFAULT_PROFILE`;
-5. the `default` profile, when `aws configure list-profiles` names it;
+5. the `default` profile, when your AWS config or credentials file has one;
 6. with none of those, the AWS credential chain (environment, container or instance role).
 
-A configured profile that `aws configure list-profiles` does not name resolves to no models: the start-up notice and
+A configured profile that is in neither your AWS config nor your credentials file (`[profile NAME]` or `[NAME]`; `aws configure list-profiles` prints the same names) resolves to no models: the start-up notice and
 `/bedrock-doctor` say which profile is missing and point to `/login`.
 
 `signInAtStart: true` refreshes an expired session when Pi starts; the default leaves sign-in to a failing request or `/aws-login`. The start-up check still runs read-only, and

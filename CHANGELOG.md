@@ -37,6 +37,8 @@
 - Application profiles of Sonnet 5, Sonnet 4.6, Sonnet 4.5, Opus 4.7, Opus 4.6, Opus 4.5, Opus 4.1 and Haiku 4.5 (0.2.4 and 0.2.5 sent every application profile to Messages) no longer fail with a 400 or 404 once a tool is loaded mid-session; they use Converse.
 - `scripts/real-check-messages.mjs --team` wrote `team` together with `tagKey` and `tagValue`, which the settings reject; it writes the tag pair only.
 
+- Starting Pi with this package is much faster. It ran `aws configure list-profiles` several times at once at every start (each run takes over a second), and Pi waited for them. The profile names are now read from the AWS config and credentials files (`[default]`, `[profile NAME]`, `[NAME]`), so no program starts at Pi's start-up, in `/login` or in `/bedrock-doctor` for the profile list. Model discovery still starts the AWS CLI in the background when no fresh catalog is cached.
+
 ### Development
 
 - CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.

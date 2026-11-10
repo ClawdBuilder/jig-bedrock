@@ -8,9 +8,7 @@ import test from "node:test";
 import { createAwsDiscovery } from "../src/aws-discovery.ts";
 import { loadConfig } from "../src/config.ts";
 import {
-    createListProfiles,
     createProfileAuth,
-    type ListProfilesRun,
     loginOutcomeMessage,
     loginWithProfile,
     ProfileResolver,
@@ -276,17 +274,6 @@ test("/login uses its own long listing, not the short cached one", async () => {
     });
     assert.deepEqual(prompts, [["profile:demo-sso", "type"]]);
     assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "demo-sso" } });
-});
-
-test("the start-up listing keeps its short timeout and /login its long one", async () => {
-    const calls: number[] = [];
-    const run: ListProfilesRun = async (_env, timeoutMs) => {
-        calls.push(timeoutMs);
-        return timeoutMs === 2_000 ? undefined : "demo-sso\n\nkeys\n";
-    };
-    assert.equal(await createListProfiles({}, 2_000, run)(), undefined);
-    assert.deepEqual(await createListProfiles({}, 10_000, run)(), ["demo-sso", "keys"]);
-    assert.deepEqual(calls, [2_000, 10_000], "the timeout is passed to the CLI run, not measured by this test");
 });
 
 test("the login outcome has three plain endings", () => {

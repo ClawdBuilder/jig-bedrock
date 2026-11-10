@@ -1,9 +1,10 @@
 // Where the AWS profile comes from, in one place: the explicit setting, JIG_BEDROCK_PROFILE, the profile chosen by
 // /login (Pi's credential for this provider), AWS_PROFILE, AWS_DEFAULT_PROFILE, then the default profile if it exists.
-// The name is checked against `aws configure list-profiles`, cached for a minute: a local command, no network, so
-// `/model` and the doctor can answer "is this profile real?" without an STS call.
-import { execFile } from "node:child_process";
+// The name is checked against the profiles in the AWS config and credentials files, cached for a minute: two small file
+// reads, no process and no network, so `/model` and the doctor can answer "is this profile real?" without the AWS CLI
+// (whose start takes over a second) or an STS call.
 import type { ApiKeyCredential, ProviderAuth, ProviderAuthInteraction } from "@earendil-works/pi-ai";
+import { listProfileNames } from "./aws-config-read.ts";
 import { profilePattern } from "./config.ts";
 
 export type ProfileSource = "setting" | "env" | "login" | "AWS_PROFILE" | "AWS_DEFAULT_PROFILE" | "default";
@@ -27,7 +28,7 @@ export interface ProfileSettings {
     env?: NodeJS.ProcessEnv;
 }
 
-/** `aws configure list-profiles`, or undefined when the AWS CLI cannot answer. */
+/** The names `aws configure list-profiles` prints, or undefined when a listing cannot be made (a test's fake may say so). */
 export type ListProfiles = (signal?: AbortSignal) => Promise<string[] | undefined>;
 
 /** The route Pi's /login actually takes to this provider, written out wherever a message sends someone there. */
@@ -69,40 +70,15 @@ export function hasAmbientCredentials(env: NodeJS.ProcessEnv = process.env): boo
     );
 }
 
-/** Runs `aws configure list-profiles`: its standard output, or undefined on failure. Injectable so tests need no clock. */
-export type ListProfilesRun = (
-    env: NodeJS.ProcessEnv,
-    timeoutMs: number,
-    signal?: AbortSignal,
-) => Promise<string | undefined>;
-
-export const runListProfiles: ListProfilesRun = (env, timeoutMs, signal) =>
-    new Promise((resolve) => {
-        execFile(
-            "aws",
-            ["configure", "list-profiles"],
-            { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
-            (error, stdout) => resolve(error ? undefined : String(stdout)),
-        );
-    });
-
 /**
- * Runs the AWS CLI's local profile listing; its output is only names, never a value. The start-up check keeps a short
- * timeout (it must not delay a session); /login passes a long one, because the person is already waiting.
+ * The profile names from the AWS config and credentials files, the same list `aws configure list-profiles` prints, without
+ * starting the AWS CLI. Only names, never a value. A missing file lists nothing.
  */
 export function createListProfiles(
     env: NodeJS.ProcessEnv = process.env,
-    timeoutMs = 2000,
-    run: ListProfilesRun = runListProfiles,
+    read?: (file: string) => string | undefined,
 ): ListProfiles {
-    return async (signal) => {
-        const text = await run(env, timeoutMs, signal);
-        if (text === undefined) return undefined;
-        return text
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line !== "");
-    };
+    return async () => listProfileNames(env, read);
 }
 
 /** What /login says after discovery ran, or when it did not finish within the bound. */

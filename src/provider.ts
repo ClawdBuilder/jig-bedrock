@@ -258,13 +258,13 @@ export function createBedrockProvider(
                   signal: AbortSignal,
               ) => Promise<void>)
             | undefined;
-        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
         // /login's guided choice: the AWS CLI is the only place a secret is entered, and the profile is verified before
         // the credential is stored. A fresh listing is used after the access-key/role guidance.
         const guided = (interaction: ProviderAuthInteraction) =>
             runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,
-                refreshProfiles: () => createListProfiles(profileEnv, 10_000)(),
+                refreshProfiles: () => createListProfiles(profileEnv)(),
                 isSso: (profile) => isSsoProfile(profile, profileEnv),
                 verify: (profile, signal) =>
                     options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
