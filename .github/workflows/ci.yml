@@ -48,6 +48,9 @@ jobs:
               run: npm run check:emails
 
             - name: Scan for company strings
+              env:
+                  # The private word list is a repository secret. Fork pull requests get no secrets, so they stay warn-only.
+                  JIG_SCAN_WORDS_TEXT: ${{ secrets.SCAN_WORDS }}
               run: npm run scan
 
             - name: Types and Biome

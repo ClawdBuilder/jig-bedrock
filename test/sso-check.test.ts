@@ -1,4 +1,4 @@
-// Whether the profile's SSO session is still good, checked the way Switchboard's bin/aws-sso-check.ts did it: a cached token that
+// Whether the profile's SSO session is still good: a cached token that
 // stays valid is enough; otherwise the AWS SDK's credential chain answers. Every test runs on a fake home and a fake SDK: nothing
 // reads a real token cache or reaches AWS, and nothing of a credential is in an answer.
 import assert from "node:assert/strict";

@@ -1,15 +1,17 @@
 # jig-bedrock: Claude on AWS Bedrock for Pi
 
-**Status: built.**
-
-A Pi provider for Claude on AWS Bedrock. It discovers the Claude inference profiles your account can use, sends Claude
-through Bedrock's Anthropic Messages route where possible, and falls back to Converse per model. It works in plain Pi;
-when [Jig](https://github.com/ClawdBuilder/jig) is installed it also reads `bedrock` settings from `jig.json` and
-uses Jig's records and footer, but Jig is not required.
+A Pi provider for Claude on AWS Bedrock. It discovers the Claude inference profiles your account can use. A default
+install uses Converse for AWS-defined (system) profiles and the Messages route for application inference profiles; the
+`api` setting can force either route. It works in plain Pi; when [Jig](https://github.com/ClawdBuilder/jig) is installed
+it also reads `bedrock` settings from `jig.json` and uses Jig's records and footer, but Jig is not required.
 
 Pi's built-in Bedrock provider uses Converse only, has a fixed model list, and has no profile discovery, SSO repair or
 budget footer. This package adds the Messages route with SigV4, discovery in three modes, repair through `aws sso login`,
 and an optional spend line.
+
+Installing this package replaces Pi's built-in Bedrock model list with the models discovered here, so Pi's built-in
+Bedrock models, including the non-Claude ones, are not shown while it is installed. A Bedrock API key (bearer token) is
+not supported yet; use an AWS profile.
 
 ## Install
 
@@ -18,8 +20,8 @@ pi install npm:@clawdbuilder/jig-bedrock
 ```
 
 Requirements: Node 22.19 or later, Pi 1.5 or later, and the AWS CLI v2 for discovery. You need an AWS profile the CLI can
-use; **SSO is one option, not a requirement**. Linux, WSL2 and macOS are supported; native Windows is not
-([why](docs/settings.md#windows)).
+use; **SSO is one option, not a requirement**. Linux and WSL2 are supported. macOS is expected to work but is not
+tested; reports and fixes are welcome. Native Windows is not supported ([why](docs/settings.md#windows)).
 
 Run `/bedrock-doctor` after installing; it checks Node, the AWS CLI, `bash`, `jq` and the optional usage program without
 calling AWS.
@@ -57,7 +59,23 @@ credential chain; discovery uses the AWS CLI, so the profile must work in both.
 
 Every setting, the three discovery modes and the environment variables: [Settings](docs/settings.md).
 
+## Routes and model ids
+
+A default install uses **Converse** for AWS-defined (system) profiles and the **Messages** route for application
+inference profiles. `api: "messages"` only applies the Messages route where the profile kind supports it; `api:
+"converse"` puts every model on Converse.
+
+AWS-defined discovery can show two models for one foundation model, for example `claude-haiku-4-5` and
+`claude-haiku-4-5--us-east-1--global.anthropic.claude-haiku-4-5-20251001-v1:0`. The **short id** is the preferred
+system profile: the geography prefix that matches your first configured region (`us`, `eu`, `apac`, `jp`, `au`,
+`us-gov`), then `global`, then the other regions in the order you configured them. The **long form** is another system
+profile for the same model:
+`<slug>--<region>--<profile id>`. Both are separate AWS inference profiles with their own routing and price, so both
+stay in `/model`.
+
 ## Commands
+
+The footer and `/bedrock-usage` read an executable `usage` in `usageDir`; without one, models and sign-in still work.
 
 | Command                   | What it does                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------- |
@@ -68,19 +86,17 @@ Every setting, the three discovery modes and the environment variables: [Setting
 | `/aws-login`              | Renew the configured profile's IAM Identity Center session; it checks the profile first  |
 | `/bedrock-doctor`         | Probe Node, AWS CLI, bash, jq and the optional usage program; it does not call AWS       |
 
-The footer and `/bedrock-usage` read an executable `usage` in `usageDir`; without one, models and sign-in still work.
-
 ## IAM
 
 The AWS CLI and every signed request need these actions:
 
-| Action                                  | Needed for                                 | Resource                                                   |
-| --------------------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| `sts:GetCallerIdentity`                 | The account check before discovery         | `*`                                                        |
-| `bedrock:ListInferenceProfiles`         | System mode: the profile list              | `*`                                                        |
-| `tag:GetResources`                      | Tag mode: profiles by tag                  | `*`                                                        |
-| `bedrock:GetInferenceProfile`           | Every mode: one profile's foundation model | The inference-profile ARN                                  |
-| `bedrock:InvokeModelWithResponseStream` | Requests, on both routes                   | The profile ARN and each foundation-model ARN it routes to |
+| Action                                  | Needed for                                  | Resource                                                   |
+| --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| `sts:GetCallerIdentity`                 | The account check before discovery          | `*`                                                        |
+| `bedrock:ListInferenceProfiles`         | System mode: the profile list               | `*`                                                        |
+| `tag:GetResources`                      | Tag mode: profiles by tag                   | `*`                                                        |
+| `bedrock:GetInferenceProfile`           | Tag and explicit modes: one profile's model | The inference-profile ARN                                  |
+| `bedrock:InvokeModelWithResponseStream` | Requests, on both routes                    | The profile ARN and each foundation-model ARN it routes to |
 
 Every request streams. Messages goes to Bedrock's Anthropic route, and Converse uses the SDK's `ConverseStream`, which
 `bedrock:InvokeModelWithResponseStream` authorizes; `bedrock:InvokeModel` is not needed. No `ListFoundationModels` or

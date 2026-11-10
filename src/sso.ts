@@ -151,9 +151,32 @@ export function isSsoExpiry(message: AssistantMessage): boolean {
     );
 }
 
+/** A failed request keeps its cause: the AWS name, message, HTTP status and request id, and no stack or headers. */
+export function requestFailureMessage(error: unknown): string {
+    if (!(error instanceof Error)) return "Bedrock request failed.";
+    const value = error as Error & {
+        code?: unknown;
+        statusCode?: unknown;
+        status?: unknown;
+        $metadata?: { httpStatusCode?: unknown; requestId?: unknown };
+    };
+    const name = error.name !== "Error" ? error.name : typeof value.code === "string" ? value.code : undefined;
+    const status = value.$metadata?.httpStatusCode ?? value.statusCode ?? value.status;
+    const requestId = value.$metadata?.requestId;
+    return [
+        ...(name === undefined ? [] : [`${name}:`]),
+        error.message === "" ? "no message" : error.message,
+        ...(typeof status === "number" ? [`HTTP ${status}`] : []),
+        ...(typeof requestId === "string" ? [`request id ${requestId}`] : []),
+    ].join(" ");
+}
+
 export function profileFor(options?: SimpleStreamOptions): string | undefined {
+    // The Messages route gets a literal placeholder key because Pi's Anthropic client requires one before it builds a
+    // request; the signed fetch removes it. It is not a real key and must not hide the profile from recovery.
+    const placeholderKey = options?.apiKey === "bedrock-sigv4";
     if (
-        options?.apiKey ||
+        (options?.apiKey && !placeholderKey) ||
         (options as SimpleStreamOptions & { bearerToken?: string })?.bearerToken ||
         (options?.env?.AWS_BEARER_TOKEN_BEDROCK ?? process.env.AWS_BEARER_TOKEN_BEDROCK) ||
         (options?.env?.AWS_BEDROCK_SKIP_AUTH ?? process.env.AWS_BEDROCK_SKIP_AUTH) === "1"
@@ -180,6 +203,7 @@ export function withSsoRecovery(
         const output = makeStream();
         void (async () => {
             let responded = false;
+            let localSignInFailure = false;
             let emitted = false;
             let approvedPayload: Promise<unknown> | undefined;
             const scoped = {
@@ -194,6 +218,10 @@ export function withSsoRecovery(
                 },
                 onResponse: async (...args: Parameters<NonNullable<SimpleStreamOptions["onResponse"]>>) => {
                     responded = true;
+                    const [response] = args;
+                    localSignInFailure = Object.entries(response.headers).some(
+                        ([name, value]) => name.toLowerCase() === "x-jig-sso-expiry" && value === "1",
+                    );
                     await options?.onResponse?.(...args);
                 },
             };
@@ -204,8 +232,7 @@ export function withSsoRecovery(
                     if (
                         attempt === 0 &&
                         profile &&
-                        !responded &&
-                        !emitted &&
+                        (localSignInFailure || (!responded && !emitted)) &&
                         !options?.signal?.aborted &&
                         isSsoExpiry(event.error)
                     ) {
@@ -235,7 +262,7 @@ export function withSsoRecovery(
                 }
                 if (!retry) throw new Error("Incomplete Bedrock stream");
             }
-        })().catch(() => {
+        })().catch((error) => {
             output.push({
                 type: "error",
                 reason: options?.signal?.aborted ? "aborted" : "error",
@@ -255,8 +282,9 @@ export function withSsoRecovery(
                     },
                     stopReason: options?.signal?.aborted ? "aborted" : "error",
                     timestamp: Date.now(),
-                    errorMessage:
-                        "Bedrock request could not complete. Check AWS access and the Pi provider installation.",
+                    errorMessage: options?.signal?.aborted
+                        ? "Bedrock request cancelled."
+                        : requestFailureMessage(error),
                 },
             });
         });

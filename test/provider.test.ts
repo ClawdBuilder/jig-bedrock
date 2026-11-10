@@ -57,11 +57,8 @@ test("the provider has no repository imports or internal environment dependencie
         .filter((n) => n.endsWith(".ts"))
         .map((n) => `src/${n}`)) {
         const code = readFileSync(join(root, file), "utf8");
-        assert.doesNotMatch(
-            code,
-            /from\s+["'][^"']*(?:extensions\/switchboard\/|daemon\/|bin\/|team\/|\.\.\/shared\.ts|switchboard-v2)/,
-        );
-        for (const name of code.match(/(?:JIG|HERDR)_[A-Z_]+/g) || [])
+        assert.doesNotMatch(code, /from\s+["'][^"']*(?:daemon\/|bin\/|team\/|\.\.\/shared\.ts)/);
+        for (const name of code.match(/JIG_[A-Z_]+/g) || [])
             assert.ok(
                 [
                     "JIG_BEDROCK",
@@ -75,7 +72,6 @@ test("the provider has no repository imports or internal environment dependencie
                 ].includes(name),
                 name,
             );
-        assert.doesNotMatch(code, /DaemonClient|python3/);
     }
 });
 test("refresh replacing a selected ARN keeps input blocked without switching models", async (t) => {

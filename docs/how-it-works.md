@@ -32,7 +32,8 @@ cached models stay in `/model`. `/bedrock-refresh` forces a new run.
 
 ## Routes
 
-There are two routes to the same Claude models:
+A default install uses Converse for system-defined profiles and Messages for application inference profiles; `api` can
+force either. There are two routes to the same Claude models:
 
 - **Messages.** Pi's Anthropic Messages client calls
   `https://bedrock-runtime.<region>.amazonaws.com/anthropic/v1/messages`. The signing fetch removes the client's

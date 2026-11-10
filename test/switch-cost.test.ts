@@ -28,11 +28,11 @@ test("cache write rate is the model's 5-minute rate or twice the input rate for 
 test("the notice prices the current context at the target's cache-write rate", () => {
     assert.equal(
         switchNotice(190_000, opus, "short")?.text,
-        "Switching model rewrites ~190k tokens of cache: about $0.95 (once). For one hard question, ask the planner subagent instead.",
+        "Switching model rewrites ~190k tokens of cache: about $0.95 (once). For one hard question, switch for that request only and switch back.",
     );
     assert.equal(
         switchNotice(190_000, opus, "long")?.text,
-        "Switching model rewrites ~190k tokens of cache: about $1.90 (once). For one hard question, ask the planner subagent instead.",
+        "Switching model rewrites ~190k tokens of cache: about $1.90 (once). For one hard question, switch for that request only and switch back.",
     );
     assert.match(switchNotice(1_250_000, opus, "short")!.text, /~1\.3M tokens/);
     assert.equal(switchNotice(5_000, opus, "short"), undefined, "a few cents is not worth a notice");
@@ -82,7 +82,7 @@ test("a switch with context notifies once, for the target model, with its own ra
         h.ctx(190_000, [response(60_000)]),
     );
     assert.deepEqual(h.notices, [
-        "Switching model rewrites ~190k tokens of cache: about $1.19 (once). For one hard question, ask the planner subagent instead.",
+        "Switching model rewrites ~190k tokens of cache: about $1.19 (once). For one hard question, switch for that request only and switch back.",
     ]);
     h.select(
         { model: h.model("sonnet"), previousModel: h.model("opus"), source: "cycle" },

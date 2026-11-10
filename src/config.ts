@@ -46,7 +46,9 @@ export interface ResolvedConfig {
 
 /** The two ways to reach the same models: the Anthropic Messages route, or the older Converse route. */
 export type BedrockApi = "messages" | "converse";
-export type ConfigResult = { config: ResolvedConfig; error?: never } | { config?: never; error: string };
+export type ConfigResult =
+    | { config: ResolvedConfig; error?: never; unknown?: string[]; warning?: string }
+    | { config?: never; error: string; unknown?: never; warning?: never };
 
 export const profilePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
@@ -215,10 +217,12 @@ export function loadConfig(
 ): ConfigResult {
     const env = options.env ?? process.env;
     const agentDir = options.agentDir ?? (env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent"));
-    const unknown = Object.keys(options.raw ?? {}).filter((key) => !(FIELDS as readonly string[]).includes(key));
-    if (unknown.length > 0)
-        return { error: "Unknown field in bedrock in jig.json; see the configuration table in README.md." };
-    const c: Record<string, unknown> = { ...DEFAULTS, ...options.raw, agentDir };
+    const raw = options.raw ?? {};
+    const unknown = Object.keys(raw).filter((key) => !(FIELDS as readonly string[]).includes(key));
+    const known = Object.fromEntries(
+        Object.entries(raw).filter(([key]) => (FIELDS as readonly string[]).includes(key)),
+    );
+    const c: Record<string, unknown> = { ...DEFAULTS, ...known, agentDir };
     if (env.JIG_BEDROCK_TEAM !== undefined) c.team = env.JIG_BEDROCK_TEAM;
     if (env.JIG_BEDROCK_TAG_KEY !== undefined) c.tagKey = env.JIG_BEDROCK_TAG_KEY;
     if (env.JIG_BEDROCK_TAG_VALUE !== undefined) c.tagValue = env.JIG_BEDROCK_TAG_VALUE;
@@ -252,5 +256,5 @@ export function loadConfig(
         delete c.activeTagKey;
         delete c.activeTagValue;
     }
-    return { config: c as unknown as ResolvedConfig };
+    return { config: c as unknown as ResolvedConfig, ...(unknown.length === 0 ? {} : { unknown }) };
 }
