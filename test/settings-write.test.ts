@@ -22,7 +22,6 @@ test("system discovery replaces the mode keys and keeps unrelated settings", () 
         writeFileSync(
             file,
             JSON.stringify({
-                usageDir: "/opt/usage",
                 profile: "keep-me",
                 team: "Old",
                 tagKey: "Team",
@@ -33,7 +32,6 @@ test("system discovery replaces the mode keys and keeps unrelated settings", () 
         assert.equal(result.written, true);
         const saved = read(file);
         assert.deepEqual(saved.regions, ["us-east-1"]);
-        assert.equal(saved.usageDir, "/opt/usage");
         assert.equal(saved.profile, "keep-me", "the profile is the credential's business, never written here");
         for (const key of ["team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"])
             assert.equal(key in saved, false, key);
@@ -86,11 +84,11 @@ test("explicit discovery writes the list and drops tag settings", () => {
 test("a nested bedrock object stays nested and its siblings stay", () => {
     const { dir, env, file } = folder();
     try {
-        writeFileSync(file, JSON.stringify({ bedrock: { usageDir: "/opt/usage" }, somethingElse: 1 }));
+        writeFileSync(file, JSON.stringify({ bedrock: { browser: "/opt/browser" }, somethingElse: 1 }));
         saveDiscoverySettings(env, { mode: "system", regions: ["us-east-1"] });
         const saved = read(file) as { bedrock: Record<string, unknown>; somethingElse: number };
         assert.equal(saved.somethingElse, 1);
-        assert.equal(saved.bedrock.usageDir, "/opt/usage");
+        assert.equal(saved.bedrock.browser, "/opt/browser");
         assert.deepEqual(saved.bedrock.regions, ["us-east-1"]);
     } finally {
         rmSync(dir, { recursive: true, force: true });

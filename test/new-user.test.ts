@@ -134,7 +134,7 @@ async function doctor(env: NodeJS.ProcessEnv, listing: string[], loginListing?: 
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir, ...env },
         });
         const notices: string[] = [];
-        const ctx = { ui: { notify: (text: string) => notices.push(text) }, mode: "print" };
+        const ctx = { ui: { notify: (text: string) => notices.push(text) }, mode: "rpc", hasUI: true };
         await commands.get("bedrock-doctor")!.handler("", ctx);
         return notices.join("\n");
     } finally {
@@ -144,32 +144,32 @@ async function doctor(env: NodeJS.ProcessEnv, listing: string[], loginListing?: 
 
 test("the doctor names the profile, its source, the mode and the regions", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "work-profile", LANG: "C.UTF-8" }, ["work-profile"]);
-    assert.match(text, /✓ Profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
-    assert.match(text, /✓ Discovery: system-defined · regions: us-east-1/);
+    assert.match(text, /✓ AWS profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
+    assert.match(text, /✓ Discovery: AWS-defined · regions: us-east-1/);
     assert.match(text, /✓ loaded|not loaded/);
     assert.doesNotMatch(text, /Profile configuration: loaded/);
 });
 
 test("the doctor fails a missing profile and points at /login", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C.UTF-8" }, ["other-profile"]);
-    assert.match(text, /✗ Profile: missing-profile \(JIG_BEDROCK_PROFILE\) — not in aws configure list-profiles/);
+    assert.match(text, /✗ AWS profile: missing-profile \(JIG_BEDROCK_PROFILE\) — not listed/);
     assert.match(text, /\/login/);
 });
 
 test("the doctor says none when no profile is configured", async () => {
     const text = await doctor({ LANG: "C.UTF-8" }, []);
-    assert.match(text, /✗ Profile: none — No AWS profile is configured for Bedrock/);
+    assert.match(text, /✗ AWS profile: none chosen. No AWS profile is configured for Bedrock/);
     assert.match(text, /\/login/);
 });
 
 test("the doctor uses the longer listing /login uses when the short one did not answer", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "work-profile", LANG: "C.UTF-8" }, undefined, ["work-profile"]);
-    assert.match(text, /✓ Profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
+    assert.match(text, /✓ AWS profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
 });
 
 test("the doctor uses words when the locale is not UTF-8", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C" }, ["other-profile"]);
-    assert.match(text, /failure Profile: missing-profile/);
+    assert.match(text, /failure AWS profile: missing-profile/);
     assert.doesNotMatch(text, /✗/);
 });
 
@@ -177,6 +177,6 @@ test("the doctor uses words when NO_COLOR is set", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C.UTF-8", NO_COLOR: "1" }, [
         "other-profile",
     ]);
-    assert.match(text, /failure Profile:/);
+    assert.match(text, /failure AWS profile:/);
     assert.doesNotMatch(text, /✗/);
 });

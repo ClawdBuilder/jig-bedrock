@@ -81,3 +81,32 @@ export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: Discover
     }
     return { file, written: true, shadowed };
 }
+
+/** Set or clear monthlyBudgetUsd in bedrock.json, leaving every other key alone. */
+export function saveBudgetSetting(
+    env: NodeJS.ProcessEnv,
+    value: number | undefined,
+): { ok: boolean; file: string; error?: string } {
+    const file = bedrockFile(env);
+    let document: Record<string, unknown> = {};
+    try {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+        if (!isObject(parsed)) return { ok: false, file, error: `${file} does not hold a JSON object.` };
+        document = parsed;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+            return { ok: false, file, error: `${file} could not be read as JSON; fix it, then try again.` };
+    }
+    const target = isObject(document.bedrock) ? document.bedrock : document;
+    if (value === undefined) delete target.monthlyBudgetUsd;
+    else target.monthlyBudgetUsd = value;
+    try {
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+        const temporary = `${file}.${process.pid}.tmp`;
+        writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+        renameSync(temporary, file);
+        return { ok: true, file };
+    } catch {
+        return { ok: false, file, error: `${file} could not be written; check its folder permissions.` };
+    }
+}

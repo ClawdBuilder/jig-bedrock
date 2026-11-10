@@ -6,7 +6,7 @@ import { atomicCache } from "./cache.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 
-// biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI or usage program, checked field by field where it is used
+// biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI, checked field by field where it is used
 type Json = any;
 export type Status =
     | "ok"

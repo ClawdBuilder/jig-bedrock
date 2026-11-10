@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- A local spend record: one private JSONL line per Bedrock reply under the user's state folder, with the month, session, short model id, region, route, token counts, Pi's cost and a priced flag. Earlier replies in this agent's session files are imported once, bounded and marked.
+- `/bedrock usage [day|week|month]` and `/bedrock budget [amount|off]`; `/bedrock-usage` and `/bedrock-stats` call the same code. The footer shows the month's local spend and budget, with warning/error colours; the budget notices are once per threshold per month per machine.
+- `spendCommand` can supply this month's spend from a command the user names; it runs without a shell, at most every ten minutes, and its JSON contract is documented with an example.
+
 ### Changed
+
+- The usage program, its cache and its Bash/jq requirements are gone; `usageDir`/`JIG_BEDROCK_USAGE_DIR` are not settings, and an old `usageDir` key gets the unknown-key warning.
+- Prices come from Pi's model registry. A model with no price is still listed, marked no price, and its replies count as unpriced.
 
 - The package stands alone: `bedrock.json` and the `JIG_BEDROCK_*` environment are the only settings sources; the Jig settings section, the optional Jig API, the custom `jig-theme`/`jig-lens` events and the Jig development dependency are gone.
 - `tagKey` and `tagValue` are the generic tag filter; a 0.2.x `team` value is still read once as `tagKey: "Team"`, `tagValue: <team>`, `activeTagKey: "Active"`, `activeTagValue: "true"`.

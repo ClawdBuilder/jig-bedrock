@@ -65,7 +65,6 @@ test("a real Pi session sees the declared lifetimes, which is what turns on its 
             profile: "fixture",
             regions: [region],
             agentDir: dir,
-            usageDir: dir,
             ssoLoginCommand: [],
             signInAtStart: false,
         },

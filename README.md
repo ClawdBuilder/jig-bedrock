@@ -7,7 +7,7 @@ environment; nothing else is required.
 
 Pi's built-in Bedrock provider uses Converse only, has a fixed model list, and has no profile discovery, SSO repair or
 budget footer. This package adds the Messages route with SigV4, discovery in three modes, repair through `aws sso login`,
-and an optional spend line.
+and a local spend record with an optional display budget.
 
 This package sits beside Pi's built-in Bedrock provider: both model lists appear in `/model`, and the built-in provider
 keeps its API-key sign-in and its own models. This package uses an AWS profile for its models; an ambient
@@ -23,8 +23,7 @@ Requirements: Node 22.19 or later, Pi 1.5 or later, and the AWS CLI v2 for disco
 use; **SSO is one option, not a requirement**. Linux and WSL2 are supported. macOS is expected to work but is not
 tested; reports and fixes are welcome. Native Windows is not supported ([why](docs/settings.md#windows)).
 
-Run `/bedrock-doctor` after installing; it checks Node, the AWS CLI, `bash`, `jq` and the optional usage program without
-calling AWS.
+Run `/bedrock-doctor` after installing; it checks Node and the AWS CLI without calling AWS.
 
 ## Settings
 
@@ -38,13 +37,15 @@ shows its exact lines first and is appended to `~/.aws/config` only after you co
 { "bedrock": { "profile": "my-aws-profile", "regions": ["us-east-1"] } }
 ```
 
-| Setting    | Default         | Meaning                                                                                        |
-| ---------- | --------------- | ---------------------------------------------------------------------------------------------- |
-| `profile`  | unset           | The AWS profile for discovery and requests; `/login` chooses it, and this setting overrides it |
-| `regions`  | `["us-east-1"]` | Where to look for profiles                                                                     |
-| `tagKey`   | none            | Tag mode: the tag name to filter on                                                            |
-| `tagValue` | none            | Tag mode: the tag value to filter on                                                           |
-| `api`      | `messages`      | `messages` (cache-friendly) or `converse`                                                      |
+| Setting            | Default         | Meaning                                                                                        |
+| ------------------ | --------------- | ---------------------------------------------------------------------------------------------- |
+| `profile`          | unset           | The AWS profile for discovery and requests; `/login` chooses it, and this setting overrides it |
+| `regions`          | `["us-east-1"]` | Where to look for profiles                                                                     |
+| `tagKey`           | none            | Tag mode: the tag name to filter on                                                            |
+| `tagValue`         | none            | Tag mode: the tag value to filter on                                                           |
+| `api`              | `messages`      | `messages` (cache-friendly) or `converse`                                                      |
+| `monthlyBudgetUsd` | none            | Display budget for the footer and budget notices; not an AWS limit                             |
+| `spendCommand`     | none            | Optional argv that prints this month's spend (see Spend command)                               |
 
 A profile chosen at `/login` is Pi's credential for this provider: the record holds the profile name, never a key. The
 same flow saves the discovery mode and regions to `bedrock.json`; it never writes the profile there.
@@ -62,6 +63,7 @@ and `/aws-login` starts the login. `signInAtStart: false` (the default) leaves i
 credential chain; discovery uses the AWS CLI, so the profile must work in both.
 
 Every setting, the three discovery modes and the environment variables: [Settings](docs/settings.md).
+The optional spend command and its ten-line example: [Spend command](docs/spend-command.md).
 
 ## Routes and model ids
 
@@ -79,17 +81,17 @@ stay in `/model`.
 
 ## Commands
 
-The footer and `/bedrock-usage` read an executable `usage` in `usageDir`; without one, models and sign-in still work.
-
-| Command                   | What it does                                                                             |
-| ------------------------- | ---------------------------------------------------------------------------------------- |
-| `/bedrock migrate`        | Copy a 0.2.x `jig.json` Bedrock section to `bedrock.json`, once                          |
-| `/bedrock-refresh`        | Refresh the discovered profiles                                                          |
-| `/bedrock-usage [period]` | Show the usage program's daily, weekly or monthly figures (default monthly)              |
-| `/bedrock-stats`          | Compare local Pi session usage with the usage program's monthly figure                   |
-| `/bedrock-profiles`       | Show the discovered profiles, the mode and catalog age, and why a profile is unavailable |
-| `/aws-login`              | Renew the configured profile's IAM Identity Center session; it checks the profile first  |
-| `/bedrock-doctor`         | Probe Node, AWS CLI, bash, jq and the optional usage program; it does not call AWS       |
+| Command                             | What it does                                                                             |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- |
+| `/bedrock migrate`                  | Copy a 0.2.x `jig.json` Bedrock section to `bedrock.json`, once                          |
+| `/bedrock-refresh`                  | Refresh the discovered profiles                                                          |
+| `/bedrock usage [day\|week\|month]` | Show this machine's Bedrock spend and the optional spend command                         |
+| `/bedrock budget [amount\|off]`     | Show, set or clear the display budget                                                    |
+| `/bedrock-usage [period]`           | The old name for `/bedrock usage`                                                        |
+| `/bedrock-stats`                    | The old name for `/bedrock usage`                                                        |
+| `/bedrock-profiles`                 | Show the discovered profiles, the mode and catalog age, and why a profile is unavailable |
+| `/aws-login`                        | Renew the configured profile's IAM Identity Center session; it checks the profile first  |
+| `/bedrock-doctor`                   | Probe Node and the AWS CLI; it does not call AWS                                         |
 
 ## IAM
 
@@ -114,6 +116,7 @@ An inference profile must allow the profile **and** the foundation model in ever
 
 - [Settings](docs/settings.md): read before you change one; every field, the modes, credentials, environment.
 - [How it works](docs/how-it-works.md): read when a profile is missing; discovery, routes, model ids, the footer.
+- [Spend command](docs/spend-command.md): the optional JSON contract and a ten-line example.
 - [Not verified](docs/not-verified.md): read before you rely on it; what has run against real AWS, what the tests fake.
 
 ## Licence

@@ -9,8 +9,7 @@ The provider reads `~/.pi/agent/bedrock.json` and then applies the environment o
 top level or inside a `bedrock` object.
 
 `bedrock.json` holds the keys directly or inside a `bedrock` object. Three settings start programs: `ssoLoginCommand`,
-`usageDir` and `browser`; set them in `bedrock.json`
-(`usageDir` in `JIG_BEDROCK_USAGE_DIR` also works).
+`browser`; set them in `bedrock.json`.
 
 ## Every setting
 
@@ -23,7 +22,7 @@ top level or inside a `bedrock` object.
 | `activeTagKey`     | none                                            | Tag mode: an extra tag that must also match             |
 | `activeTagValue`   | none                                            | Tag mode: the optional second tag's value               |
 | `profiles`         | none                                            | Explicit mode: inference-profile ARNs or ids            |
-| `usageDir`         | `~/.local/share/usage-tool`                     | The folder holding the optional `usage` program         |
+| `spendCommand`     | none                                            | Optional argv that prints this month's spend            |
 | `monthlyBudgetUsd` | none                                            | A figure for the footer; not an AWS limit               |
 | `ssoLoginCommand`  | `["aws","sso","login","--profile","{profile}"]` | The argv that starts sign-in; `{profile}` is replaced   |
 | `signInAtStart`    | `false`                                         | Refresh an expired SSO session when Pi starts           |
@@ -69,7 +68,7 @@ Only `ACTIVE` profiles are listed. The calls each mode makes are in [How it work
 ## Environment
 
 These variables override the same setting: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`,
-`JIG_BEDROCK_PROFILE`, `JIG_BEDROCK_USAGE_DIR`, and `JIG_BEDROCK_REGIONS` (comma separated).
+`JIG_BEDROCK_PROFILE` and `JIG_BEDROCK_REGIONS` (comma separated).
 
 `PI_CACHE_RETENTION` sets Pi's own cache retention;
 the provider does not change it. `PI_CODING_AGENT_DIR` moves the agent folder, and with it `bedrock.json`.
@@ -94,20 +93,23 @@ A Bedrock API key belongs to Pi's built-in Amazon Bedrock provider. This package
 ambient `AWS_BEARER_TOKEN_BEDROCK` is cleared for their requests and does not replace the profile. `/login` says where
 to go for a key and does not ask for one.
 
-## The usage program
+## Spend and budget
 
-The footer and `/bedrock-usage` read an executable named `usage` in `usageDir`. The provider calls it with `--daily`,
-`--weekly` or `--monthly` and `--output json`, and the program prints the spend as JSON. It receives `AWS_PROFILE` and
-`BEDROCK_REGIONS` in its environment. The program is optional: without it, models, `/aws-login` and `/bedrock-refresh`
-still work, and the footer and the usage commands have nothing to show.
+After every reply this package appends one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/YYYY-MM.jsonl`:
+the time, session, short model id, region, route, the four token counts, the cost Pi computed and whether the model had a
+price. The folder is private to the user. Nothing from a prompt, an ARN, an account id or a profile is written.
 
-If your usage CLI's own command is `usage-cli`, put this two-line wrapper at `~/.local/share/usage-tool/usage` and make
-it executable:
+The footer shows `Nov $12.40` (or `Nov $12.40 / $200` with a budget); a trailing `+` means some reply had no price. It
+is display only: it is not AWS spend and it never blocks a request.
 
-```sh
-#!/bin/sh
-exec usage-cli usage "$@"
-```
+`monthlyBudgetUsd` sets the display budget. One notice appears when the month passes 80%, one when it passes 100%, and
+one at session start while over 100%. The state file remembers the first two for the month, across Pi processes.
+
+`spendCommand` is optional: an argv array, run without a shell at most once every 10 minutes and at `/bedrock usage`, with
+the settings' AWS profile and first region in its environment. It prints one JSON object:
+`{ "month": "2026-11", "spentUsd": 203.4 }`. When it works, the footer and budget use its figure; when it fails, they fall
+back to this machine's record and `/bedrock doctor` says why. The contract and a ten-line example:
+[Spend command](spend-command.md).
 
 ## Platforms
 
