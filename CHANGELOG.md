@@ -11,6 +11,8 @@
 - `routeOf` in `src/catalog.ts` answers which route a model uses and why, in a few words ("Pi lists tool changes", "not on the Messages route", "your setting", "this Pi does not know the model", "known exception"); the model list uses it, so there is one rule.
 - `scripts/real-check-messages.mjs` takes a comma-separated list of models and a `--thinking high,off` list, runs one session per pair and prints one table (route, calls, thinking, tool call, the call after the tool load, cost, result). `--retention long` sets `PI_CACHE_RETENTION`.
 
+- A debug log, off by default: `JIG_BEDROCK_DEBUG=1` or `"debug": true` in `bedrock.json` writes one JSON line per request, discovery run and sign-in repair to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/debug.log` (model, region, route, HTTP status, AWS request id, duration, token counts, and for a failure the AWS error name and the first 300 characters of its message). It never holds a prompt, a reply, a credential or an authorization header; an account id in a message becomes `<account>` and an ARN its last segment. The file is private and is moved to `debug.log.1` at 5 MB.
+
 ### Changed
 
 - The usage program, its cache and its Bash/jq requirements are gone; `usageDir`/`JIG_BEDROCK_USAGE_DIR` are not settings, and an old `usageDir` key gets the unknown-key warning.

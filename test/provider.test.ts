@@ -68,6 +68,7 @@ test("the provider has no repository imports or internal environment dependencie
                     "JIG_BEDROCK_REGIONS",
                     "JIG_BEDROCK_TAG_KEY",
                     "JIG_BEDROCK_TAG_VALUE",
+                    "JIG_BEDROCK_DEBUG",
                 ].includes(name),
                 name,
             );

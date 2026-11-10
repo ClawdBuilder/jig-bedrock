@@ -12,9 +12,10 @@
 //   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
 //   converseModels     short model ids (claude-opus-5) that stay on Converse
 //   messagesModels     short model ids that go on Messages even where Pi does not list tool changes for them
+//   debug              write a request log (no prompts, no credentials) to the state folder's debug.log (default false)
 //
 // Environment variables override the settings: JIG_BEDROCK_TEAM, JIG_BEDROCK_PROFILE, JIG_BEDROCK_REGIONS (comma
-// separated).
+// separated); JIG_BEDROCK_DEBUG=1 turns the debug log on.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Check } from "./check.ts";
@@ -47,6 +48,8 @@ export interface ResolvedConfig {
     converseModels?: string[];
     /** Short model ids that go on Messages, for a model newer than the installed Pi knows. */
     messagesModels?: string[];
+    /** The debug log is on (the setting, or JIG_BEDROCK_DEBUG=1); a hand-written fixture may leave it out. */
+    debug?: boolean;
     agentDir?: string;
 }
 
@@ -79,6 +82,7 @@ export const FIELDS = [
     "api",
     "converseModels",
     "messagesModels",
+    "debug",
 ] as const;
 
 export const DEFAULTS = {
@@ -86,6 +90,7 @@ export const DEFAULTS = {
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
     signInAtStart: false,
     api: "messages" as BedrockApi,
+    debug: false,
 };
 
 /** A short model id: Claude's name and version, as in `claude-opus-5` or `claude-sonnet-5-5`. */
@@ -114,6 +119,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         api,
         converseModels,
         messagesModels,
+        debug,
     } = c;
     if (
         team !== undefined &&
@@ -204,6 +210,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         problems.push("bedrock.ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
     }
     if (typeof signInAtStart !== "boolean") problems.push("bedrock.signInAtStart must be true or false");
+    if (typeof debug !== "boolean") problems.push("bedrock.debug must be true or false");
     if (browser !== undefined && (typeof browser !== "string" || !browserPattern.test(browser))) {
         problems.push(
             "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)",
@@ -278,6 +285,7 @@ export function loadConfig(
         c.profile = env.JIG_BEDROCK_PROFILE;
         profileSource = "env";
     }
+    if (env.JIG_BEDROCK_DEBUG === "1") c.debug = true;
     if (env.JIG_BEDROCK_REGIONS !== undefined)
         c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
     if (typeof c.profile === "string" && c.profile.trim() === "") {
