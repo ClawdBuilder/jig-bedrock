@@ -262,6 +262,7 @@ export function createBedrockProvider(
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
         let autoProfile = false;
+        let autoProfileFailed = false;
         let afterProfileLogin:
             | ((
                   profile: string | undefined,
@@ -287,6 +288,7 @@ export function createBedrockProvider(
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
             });
         const auth = createProfileAuth(profiles, loginListProfiles, {
+            unavailable: () => autoProfileFailed,
             guided,
             afterLogin: (profile, interaction, signal) =>
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
@@ -399,6 +401,7 @@ export function createBedrockProvider(
                 const status = await catalog.refresh(force);
                 if (disposed) return status;
                 discoverySlow = status === "timeout";
+                autoProfileFailed = autoProfile && status !== "ok";
                 let failureNotice = false;
                 if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
                     failureNotice = true;
@@ -412,7 +415,7 @@ export function createBedrockProvider(
                                 : status === "credentials"
                                   ? `Bedrock: the AWS profile ${name} has no credentials.`
                                   : status === "sso_expired"
-                                    ? `Bedrock: the AWS profile ${name} sign-in expired.`
+                                    ? `Bedrock: sign-in expired for the AWS profile ${name}.`
                                     : status === "permission_denied"
                                       ? `Bedrock: the AWS profile ${name} was refused by AWS.`
                                       : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;

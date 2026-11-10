@@ -68,11 +68,20 @@ Done when: the last line is `Bedrock models loaded:` with a number above 0.
 
 ```text
 > sonnet-5-5
-→ claude-sonnet-5-5 (Claude Sonnet 5.5) [jig-bedrock]
-  claude-sonnet-5-5-global (Claude Sonnet 5.5 · global) [jig-bedrock]
+→ claude-sonnet-5-5-global [jig-bedrock]
+  claude-sonnet-5-5 [jig-bedrock]
+  claude-sonnet-5-global [jig-bedrock]
+  claude-sonnet-5 [jig-bedrock]
+  claude-sonnet-4-5 [jig-bedrock]
+  claude-sonnet-4-5-global [jig-bedrock]
+  Model Name: Claude Sonnet 5.5 · global
 ```
 
-Done when: Pi's footer shows `claude-sonnet-5-5`, and the month's spend under it (`Nov $0.00`).
+Move the arrow to the model you want with the arrow keys and press Enter. The `-global` id is an AWS global inference
+profile: AWS may send the request to any region worldwide, while the plain id stays in the region's own geography; the
+model and the package's price are the same.
+
+Done when: Pi's footer shows the chosen id, for example `claude-sonnet-5-5`, with `Nov $0.00` under it.
 
 **4. Check everything.**
 

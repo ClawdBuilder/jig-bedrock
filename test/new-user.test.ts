@@ -85,7 +85,7 @@ test("start-up with no profile names the setting and points to /login", async ()
 test("an automatically picked default profile that fails gets only the /login notice", async () => {
     const dir = home();
     try {
-        const { notices } = await startWith({
+        const { notices, providers } = await startWith({
             dir,
             listing: ["default"],
             refreshStatus: "credentials",
@@ -95,6 +95,15 @@ test("an automatically picked default profile that fails gets only the /login no
         const text = notices.join("\n");
         assert.match(text, /Bedrock: run \/login, choose Amazon Bedrock \(jig-bedrock\), then \/model\./);
         assert.doesNotMatch(text, /has no credentials|Warning/);
+        const provider = providers.find((entry) => entry?.id === "jig-bedrock");
+        assert.equal(
+            await provider.auth.apiKey.resolve({
+                credential: undefined,
+                signal: new AbortController().signal,
+            }),
+            undefined,
+            "Pi lists the provider as not configured after the automatic profile failed",
+        );
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -125,7 +134,7 @@ test("a chosen profile with an expired sign-in or a refusal says so by name", as
             refreshStatus: "sso_expired",
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
         });
-        assert.match(expired.notices.join("\n"), /the AWS profile work-profile sign-in expired\./);
+        assert.match(expired.notices.join("\n"), /Bedrock: sign-in expired for the AWS profile work-profile\./);
         const refused = await startWith({
             dir,
             listing: ["work-profile"],
@@ -242,4 +251,24 @@ test("the doctor keeps symbols when NO_COLOR is set", async () => {
     ]);
     assert.match(text, /✗ AWS profile:/);
     assert.doesNotMatch(text, /failure AWS profile:/);
+});
+
+test("an automatically picked default profile that works stays configured", async () => {
+    const dir = home();
+    try {
+        const { providers } = await startWith({
+            dir,
+            listing: ["default"],
+            refreshStatus: "ok",
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
+        });
+        const provider = providers.find((entry) => entry?.id === "jig-bedrock");
+        const resolved = await provider.auth.apiKey.resolve({
+            credential: undefined,
+            signal: new AbortController().signal,
+        });
+        assert.equal(resolved?.source, "the default profile");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });

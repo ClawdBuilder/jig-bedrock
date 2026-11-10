@@ -266,6 +266,8 @@ export function createProfileAuth(
             interaction: ProviderAuthInteraction,
             signal: AbortSignal,
         ) => Promise<void>;
+        /** The automatically picked profile failed its last check; Pi should list the provider as not configured. */
+        unavailable?: () => boolean;
     } = {},
 ): ProviderAuth {
     return {
@@ -287,6 +289,12 @@ export function createProfileAuth(
                         credential.env?.AWS_PROFILE === undefined,
                 );
                 const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });
+                const automatic =
+                    choice.ambient === true ||
+                    choice.source === "default" ||
+                    choice.source === "AWS_PROFILE" ||
+                    choice.source === "AWS_DEFAULT_PROFILE";
+                if (automatic && options.unavailable?.() === true) return undefined;
                 if (choice.ambient === true) return { auth: {}, source: "AWS credential chain" };
                 if (!choice.profile || choice.problem !== undefined || choice.exists === false) return undefined;
                 return { auth: {}, env: { AWS_PROFILE: choice.profile }, source: sourceLabel(choice.source) };
