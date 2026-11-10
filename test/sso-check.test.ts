@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, test } from "node:test";
-import type { CredentialProvider } from "../src/pi-host.ts";
+import type { CredentialProvider } from "../src/credential-provider.ts";
 import type { SsoCheckDeps } from "../src/sso-check.ts";
 import { checkSso, classify, ssoKey, tokenFresh } from "../src/sso-check.ts";
 import { registerSignInAtStart } from "../src/start-sign-in.ts";
@@ -107,7 +107,7 @@ describe("the check", () => {
             home,
             readText: (file) => readFileSync(file, "utf8"),
             now: () => NOW,
-            credentialProvider: () =>
+            credentialProvider: async () =>
                 ((init: { profile: string }) => {
                     provided.push(init);
                     return provider;
@@ -169,7 +169,7 @@ describe("the check", () => {
         };
         assert.equal(await checkSso("my-bedrock-profile", setup().deps(failing)), "error");
         const noSdk = setup(undefined, {
-            credentialProvider: () => {
+            credentialProvider: async () => {
                 throw new Error("Pi's install was not found");
             },
         });
@@ -227,7 +227,7 @@ describe("the check", () => {
             home,
             readText: (file) => readFileSync(file, "utf8"),
             now: () => NOW,
-            credentialProvider: () =>
+            credentialProvider: async () =>
                 ((init: { profile: string }) => {
                     assert.equal(init.profile, "static-keys");
                     providerCalls++;

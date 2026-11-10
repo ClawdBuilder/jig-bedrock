@@ -1,13 +1,8 @@
-// Tests resolve Pi's host packages from the installed Pi (scripts/pi-host-dir.mjs), as Pi maps them for extensions at runtime.
+// Tests resolve Pi's host packages from the Pi installed as a development dependency (test/support/pi-host-dir.mjs), as Pi maps them for extensions at runtime.
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-// Tests use the Pi package this repository installs as a dev dependency. A contributor's machine may also have a global
-// Pi beside node; a CI runner does not, so resolve the local package here before any test imports Pi's modules. The
-// extension's own runtime lookup is unchanged: it still uses PI_HOST_DIR or the install beside node.
-process.env.PI_HOST_DIR = path.resolve(import.meta.dirname, "../../node_modules/@earendil-works/pi-coding-agent");
 
 // Node 26 deprecates module.register(); registerHooks takes the same resolve hook without the loader warning.
 const hostHooks = await import("./host-hooks.mjs");
