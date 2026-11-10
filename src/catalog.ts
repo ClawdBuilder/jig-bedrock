@@ -442,7 +442,10 @@ export function discoveredProfiles(
                 arn: p.arn,
                 foundationModelId: p.foundation_model_id,
                 aliases: chosen?.alias === undefined ? [] : [chosen.alias],
-                name: registryName(r.name) + (p === preferred ? "" : ` (${p.region}, ${p.profile_name})`),
+                name:
+                    p.kind === "application"
+                        ? p.profile_name.slice(0, 40)
+                        : `${registryName(r.name)}${id === key ? "" : ` · ${id.slice(key.length).replace(/^-/, "")}`}`,
                 api: messages ? "anthropic-messages" : "bedrock-converse-stream",
                 baseUrl: messages
                     ? `https://bedrock-runtime.${p.region}.amazonaws.com/anthropic`
@@ -467,6 +470,14 @@ export function discoveredProfiles(
                 ...(promptCache ? { promptCache } : {}),
                 ...(thinkingLevelMap(r.thinkingLevelMap, p.foundation_model_id) ?? {}),
             });
+        }
+    }
+    const names = new Map<string, number>();
+    for (const model of available) names.set(model.name, (names.get(model.name) ?? 0) + 1);
+    for (const model of available) {
+        if ((names.get(model.name) ?? 0) > 1) {
+            const region = model.arn.split(":")[3] ?? "";
+            model.name = region === "" ? model.name : `${model.name} · ${region}`;
         }
     }
     return { available, unavailable };
@@ -689,7 +700,7 @@ export function registerBedrockSelectionGuard(
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
-        "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh.";
+        "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
     const warning = () => (options.discoverySlow?.() === true ? slowWarning : unavailableWarning);
     // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
     // built-in model and must be left alone.

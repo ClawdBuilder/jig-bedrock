@@ -1,5 +1,5 @@
 // The doctor's four marks, with this package's fallbacks: symbols on a UTF-8 terminal, words when
-// NO_COLOR is set, TERM=dumb, or the locale cannot be assumed to be UTF-8 (CI logs, a C locale, a redirected pipe).
+// TERM=dumb or the locale cannot be assumed to be UTF-8 (CI logs, a C locale). NO_COLOR only removes colour.
 export interface Markers {
     ok: string;
     warn: string;
@@ -16,7 +16,6 @@ export function utf8Locale(locale: string | undefined): boolean {
 }
 
 export function markers(env: NodeJS.ProcessEnv = process.env): Markers {
-    const noColor = env.NO_COLOR !== undefined && env.NO_COLOR !== "";
     const locale = env.LC_ALL ?? env.LC_CTYPE ?? env.LANG;
-    return noColor || env.TERM === "dumb" || !utf8Locale(locale) ? WORDS : SYMBOLS;
+    return env.TERM === "dumb" || !utf8Locale(locale) ? WORDS : SYMBOLS;
 }

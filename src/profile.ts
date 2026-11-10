@@ -85,11 +85,11 @@ export function createListProfiles(
 export function loginOutcomeMessage(modelCount: number, settled: boolean): string {
     if (modelCount > 0) return `Bedrock models loaded: ${modelCount}. Choose one with /model.`;
     return settled
-        ? "Bedrock models are not loaded yet; run /aws-login, then /bedrock-refresh."
+        ? "Bedrock models are not loaded yet; run /bedrock login, then /bedrock refresh."
         : "Loading Bedrock models; /model lists them in a moment.";
 }
 
-/** One slow CLI start serves the /aws-login preflight and the recovery that follows it; a failure is retried. */
+/** One slow CLI start serves the /bedrock login preflight and the recovery that follows it; a failure is retried. */
 export function memoizedList(list: ListProfiles, ttlMs = 5_000, now = Date.now): ListProfiles {
     let cached: { at: number; value: Promise<string[] | undefined> } | undefined;
     return (signal) => {
@@ -266,31 +266,42 @@ export function createProfileAuth(
             interaction: ProviderAuthInteraction,
             signal: AbortSignal,
         ) => Promise<void>;
+        /** The automatically picked profile failed its last check; Pi should list the provider as not configured. */
+        unavailable?: () => boolean;
     } = {},
 ): ProviderAuth {
-    return {
-        apiKey: {
-            name: "AWS profile",
-            // /login may wait for the AWS CLI; the resolver's cached listing keeps a short timeout for start-up.
-            login: async (interaction) => {
-                const credential = options.guided
-                    ? await options.guided(interaction)
-                    : await loginWithProfile(interaction, loginList ?? ((signal) => resolver.listing(signal)));
-                await options.afterLogin?.(credential.env?.AWS_PROFILE, interaction, interaction.signal);
-                return credential;
-            },
-            // Pi asks this before each request and for /model; the listing is cached, so it is a local check.
-            resolve: async ({ credential, signal }) => {
-                resolver.setAmbientCredential(
-                    credential !== undefined &&
-                        credential.key === undefined &&
-                        credential.env?.AWS_PROFILE === undefined,
-                );
-                const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });
-                if (choice.ambient === true) return { auth: {}, source: "AWS credential chain" };
-                if (!choice.profile || choice.problem !== undefined || choice.exists === false) return undefined;
-                return { auth: {}, env: { AWS_PROFILE: choice.profile }, source: sourceLabel(choice.source) };
-            },
+    const resolve: NonNullable<ProviderAuth["apiKey"]>["resolve"] = async ({ credential, signal }) => {
+        resolver.setAmbientCredential(
+            credential !== undefined && credential.key === undefined && credential.env?.AWS_PROFILE === undefined,
+        );
+        const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });
+        const automatic =
+            choice.ambient === true ||
+            choice.source === "default" ||
+            choice.source === "AWS_PROFILE" ||
+            choice.source === "AWS_DEFAULT_PROFILE";
+        if (automatic && options.unavailable?.() === true) return undefined;
+        if (choice.ambient === true) return { auth: {}, source: "AWS credential chain" };
+        if (!choice.profile || choice.problem !== undefined || choice.exists === false) return undefined;
+        return { auth: {}, env: { AWS_PROFILE: choice.profile }, source: sourceLabel(choice.source) };
+    };
+    const apiKey: NonNullable<ProviderAuth["apiKey"]> = {
+        name: "AWS profile",
+        // /login may wait for the AWS CLI; the resolver's cached listing keeps a short timeout for start-up.
+        login: async (interaction) => {
+            const credential = options.guided
+                ? await options.guided(interaction)
+                : await loginWithProfile(interaction, loginList ?? ((signal) => resolver.listing(signal)));
+            await options.afterLogin?.(credential.env?.AWS_PROFILE, interaction, interaction.signal);
+            return credential;
+        },
+        // Pi asks this before each request and for /model; the listing is cached, so it is a local check.
+        resolve,
+        // Pi's /login provider list reads the check result; the same rule decides whether it is configured.
+        check: async (input) => {
+            const resolved = await resolve(input);
+            return resolved === undefined ? undefined : { type: "api_key" as const, source: resolved.source };
         },
     };
+    return { apiKey };
 }

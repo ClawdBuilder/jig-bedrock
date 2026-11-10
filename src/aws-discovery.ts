@@ -12,6 +12,7 @@ export type Status =
     | "sso_expired"
     | "permission_denied"
     | "configuration"
+    | "credentials"
     | "network"
     | "timeout"
     | "unavailable";
@@ -40,30 +41,36 @@ export function category(error: unknown): Status {
     const m = String(error).toLowerCase();
     return /access.?denied|not authorized to perform|unauthorizedoperation/.test(m)
         ? "permission_denied"
-        : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
-          ? "configuration"
-          : /sso|token/.test(m) && /expired|invalid|login|unauthorized|does not exist/.test(m)
-            ? "sso_expired"
-            : /timeout|timed out/.test(m)
-              ? "timeout"
-              : /network|connect|dns|resolve|unreachable|proxy/.test(m)
-                ? "network"
-                : "unavailable";
+        : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
+                m,
+            )
+          ? "credentials"
+          : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
+            ? "configuration"
+            : /sso|token/.test(m) && /expired|invalid|login|unauthorized|does not exist/.test(m)
+              ? "sso_expired"
+              : /timeout|timed out/.test(m)
+                ? "timeout"
+                : /network|connect|dns|resolve|unreachable|proxy/.test(m)
+                  ? "network"
+                  : "unavailable";
 }
 export function discoveryHelp(status: Status): string {
     switch (status) {
         case "sso_expired":
-            return "Run /aws-login, finish browser sign-in, then /bedrock-refresh.";
+            return "Run /bedrock login, finish browser sign-in, then /bedrock refresh.";
         case "permission_denied":
-            return "Ask your AWS administrator to check catalog read permissions for the configured profile; then /bedrock-refresh.";
+            return "Ask your AWS administrator to check catalog read permissions for the configured profile; then /bedrock refresh.";
         case "configuration":
-            return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock-refresh.";
+            return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
+        case "credentials":
+            return "Add credentials to the AWS profile, or run /bedrock login to choose another profile.";
         case "network":
-            return "Check network access to AWS, then /bedrock-refresh.";
+            return "Check network access to AWS, then /bedrock refresh.";
         case "timeout":
-            return "AWS discovery timed out; check network access, then /bedrock-refresh.";
+            return "AWS discovery timed out; check network access, then /bedrock refresh.";
         default:
-            return "Check AWS access and the configuration in README.md, then /bedrock-refresh.";
+            return "Check AWS access and the configuration in README.md, then /bedrock refresh.";
     }
 }
 class StepError extends Error {
@@ -101,7 +108,7 @@ export function problemSummary(errors: Array<{ profile: string; message: string 
     if (errors.length === 0) return undefined;
     const short = (profile: string) => profile.slice(profile.lastIndexOf("/") + 1) || profile;
     const shown = errors.slice(0, limit).map((entry) => `${short(entry.profile)}: ${entry.message}`);
-    const rest = errors.length > limit ? `; and ${errors.length - limit} more: /bedrock-profiles lists them` : "";
+    const rest = errors.length > limit ? `; and ${errors.length - limit} more: /bedrock models lists them` : "";
     return `Could not read ${shown.join("; ")}${rest}.`;
 }
 
@@ -109,6 +116,7 @@ function reasonOf(error: unknown): string {
     if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
+    if (status === "credentials") return "the AWS profile has no credentials";
     if (status === "configuration") return "the AWS configuration is missing or wrong";
     if (status === "network") return "AWS could not be reached";
     if (status === "timeout") return "AWS timed out";

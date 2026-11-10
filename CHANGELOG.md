@@ -2,67 +2,54 @@
 
 ## [Unreleased]
 
-### Added
+## [0.3.0] - 2026-11-11
 
-- `/bedrock` with `status`, `doctor [offline|call]`, `models`, `refresh`, `login`, `usage`, `budget`, `settings`, `set`, `unset`, `migrate`, `help`, argument completions and closest-name help. The old command names still work and name their replacement.
-- The doctor now has a verdict, plain named failures and one `Next:`; it can skip AWS or send one tiny call.
-- The first session in an agent folder with no profile shows one `/login` notice, once.
-- The spend table is per model with tokens and cache share, at most eight rows; the import also reads 0.2.x `amazon-bedrock` + ARN replies and maps them through the catalog.
-
-### Changed
-
-- AWS-defined models now have short second ids (`claude-haiku-4-5-global`), with the old long id kept as an alias when two profiles would otherwise collide.
-- `/bedrock` exists with broken settings; `status`, `doctor`, `settings`, `set` and `unset` can repair it.
-- Spend amounts under one cent print `<$0.01`, budgets start at $1, and a `Next:` line appears only when there is an action.
-- Settings writes validate first, use mode 0600 and apply at once where possible.
-- The startup warning about unusable profiles is gone; those rows are in `/bedrock models` and counted by `/bedrock status`.
+**Updating from 0.2.5.** The settings file moved from the `bedrock` section of `jig.json` to `bedrock.json`. Run `/bedrock migrate` once; it copies the section and leaves the old file alone. The old command names (`/bedrock-doctor`, `/bedrock-usage`, `/bedrock-stats`, `/bedrock-profiles`, `/bedrock-refresh`, `/aws-login`) still work for this release only and name their replacement.
 
 ### Added
 
-- A local spend record: one private JSONL line per Bedrock reply under the user's state folder, with the month, session, short model id, region, route, token counts, Pi's cost and a priced flag. Earlier replies in this agent's session files are imported once, bounded and marked.
-- `/bedrock usage [day|week|month]` and `/bedrock budget [amount|off]`; `/bedrock-usage` and `/bedrock-stats` call the same code. The footer shows the month's local spend and budget, with warning/error colours; the budget notices are once per threshold per month per machine.
-- `spendCommand` can supply this month's spend from a command the user names; it runs without a shell, at most every ten minutes, and its JSON contract is documented with an example.
-- `converseModels` and `messagesModels` settings: short model ids (for example `claude-opus-5`) that stay on Converse, and short model ids that go on Messages for a model newer than the installed Pi knows. A model on both lists is an error.
-- `routeOf` in `src/catalog.ts` answers which route a model uses and why, in a few words ("Pi lists tool changes", "not on the Messages route", "your setting", "this Pi does not know the model", "known exception"); the model list uses it, so there is one rule.
-- `scripts/real-check-messages.mjs` takes a comma-separated list of models and a `--thinking high,off` list, runs one session per pair and prints one table (route, calls, thinking, tool call, the call after the tool load, cost, result). `--retention long` sets `PI_CACHE_RETENTION`.
-
-- A debug log, off by default: `JIG_BEDROCK_DEBUG=1` or `"debug": true` in `bedrock.json` writes one JSON line per request, discovery run and sign-in repair to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/debug.log` (model, region, route, HTTP status, AWS request id, duration, token counts, and for a failure the AWS error name and the first 300 characters of its message). It never holds a prompt, a reply, a credential or an authorization header; an account id in a message becomes `<account>` and an ARN its last segment. The file is private and is moved to `debug.log.1` at 5 MB.
+- One `/bedrock` command with `status`, `doctor [offline|call]`, `models`, `refresh`, `login`, `usage`, `budget`, `settings`, `set`, `unset`, `migrate` and `help`, argument completions and closest-name suggestions.
+- `/bedrock doctor` ends with `Bedrock is ready.` or a plain problem count and one `Next:`; `doctor offline` skips AWS, and `doctor call` sends one tiny request after saying that it costs a fraction of a cent.
+- A local spend record, `/bedrock usage [day|week|month]` per model with tokens and cache share, and `/bedrock budget [amount|off]` in Pi's footer. Amounts under one cent print `<$0.01`, and the budget is a display figure, not an AWS limit.
+- `spendCommand` can supply this month's spend from a command you name; it runs without a shell at most every ten minutes.
+- A debug log, off by default: `"debug": true` in `bedrock.json` or `JIG_BEDROCK_DEBUG=1` writes a private request log with model, region, route, status, AWS request id, duration and token counts, never prompts, replies or credentials.
+- `converseModels` and `messagesModels` let you keep a model on Converse or force Messages. A model on both lists is an error.
+- A first-session notice in a new agent folder: `Bedrock: run /login, choose Amazon Bedrock (jig-bedrock), then /model.` It is shown once.
 
 ### Changed
 
-- The usage program, its cache and its Bash/jq requirements are gone; `usageDir`/`JIG_BEDROCK_USAGE_DIR` are not settings, and an old `usageDir` key gets the unknown-key warning.
-- Prices come from Pi's model registry. A model with no price is still listed, marked no price, and its replies count as unpriced.
-
-- The package stands alone: `bedrock.json` and the `JIG_BEDROCK_*` environment are the only settings sources; the Jig settings section, the optional Jig API, the custom `jig-theme`/`jig-lens` events and the Jig development dependency are gone.
-- `tagKey` and `tagValue` are the generic tag filter; a 0.2.x `team` value is still read once as `tagKey: "Team"`, `tagValue: <team>`, `activeTagKey: "Active"`, `activeTagValue: "true"`.
-- `signInAtStart` now defaults to false; a browser is not opened because Pi started.
-- This package sits beside Pi's built-in Amazon Bedrock provider instead of hiding its models. An AWS profile or SSO signs in this package; a Bedrock API key is used through Pi's built-in provider.
-- A reply is recorded as `jig-bedrock/<short model id>`, while the inference-profile ARN goes on the wire. Sessions written by 0.2.x with the built-in provider and an ARN resume on the same model; built-in sessions with a plain id are left alone.
-- A one-release migration reads a 0.2.x `jig.json` only to show one notice and copy its `bedrock` section to `bedrock.json` through `/bedrock migrate`; the copy is private and never overwrites an existing file.
-- The subagent-child environment check and the remaining internal names were removed; the scan still covers the public tree.
-- The AWS SDK's credential chain (`@aws-sdk/credential-provider-node`) is now this package's own dependency, installed with it, instead of being looked up in Pi's install folder. A new Pi that moves or drops that dependency no longer breaks sign-in checks or signed requests; the install is about 5 MB larger. `PI_HOST_DIR` is no longer read.
-- **Route by model.** A Claude model uses the Messages route (which keeps the prompt cache when a tool is loaded in the middle of a session) when Pi's own Anthropic entry for it lists mid-conversation tool changes; every other model uses Converse. The rule is the same for AWS-defined and application profiles; AWS-defined profiles are no longer kept on Converse for being AWS-defined. On the real runs of 2026-11-10 (a prompt of about 34,000 tokens), the first request after a tool load read 34,216 tokens from the cache on Messages and wrote 275, where Converse wrote 34,321 (a session cost of $0.0051 against $0.0090). That holds today for Haiku 5.5, Sonnet 5.5, Opus 5.5 and Opus 4.8. Pi lists the flag for the Fable models too, so they use Messages, but the real run could not test them: an account data-retention setting refused them on both routes. Sonnet 5, Opus 4.7, Opus 4.6, Sonnet 4.6 and Haiku 4.5 return a 400 on Messages as soon as a tool is loaded mid-session, and Opus 4.5, Sonnet 4.5 and Opus 4.1 return a 404, so they use Converse. Opus 5 has the flag but returned a 400 on Messages with thinking high, so it uses Converse until that is understood. A model the installed Pi does not list uses Converse.
-- The Messages route no longer claims mid-conversation system messages and tool changes for every model; it copies them from Pi's entry, as it already did for the effort flag.
-- On the Messages route a model declares only the 5-minute cache lifetime. The route does not send the 1-hour checkpoint (Pi's `ttl: "1h"` stays off for it), so the model-switch notice prices a Messages model's cache write at the 5-minute rate and expects its cache to expire after 5 minutes, whatever `PI_CACHE_RETENTION` says; Pi's cache warming no longer plans for an hour on those models. Converse models keep both lifetimes.
+- Claude models now use the Messages route when Pi lists mid-conversation tool changes for them; the other models use Converse. In the measured run of 2026-11-10 (about 34,000 tokens), the first request after a tool load read 34,216 tokens from the cache on Messages and wrote 275, where Converse wrote 34,321; the session cost $0.0051 against $0.0090. The same rule applies to AWS-defined and application inference profiles.
+- Model menu names are short: `Claude Sonnet 5.5`, `Claude Sonnet 5.5 · global`, and an application profile's own name.
+- AWS-defined profiles now have short second ids such as `claude-haiku-4-5-global`; the old long id still selects the same profile.
+- `/login` asks for "inference profiles" and "AWS profile" instead of bare "profiles", and signing in loads the models so `/model` can list them at once.
+- An automatically picked AWS profile that fails shows only the once-per-folder `/login` notice. A profile you chose names the fault: no credentials, an expired sign-in, or a refusal by AWS.
+- `NO_COLOR` removes colour only; the ✓/✗/– marks stay unless `TERM=dumb` or the locale is not UTF-8.
+- Budgets start at $1, settings are validated before they are written, and a `Next:` line appears only when there is an action.
+- AWS profile names are read from the AWS config and credentials files instead of starting the AWS CLI at every Pi start.
+- With `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, the default profile or environment credentials already set, a cached model list made for that profile is available at Pi start, so `--model`, `--list-models` and print mode see it.
+- A start-up refresh that finds no change says nothing. When the list really changes it says one line, and if the selected model is gone it says which model and asks you to choose another with `/model`.
+- The catalog cache follows `XDG_CACHE_HOME` and works when your cache or home folder is a link.
+- This package sits beside Pi's built-in Bedrock provider; its models, sign-in and Bedrock API key keep working.
+- A `team` value from 0.2.x is still read once as the tag pair (`tagKey: "Team"`, `tagValue: <team>`, `activeTagKey: "Active"`, `activeTagValue: "true"`).
 
 ### Fixed
 
-- Converse requests no longer use an ambient `AWS_BEARER_TOKEN_BEDROCK`: Pi's Converse client reads it through `getProviderEnvValue`, where an empty scoped value falls back to `process.env`. The package hides that variable only while its own Converse request is in flight, signs with the configured AWS profile, and restores the variable on the response or stream end, so the built-in provider still sees it. The Messages signed fetch already removes `Authorization` and signs with SigV4; a real HTTP-layer test covers both routes.
-- Adding a profile to `~/.aws/config` from `/login` now keeps a separate backup for each write, named with the time (for example `config.jig-bedrock-backup-20261110T171500Z`), instead of replacing one backup each time. The five newest are kept and older ones this package made are deleted; no other file is touched. The old `config.jig-bedrock.bak` is left where it is.
-- A config file that is a symbolic link (for example into a dotfiles folder) is written through: its target gets the new profile and the link stays a link, where before it was replaced by a plain file.
-- Two Pi processes can no longer write the config at the same moment: a lock file beside it is held during the write, and a second writer is told "Another program is changing <file>; try again." A lock older than 30 seconds is treated as left by a crashed writer and taken over.
-- Application profiles of Sonnet 5, Sonnet 4.6, Sonnet 4.5, Opus 4.7, Opus 4.6, Opus 4.5, Opus 4.1 and Haiku 4.5 (0.2.4 and 0.2.5 sent every application profile to Messages) no longer fail with a 400 or 404 once a tool is loaded mid-session; they use Converse.
-- `scripts/real-check-messages.mjs --team` wrote `team` together with `tagKey` and `tagValue`, which the settings reject; it writes the tag pair only.
+- A real `AWS_BEARER_TOKEN_BEDROCK` no longer reaches a Converse request: the package signs with your AWS profile and restores the variable afterwards for Pi's built-in provider. The Messages route already signs its requests and removes the client's key headers.
+- Application inference profiles no longer fail with a 400 or 404 after a tool is loaded mid-session; they follow the same route rule as AWS-defined profiles.
+- Writing a new SSO profile from `/login` keeps a separate timestamped backup, writes through a symbolic link instead of replacing it, and takes a lock so two Pi processes do not write at once.
+- The catalog cache and the SSO runtime folder work when `~/.cache`, `~/.local` or `~/.local/state` is a link, as on macOS.
+- A config file with a link in its path is no longer ignored, and a missing or unusable profile is named in plain words instead of "unexpected answer".
 
-- Starting Pi with this package is much faster. It ran `aws configure list-profiles` several times at once at every start (each run takes over a second), and Pi waited for them. The profile names are now read from the AWS config and credentials files (`[default]`, `[profile NAME]`, `[NAME]`), so no program starts at Pi's start-up, in `/login` or in `/bedrock-doctor` for the profile list. Model discovery still starts the AWS CLI in the background when no fresh catalog is cached.
+### Removed
 
-- The catalog cache now works when your cache folder is a link (`~/.cache` on another disk, or the temporary folder under `/var` on macOS). Before, any link in the path made the package ignore its cache, so discovery ran again at every start. The folder you name (`XDG_CACHE_HOME`, else `~/.cache`) is followed; the package's own `jig-bedrock` folder and the file in it must still not be links. The cache now follows `XDG_CACHE_HOME`, which it ignored before. The SSO sign-in's runtime folder follows a link at your home, `~/.local` or `~/.local/state` the same way.
+- The old usage program and its cache and Bash/jq requirements; `usageDir` and `JIG_BEDROCK_USAGE_DIR` are gone.
+- The Jig settings section, optional Jig API, custom Jig theme/lens events and Jig development dependency.
+- Starting `aws configure list-profiles` at Pi start-up, in `/login` and in `/bedrock doctor`; profile names are read from files.
+- The startup warning about unusable profiles; they are listed by `/bedrock models` and counted by `/bedrock status`.
 
 ### Development
 
-- CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.
-- The tests no longer leave a `jig-bedrock-isolated-*` folder (and whatever a test forgot to remove) in the system temporary folder: each test process makes its own and removes it when it exits.
-- The tests use the real path of the system temporary folder, so they pass where it is a link (macOS), and read Pi's prompt-cache lifetime function from `pi-ai` when Pi 1.5.2 or later exports it there.
+- Tests, CI and scripts: CI runs the oldest and newest supported Pi, the packed-install check runs the whole command screens, and macOS is covered. Tests no longer leave temporary folders behind.
 
 ## [0.2.5] - 2026-11-10
 

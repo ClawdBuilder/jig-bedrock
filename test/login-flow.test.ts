@@ -52,7 +52,7 @@ const profileAnswer = (name: string) => (prompt: Prompt) =>
         ? ""
         : prompt.message?.includes("How do you sign in to AWS?")
           ? "existing"
-          : prompt.message === "Which Bedrock profiles should be listed?"
+          : prompt.message === "Which inference profiles should Bedrock list?"
             ? "system"
             : `profile:${name}`;
 
@@ -86,7 +86,7 @@ test("access keys are set up in a terminal, then listed again and verified", asy
               ? ""
               : prompt.message?.includes("How do you sign in to AWS?")
                 ? "keys"
-                : prompt.message === "Which Bedrock profiles should be listed?"
+                : prompt.message === "Which inference profiles should Bedrock list?"
                   ? "system"
                   : "profile:keys",
     );
@@ -111,7 +111,7 @@ test("a role profile is explained, then listed again and verified", async () => 
               ? ""
               : prompt.message?.includes("How do you sign in to AWS?")
                 ? "role"
-                : prompt.message === "Which Bedrock profiles should be listed?"
+                : prompt.message === "Which inference profiles should Bedrock list?"
                   ? "system"
                   : "profile:role",
     );
@@ -137,7 +137,7 @@ test("access-key guidance waits for confirmation before listing, and the new pro
             return "ready";
         }
         if (prompt.message?.includes("How do you sign in to AWS?")) return "keys";
-        if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
         return "profile:new-keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -167,7 +167,7 @@ test("Back on the guidance returns to the methods without listing again", async 
     const fake = interaction((prompt) => {
         if (isGuidance(prompt)) return "back";
         if (prompt.message?.includes("How do you sign in to AWS?")) return methods++ === 0 ? "role" : "existing";
-        if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -190,7 +190,7 @@ test("an SSO profile signs in first, then verifies, and only SSO profiles are li
     const fake = interaction((prompt) =>
         prompt.message?.includes("How do you sign in to AWS?")
             ? "sso"
-            : prompt.message === "Which Bedrock profiles should be listed?"
+            : prompt.message === "Which inference profiles should Bedrock list?"
               ? "system"
               : "profile:demo-sso",
     );
@@ -204,7 +204,7 @@ test("an SSO profile signs in first, then verifies, and only SSO profiles are li
     assert.deepEqual(signed, ["demo-sso"]);
     assert.deepEqual(credential.env, { AWS_PROFILE: "demo-sso" });
     const optionsShown = fake.prompts.find(
-        (prompt) => prompt.message === "Which SSO profile do you want to sign in to?",
+        (prompt) => prompt.message === "Which AWS SSO profile do you want to sign in to?",
     );
     assert.ok(optionsShown);
 });
@@ -213,12 +213,12 @@ test("a typed non-SSO profile is refused before any sign-in", async () => {
     let ssoAttempts = 0;
     const fake = interaction((prompt) => {
         if (prompt.message?.includes("How do you sign in to AWS?")) return "sso";
-        if (prompt.message === "Which SSO profile do you want to sign in to?") {
+        if (prompt.message === "Which AWS SSO profile do you want to sign in to?") {
             ssoAttempts++;
             return ssoAttempts === 1 ? "type" : "profile:demo-sso";
         }
         if (prompt.message === "AWS profile name") return "keys";
-        if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
         return "";
     });
     let signed = 0;
@@ -238,7 +238,7 @@ test("the credential chain verifies with no profile and stores no profile", asyn
     const fake = interaction((prompt) =>
         prompt.message?.includes("How do you sign in to AWS?")
             ? "chain"
-            : prompt.message === "Which Bedrock profiles should be listed?"
+            : prompt.message === "Which inference profiles should Bedrock list?"
               ? "system"
               : "",
     );
@@ -258,7 +258,7 @@ test("a Bedrock API key is refused, and the flow offers the methods again", asyn
     let method = 0;
     const fake = interaction((prompt) => {
         if (prompt.message?.includes("How do you sign in to AWS?")) return method++ === 0 ? "key" : "existing";
-        if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, options());
@@ -274,7 +274,7 @@ test("a failed check says so and asks again", async () => {
     let attempt = 0;
     const fake = interaction((prompt) => {
         if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
-        if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -302,7 +302,7 @@ test("tag and explicit discovery choices are saved with the regions", async () =
         const saved: DiscoverySettings[] = [];
         const fake = interaction((prompt) => {
             if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
-            if (prompt.message === "Which Bedrock profiles should be listed?") return mode;
+            if (prompt.message === "Which inference profiles should Bedrock list?") return mode;
             if (prompt.message === "Tag key") return answers[0]!;
             if (prompt.message === "Tag value") return answers[1]!;
             if (prompt.message === "Profile ARNs or ids (comma separated)") return answers[0]!;
@@ -329,7 +329,7 @@ test("no prompt ever asks for a secret and no credential carries a key", async (
         const fake = interaction((prompt) => {
             if (isGuidance(prompt)) return "ready";
             if (prompt.message?.includes("How do you sign in to AWS?")) return method;
-            if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+            if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
             return method === "sso" ? "profile:demo-sso" : "profile:keys";
         });
         const credential = await runLoginFlow(fake.value as never, options());
@@ -350,14 +350,14 @@ const ssoAnswers =
         const text = prompt.message ?? "";
         if (text.includes("How do you sign in to AWS?")) return "sso-new";
         if (text.includes("Add these lines")) return "write";
-        if (text.includes("New SSO profile name")) return overrides.name ?? "team-sso";
+        if (text.includes("New AWS SSO profile name")) return overrides.name ?? "team-sso";
         if (text.includes("SSO session name")) return overrides.session ?? "team";
         if (text.includes("SSO start URL")) return overrides.url ?? "https://my-sso-portal.awsapps.com/start";
         if (text.includes("SSO region")) return overrides.ssoRegion ?? "us-east-1";
         if (text.includes("SSO account ID")) return overrides.account ?? "123456789012";
         if (text.includes("SSO role name")) return overrides.role ?? "ReadOnly";
-        if (text.includes("Profile region")) return overrides.region ?? "us-east-1";
-        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text.includes("AWS profile region")) return overrides.region ?? "us-east-1";
+        if (text.includes("Which inference profiles should Bedrock list?")) return "system";
         if (text === "AWS regions for discovery (comma separated)") return "";
         return "";
     };
@@ -397,14 +397,14 @@ test("Back on the new SSO lines writes nothing and returns to the methods", asyn
         const text = prompt.message ?? "";
         if (text.includes("How do you sign in to AWS?")) return methods++ === 0 ? "sso-new" : "existing";
         if (text.includes("Add these lines")) return "back";
-        if (text.includes("New SSO profile name")) return "team-sso";
+        if (text.includes("New AWS SSO profile name")) return "team-sso";
         if (text.includes("SSO session name")) return "team";
         if (text.includes("SSO start URL")) return "https://my-sso-portal.awsapps.com/start";
         if (text.includes("SSO region")) return "us-east-1";
         if (text.includes("SSO account ID")) return "123456789012";
         if (text.includes("SSO role name")) return "ReadOnly";
-        if (text.includes("Profile region")) return "us-east-1";
-        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text.includes("AWS profile region")) return "us-east-1";
+        if (text.includes("Which inference profiles should Bedrock list?")) return "system";
         if (text === "AWS regions for discovery (comma separated)") return "";
         if (text === "Which AWS profile should Bedrock use?") return "profile:keys";
         return "";
@@ -429,7 +429,7 @@ test("a bad SSO account ID is reported before anything is written", async () => 
         if ((prompt.message ?? "").includes("How do you sign in to AWS?"))
             return methods++ === 0 ? "sso-new" : "existing";
         if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
-        if ((prompt.message ?? "").includes("Which Bedrock profiles should be listed?")) return "system";
+        if ((prompt.message ?? "").includes("Which inference profiles should Bedrock list?")) return "system";
         if (prompt.message === "AWS regions for discovery (comma separated)") return "";
         return ssoAnswers({ account: "12" })(prompt);
     });
@@ -456,13 +456,13 @@ test("a new role profile shows role_arn and source_profile, writes after confirm
         const text = prompt.message ?? "";
         if (text.includes("How do you sign in to AWS?")) return "role-new";
         if (text.includes("Add these lines")) return "write";
-        if (text.includes("New role profile name")) return "team-role";
+        if (text.includes("New AWS role profile name")) return "team-role";
         if (text.includes("Role ARN")) return "arn:aws:iam::123456789012:role/ReadOnly";
         if (text.includes("source_profile")) return "profile:keys";
         if (text.includes("Role region")) return "us-east-1";
         if (text.includes("MFA serial number")) return "";
         if (text.includes("External ID")) return "";
-        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text.includes("Which inference profiles should Bedrock list?")) return "system";
         if (text === "AWS regions for discovery (comma separated)") return "";
         return "";
     });
@@ -496,12 +496,12 @@ test("a source profile that does not exist is refused before writing", async () 
     const fake = interaction((prompt) => {
         const text = prompt.message ?? "";
         if (text.includes("How do you sign in to AWS?")) return methods++ === 0 ? "role-new" : "existing";
-        if (text.includes("New role profile name")) return "team-role";
+        if (text.includes("New AWS role profile name")) return "team-role";
         if (text.includes("Role ARN")) return "arn:aws:iam::123456789012:role/ReadOnly";
         if (text.includes("source_profile")) return "type";
-        if (text === "Source profile name") return "missing-source";
+        if (text === "Source AWS profile name") return "missing-source";
         if (text === "Which AWS profile should Bedrock use?") return "profile:keys";
-        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text.includes("Which inference profiles should Bedrock list?")) return "system";
         if (text === "AWS regions for discovery (comma separated)") return "";
         return "";
     });

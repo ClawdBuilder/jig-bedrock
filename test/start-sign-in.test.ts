@@ -57,7 +57,7 @@ test("false still checks read-only and shows the not-loaded notice", async () =>
     assert.equal(result.checked, 1);
     assert.equal(result.recovered, 0);
     assert.equal(result.refreshed, 0);
-    assert.deepEqual(result.notices, ["Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh."]);
+    assert.deepEqual(result.notices, ["Bedrock models not loaded yet; run /bedrock login, then /bedrock refresh."]);
 });
 
 test("print mode has no check and no notice", async () => {

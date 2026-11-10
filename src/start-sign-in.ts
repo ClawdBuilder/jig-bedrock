@@ -1,5 +1,5 @@
 // Sign in when Pi starts, so that no request has to fail first. In an interactive session, once at startup, the profile's SSO is
-// checked (sso-check.ts); when it has expired the shared recovery starts at once, which is the one that /aws-login and a failed
+// checked (sso-check.ts); when it has expired the shared recovery starts at once, which is the one that /bedrock login and a failed
 // request use, so there is one browser window however many of them need it. Nothing here waits: session start returns first.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Recover } from "./sso.ts";
@@ -11,7 +11,7 @@ export interface StartSignIn {
     signInAtStart?: boolean;
     /** The AWS profile the provider signs in with, resolved when the check runs; undefined means none is configured. */
     profile: () => string | undefined;
-    /** The shared recovery (`shareRecovery`), the one /aws-login and a request go through. */
+    /** The shared recovery (`shareRecovery`), the one /bedrock login and a request go through. */
     recover: Recover;
     check(profile: string, signal: AbortSignal): Promise<SsoState>;
     /** Called after a sign-in that finished: the catalog may have failed to load while the session was expired. */
@@ -33,7 +33,7 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         const state = await start.check(profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
         if (start.signInAtStart === false) {
-            ctx.ui.notify("Bedrock models not loaded yet; run /aws-login, then /bedrock-refresh.", "warning");
+            ctx.ui.notify("Bedrock models not loaded yet; run /bedrock login, then /bedrock refresh.", "warning");
             return;
         }
         ctx.ui.notify(`AWS sign-in for ${profile} has expired; signing in, your browser opens.`, "info");

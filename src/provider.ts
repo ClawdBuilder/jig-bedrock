@@ -261,6 +261,8 @@ export function createBedrockProvider(
         });
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
+        let autoProfile = false;
+        let autoProfileFailed = false;
         let afterProfileLogin:
             | ((
                   profile: string | undefined,
@@ -286,10 +288,22 @@ export function createBedrockProvider(
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
             });
         const auth = createProfileAuth(profiles, loginListProfiles, {
+            unavailable: () => autoProfileFailed,
             guided,
             afterLogin: (profile, interaction, signal) =>
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
+        // A profile that can be known without starting a program: the setting, AWS_PROFILE, AWS_DEFAULT_PROFILE,
+        // the default section in the AWS files, or the ambient chain. This lets a cache made for that profile load at
+        // the factory, before session_start, so --model and --list-models see the models.
+        if (config.profile === undefined) {
+            const fromEnv = profileEnv.AWS_PROFILE ?? profileEnv.AWS_DEFAULT_PROFILE;
+            if (fromEnv !== undefined && fromEnv !== "") config.profile = fromEnv;
+            else {
+                const names = await createListProfiles(profileEnv)();
+                if (names?.includes("default")) config.profile = "default";
+            }
+        }
         const identity = { profile: currentProfile, auth };
         const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
         const catalog = withDebugCatalog(options.catalog ?? createAwsDiscovery(config), debug, () => ({
@@ -398,18 +412,33 @@ export function createBedrockProvider(
                 const status = await catalog.refresh(force);
                 if (disposed) return status;
                 discoverySlow = status === "timeout";
+                autoProfileFailed = autoProfile && status !== "ok";
                 let failureNotice = false;
                 if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
                     failureNotice = true;
                     const reason = catalog.failure?.();
-                    const message =
-                        status === "timeout"
-                            ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh."
-                            : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
-                    ctx.ui.notify(message, "warning");
+                    if (autoProfile) firstRunNotice(ctx);
+                    else {
+                        const name = lastChoice.profile ?? config.profile ?? "the configured AWS profile";
+                        const message =
+                            status === "timeout"
+                                ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh."
+                                : status === "credentials"
+                                  ? `Bedrock: the AWS profile ${name} has no credentials.`
+                                  : status === "sso_expired"
+                                    ? `Bedrock: sign-in expired for the AWS profile ${name}.`
+                                    : status === "permission_denied"
+                                      ? `Bedrock: the AWS profile ${name} was refused by AWS.`
+                                      : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
+                        ctx.ui.notify(message, "warning");
+                    }
                 }
                 const updated = readModels().available;
                 const selected = ctx?.model;
+                const selectedGone =
+                    isOwnModel(selected) &&
+                    selected !== undefined &&
+                    !updated.some((model) => model.id === selected.id);
                 if (isOwnModel(selected)) {
                     const previous = models.find((m) => m.id === selected?.id);
                     const replacement = updated.find((m) => m.id === selected?.id);
@@ -430,17 +459,31 @@ export function createBedrockProvider(
                     !quiet &&
                     !failureNotice &&
                     ctx &&
-                    (change.added || change.removed || problems.length > 0 || warnings.length > 0)
+                    (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    const detail = [
-                        `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
-                        ...warnings,
-                        ...(problems.length > 0 ? [problemSummary(problems)] : []),
-                        "Choose /model if your selection was removed.",
-                    ]
-                        .filter((part): part is string => part !== undefined)
-                        .join(" ");
-                    ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
+                    if (selectedGone && selected !== undefined) {
+                        ctx.ui.notify(
+                            `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
+                            "warning",
+                        );
+                    } else if (change.added > 0) {
+                        ctx.ui.notify(
+                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model.`,
+                            "info",
+                        );
+                    } else if (change.removed > 0) {
+                        ctx.ui.notify(
+                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model.`,
+                            "info",
+                        );
+                    } else {
+                        ctx.ui.notify(
+                            [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
+                                .filter((part): part is string => part !== undefined)
+                                .join(" "),
+                            "warning",
+                        );
+                    }
                 }
                 if (change.changed && native) {
                     await registerBedrockProvider(
@@ -638,6 +681,12 @@ export function createBedrockProvider(
             const choice = await profiles.resolve({ signal: lifetime.signal });
             config.profile = choice.profile;
             lastChoice = choice;
+            autoProfile =
+                choice.ambient === true ||
+                choice.source === "default" ||
+                choice.source === "AWS_PROFILE" ||
+                choice.source === "AWS_DEFAULT_PROFILE";
+            autoProfileFailed = autoProfile && models.length === 0;
             return choice;
         };
         pi.on("session_start", async (_event, context) => {
@@ -655,7 +704,8 @@ export function createBedrockProvider(
             } else if (choice.exists === false) {
                 context.ui.notify(missingProfileNotice(choice), "warning");
             } else if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
-            else if (!models.length) context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
+            else if (!models.length && !autoProfile)
+                context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
             // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
             // discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);
