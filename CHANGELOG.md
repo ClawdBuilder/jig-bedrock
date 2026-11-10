@@ -5,6 +5,7 @@
 ### Fixed
 
 - When Jig's `bedrock` settings arrive after jig-bedrock loads, a catalog cache that matches the new profile and tag is used first, with no AWS call and no wait even when the AWS CLI is slow. A slow discovery now says so instead of reporting the saved model as unavailable.
+- A failed model refresh gives one plain notice, whether it came from `/bedrock-refresh`, the start-up refresh or `/login`: a timeout says AWS is slow, an unreachable AWS says to check network access, and a saved model that is really gone is reported at session start.
 
 ## [0.2.4] - 2026-11-10
 
