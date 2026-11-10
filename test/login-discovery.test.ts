@@ -1,7 +1,7 @@
 // The login flow and /aws-login as a person meets them: choosing a profile starts discovery before the dialog closes,
 // and /aws-login refuses a profile that does not exist or is not an SSO profile instead of starting a doomed sign-in.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -65,6 +65,7 @@ async function build(options: {
             listProfiles: async () => options.list,
             loginListProfiles: async () => options.loginList ?? options.list,
             catalog: options.catalog ?? { load: () => undefined, refresh: async () => "ok" },
+            verifyProfile: async () => ({ ok: true }),
         }) as never
     )(pi as never);
     const provider = providers.find((entry) => entry?.id === "jig-bedrock");
@@ -87,10 +88,21 @@ test("choosing a profile at /login starts discovery and says what is happening",
         const notices: Array<{ type: string; message?: string }> = [];
         const credential = await provider.auth.apiKey.login({
             signal: new AbortController().signal,
-            prompt: async (prompt: any) => (prompt.type === "select" ? "profile:work" : ""),
+            prompt: async (prompt: any) => {
+                if (prompt.type === "select") {
+                    if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
+                    if (prompt.message === "Which Bedrock profiles should be listed?") return "system";
+                    return "profile:work";
+                }
+                return "";
+            },
             notify: (event: any) => notices.push({ type: event.type, message: event.message }),
         });
         assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "work" } });
+        assert.equal("key" in credential, false, "no secret is stored");
+        const saved = JSON.parse(readFileSync(join(env.PI_CODING_AGENT_DIR as string, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["us-east-1"], "the discovery choice is saved");
+        assert.equal("profile" in saved, false, "the profile belongs to the credential");
         assert.equal(refreshes, 1, "the login starts discovery itself");
         const text = notices.map((notice) => `${notice.type}:${notice.message ?? ""}`).join("\n");
         assert.match(text, /progress:Looking up your AWS profiles…/);

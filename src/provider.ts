@@ -11,7 +11,7 @@ import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { createAwsDiscovery, discoveryHelp } from "./aws-discovery.ts";
-import { checkedRecovery, profileProblem } from "./aws-profile.ts";
+import { checkedRecovery, isSsoProfile, profileProblem, type VerifyResult, verifyAwsProfile } from "./aws-profile.ts";
 import { createSignedFetch } from "./bedrock-fetch.ts";
 import type { BudgetSource } from "./budget.ts";
 import { createBudget } from "./budget.ts";
@@ -34,6 +34,7 @@ import { jigApi } from "./jig/client.ts";
 import type { JigApi } from "./jig/types.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
+import { runLoginFlow } from "./login-flow.ts";
 import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
 import {
@@ -45,6 +46,7 @@ import {
     NO_PROFILE,
     ProfileResolver,
 } from "./profile.ts";
+import { saveDiscoverySettings } from "./settings-write.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
@@ -77,6 +79,10 @@ export interface BedrockOptions {
     listProfiles?: ListProfiles;
     /** The same listing with /login's longer timeout, for tests. */
     loginListProfiles?: ListProfiles;
+    /** The STS check /login runs; without it `aws sts get-caller-identity`. */
+    verifyProfile?: (profile: string | undefined, signal: AbortSignal) => Promise<VerifyResult>;
+    /** The SSO sign-in /login runs; without it the shared recovery. */
+    signInProfile?: (profile: string, signal: AbortSignal) => Promise<void>;
     budget?: BudgetSource;
     statistics?: StatisticsSource;
     events?: EventNames;
@@ -174,10 +180,30 @@ export function createJigBedrock(
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
         let afterProfileLogin:
-            | ((profile: string, interaction: ProviderAuthInteraction, signal: AbortSignal) => Promise<void>)
+            | ((
+                  profile: string | undefined,
+                  interaction: ProviderAuthInteraction,
+                  signal: AbortSignal,
+              ) => Promise<void>)
             | undefined;
         const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        // /login's guided choice: the AWS CLI is the only place a secret is entered, and the profile is verified before
+        // the credential is stored. A fresh listing is used after the access-key/role guidance.
+        const guided = (interaction: ProviderAuthInteraction) =>
+            runLoginFlow(interaction, {
+                listProfiles: loginListProfiles,
+                refreshProfiles: () => createListProfiles(profileEnv, 10_000)(),
+                isSso: (profile) => isSsoProfile(profile, profileEnv),
+                verify: (profile, signal) =>
+                    options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
+                signIn: (profile, signal) =>
+                    options.signInProfile?.(profile, signal) ?? recoveryForLogin(profile, signal, "manual"),
+                saveDiscovery: (settings) =>
+                    saveDiscoverySettings(profileEnv, settings, safeSection(apiForSettings()).section),
+                regions: config.regions,
+            });
         const auth = createProfileAuth(profiles, loginListProfiles, {
+            guided,
             afterLogin: (profile, interaction, signal) =>
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
@@ -350,8 +376,19 @@ export function createJigBedrock(
         afterProfileLogin = async (profile, interaction, signal) => {
             config.profile = profile;
             profiles.stored = profile;
-            lastChoice = { profile, source: "login", exists: true };
+            lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
+            // The guided flow saved discovery choices to bedrock.json; read them before the first refresh. A
+            // bedrock.profile setting still wins over the profile just chosen, as it does everywhere else.
+            applySettings(false);
+            if (profile !== undefined && ctx) {
+                const resolved = await resolveProfile(ctx);
+                if (resolved.profile !== undefined && resolved.profile !== profile)
+                    interaction.notify({
+                        type: "info",
+                        message: `bedrock.profile ${resolved.profile} overrides the profile chosen at /login.`,
+                    });
+            }
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
                 const timer = setTimeout(() => {
