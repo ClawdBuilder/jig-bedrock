@@ -80,3 +80,15 @@ test("a file that is not valid JSON is reported and the defaults still run", asy
     assert.match(warning.text, /not valid JSON/);
     assert.match(warning.text, new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
+
+test("the removed usageDir key is ignored and warned about", async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-settings-usage-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "bedrock.json"), JSON.stringify({ usageDir: "/old/usage" }));
+    const { handle, notices } = await start(dir);
+    assert.ok(handle);
+    const warning = notices.find((notice) => notice.type === "warning");
+    assert.ok(warning);
+    assert.match(warning.text, /usageDir/);
+    assert.match(warning.text, /docs\/settings\.md/);
+});

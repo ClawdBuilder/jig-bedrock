@@ -94,7 +94,7 @@ export type BedrockModel = ChatModelConfig & {
     baseUrl: string;
     arn: string;
     foundationModelId: string;
-    rateSource: "usage program" | "Pi registry";
+    rateSource: "Pi registry" | "no price";
     aliases: string[];
 };
 
@@ -280,33 +280,6 @@ export function readCatalog(
         return;
     }
 }
-function usageRates(dir: string): Map<string, ProviderModelConfig["cost"]> {
-    try {
-        const file = join(dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : resolve(dir), "models.json");
-        const raw = boundedRegular(file, 1_048_576);
-        if (!raw) return new Map();
-        const rows = JSON.parse(raw);
-        if (!Array.isArray(rows)) return new Map();
-        const rates = new Map<string, ProviderModelConfig["cost"]>();
-        for (const row of rows) {
-            const p = row?.pricing;
-            if (
-                label(row?.key, 128) &&
-                p &&
-                ["input", "output", "cache_read", "cache_write"].every((k) => Number.isFinite(p[k]) && p[k] >= 0)
-            )
-                rates.set(row.key, {
-                    input: p.input,
-                    output: p.output,
-                    cacheRead: p.cache_read,
-                    cacheWrite: p.cache_write,
-                });
-        }
-        return rates;
-    } catch {
-        return new Map();
-    }
-}
 /** Pi's level map for a model, plus a null off when the model cannot turn thinking off; a null entry hides that level. */
 function thinkingLevelMap(
     base: ChatModelConfig["thinkingLevelMap"],
@@ -354,12 +327,11 @@ function orderedApplication(rows: Profile[]): Profile[] {
 
 export function discoveredProfiles(
     catalog: Catalog | undefined,
-    usageDir: string,
+    _pricingDirectory = "",
     api: "messages" | "converse" = "messages",
 ): { available: BedrockModel[]; unavailable: { profile: string; region: string; reason: string }[] } {
     if (!catalog) return { available: [], unavailable: [] };
-    const rates = usageRates(usageDir),
-        available: BedrockModel[] = [],
+    const available: BedrockModel[] = [],
         unavailable = [];
     const grouped = new Map<string, Profile[]>();
     for (const p of catalog.profiles) {
@@ -388,7 +360,6 @@ export function discoveredProfiles(
         for (const p of orderedApplication(rows)) {
             const r = registryEntry(p.foundation_model_id);
             const id = p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
-            const pricing = rates.get(key);
             const fallback =
                 r.cost &&
                 ["input", "output", "cacheRead", "cacheWrite"].every(
@@ -396,14 +367,8 @@ export function discoveredProfiles(
                 )
                     ? r.cost
                     : undefined;
-            if (!pricing && !fallback) {
-                unavailable.push({
-                    profile: p.profile_name,
-                    region: p.region,
-                    reason: `No valid pricing for ${p.foundation_model_id}; update Pi or usage program models.json.`,
-                });
-                continue;
-            }
+            const priced =
+                fallback !== undefined && ["input", "output", "cacheRead", "cacheWrite"].some((k) => fallback[k] > 0);
             const promptCache = promptCacheFor(p.foundation_model_id);
             // Only Claude profiles go on the Anthropic route; gpt, nova and the rest keep their own route.
             const messages = api === "messages" && p.kind !== "system" && isAnthropicModel(p.foundation_model_id);
@@ -432,8 +397,8 @@ export function discoveredProfiles(
                 input: [...r.input],
                 contextWindow: r.contextWindow,
                 maxTokens: r.maxTokens,
-                cost: pricing || { ...fallback },
-                rateSource: pricing ? "usage program" : "Pi registry",
+                cost: priced && fallback ? { ...fallback } : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                rateSource: priced ? "Pi registry" : "no price",
                 ...(promptCache ? { promptCache } : {}),
                 ...(thinkingLevelMap(r.thinkingLevelMap, p.foundation_model_id) ?? {}),
             });

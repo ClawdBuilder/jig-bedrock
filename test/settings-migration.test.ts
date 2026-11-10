@@ -31,7 +31,6 @@ async function harness(dir: string) {
                 team: "fixture",
                 profile: "fixture",
                 regions: ["us-east-1"],
-                usageDir: dir,
                 agentDir: dir,
                 ssoLoginCommand: [],
                 signInAtStart: false,
@@ -77,6 +76,7 @@ test("the migration notice appears once and /bedrock migrate copies generic keys
     assert.equal(written.activeTagKey, "Active");
     assert.equal(written.activeTagValue, "true");
     assert.equal(written.team, undefined);
+    assert.equal(written.usageDir, undefined, "the removed usageDir key is not copied");
     assert.equal(statSync(destination).mode & 0o777, 0o600);
     assert.equal(JSON.parse(readFileSync(old, "utf8")).bedrock.team, "my-team", "jig.json is left as it is");
 

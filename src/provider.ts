@@ -1,13 +1,13 @@
 // The Bedrock model provider: your inference profiles as Pi models, AWS SSO recovery, a monthly spend figure and
 // the commands around them. Its settings are bedrock.json and the JIG_BEDROCK_* environment (see config.ts).
 //
-// The factory registers and reads settings, and no more: AWS, usage program and the browser are touched in `session_start`, in the
+// The factory registers and reads settings, and no more: AWS and the browser are touched in `session_start`, in the
 // background, or by a command the user types.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
@@ -20,8 +20,6 @@ import {
     verifyAwsProfile,
 } from "./aws-profile.ts";
 import { createSignedFetch } from "./bedrock-fetch.ts";
-import type { BudgetSource } from "./budget.ts";
-import { createBudget } from "./budget.ts";
 import type { BedrockModel } from "./catalog.ts";
 import {
     discoveredProfiles,
@@ -32,7 +30,7 @@ import {
     usePiRegistry,
 } from "./catalog.ts";
 import { isObject } from "./check.ts";
-import { registerStatisticsCommands } from "./commands.ts";
+import { type BedrockCommand, registerBedrockCommands } from "./commands.ts";
 import type { BedrockApi, ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
@@ -52,16 +50,17 @@ import {
 } from "./profile.ts";
 import { saveDiscoverySettings } from "./settings-write.ts";
 import type { AwsCredentials } from "./sigv4.ts";
+import { SpendTracker } from "./spend.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
 import type { SsoState } from "./sso-check.ts";
 import { checkSso, systemSsoDeps } from "./sso-check.ts";
 import { registerSignInAtStart } from "./start-sign-in.ts";
-import type { StatisticsSource } from "./statistics.ts";
-import { createStatistics } from "./statistics.ts";
 import { registerSwitchNotice } from "./switch-cost.ts";
 
-export type { BudgetSource, CatalogSource, Recover, ResolvedConfig, StatisticsSource };
+type Json = Record<string, unknown>;
+
+export type { CatalogSource, Recover, ResolvedConfig };
 
 export interface BedrockOptions {
     catalog?: CatalogSource;
@@ -80,8 +79,8 @@ export interface BedrockOptions {
     verifyProfile?: (profile: string | undefined, signal: AbortSignal) => Promise<VerifyResult>;
     /** The SSO sign-in /login runs; without it the shared recovery. */
     signInProfile?: (profile: string, signal: AbortSignal) => Promise<void>;
-    budget?: BudgetSource;
-    statistics?: StatisticsSource;
+    /** A test can replace the spend record and command. */
+    spend?: SpendTracker;
     selection?: { agentDir?: string; explicitSelection?: () => boolean };
     transformModels?: (models: BedrockModel[]) => BedrockModel[];
     backgroundRefresh?: boolean;
@@ -147,6 +146,7 @@ function oldSettings(env: NodeJS.ProcessEnv): Record<string, unknown> | undefine
 /** `team` was the 0.2.x short form: the migration writes the generic keys and the Active rule. */
 function migratedSettings(source: Record<string, unknown>): Record<string, unknown> {
     const out = { ...source };
+    delete out.usageDir;
     if (typeof out.team === "string" && out.team !== "") {
         const team = out.team;
         delete out.team;
@@ -158,7 +158,10 @@ function migratedSettings(source: Record<string, unknown>): Record<string, unkno
     return out;
 }
 
-function registerMigration(pi: Pick<ExtensionAPI, "on" | "registerCommand">, env: NodeJS.ProcessEnv): void {
+function registerMigration(
+    pi: Pick<ExtensionAPI, "on">,
+    env: NodeJS.ProcessEnv,
+): (args: string, ctx: ExtensionCommandContext) => Promise<void> {
     const destination = path.join(agentFolder(env), "bedrock.json");
     const notice = (): void => {
         if (existsSync(destination)) return;
@@ -172,31 +175,28 @@ function registerMigration(pi: Pick<ExtensionAPI, "on" | "registerCommand">, env
         );
     };
     notice();
-    pi.registerCommand("bedrock", {
-        description: "Copy Bedrock settings from jig.json to bedrock.json",
-        handler: async (args, context) => {
-            if (args.trim() !== "migrate") {
-                context.ui.notify("Usage: /bedrock migrate", "warning");
-                return;
-            }
-            const source = oldSettings(env);
-            if (source === undefined) {
-                context.ui.notify("No jig.json Bedrock settings to copy.", "warning");
-                return;
-            }
-            try {
-                mkdirSync(path.dirname(destination), { recursive: true });
-                const text = `${JSON.stringify(migratedSettings(source), null, 4)}\n`;
-                writeFileSync(destination, text, { mode: 0o600, flag: "wx" });
-                chmodSync(destination, 0o600);
-                context.ui.notify(`Copied Bedrock settings to ${destination}. Run /reload to use them.`, "info");
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === "EEXIST")
-                    context.ui.notify(`${destination} already exists; it was not overwritten.`, "warning");
-                else context.ui.notify(`Could not write ${destination}; check permissions.`, "warning");
-            }
-        },
-    });
+    return async (args: string, context: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() !== "migrate") {
+            context.ui.notify("Usage: /bedrock migrate", "warning");
+            return;
+        }
+        const source = oldSettings(env);
+        if (source === undefined) {
+            context.ui.notify("No jig.json Bedrock settings to copy.", "warning");
+            return;
+        }
+        try {
+            mkdirSync(path.dirname(destination), { recursive: true });
+            const text = `${JSON.stringify(migratedSettings(source), null, 4)}\n`;
+            writeFileSync(destination, text, { mode: 0o600, flag: "wx" });
+            chmodSync(destination, 0o600);
+            context.ui.notify(`Copied Bedrock settings to ${destination}. Run /reload to use them.`, "info");
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EEXIST")
+                context.ui.notify(`${destination} already exists; it was not overwritten.`, "warning");
+            else context.ui.notify(`Could not write ${destination}; check permissions.`, "warning");
+        }
+    };
 }
 
 export function createBedrockProvider(
@@ -210,7 +210,15 @@ export function createBedrockProvider(
                   env: options.env ?? process.env,
               });
         const config = resolved.config;
-        registerMigration(pi, options.env ?? process.env);
+        const migration = registerMigration(pi, options.env ?? process.env);
+        let bedrockCommand: BedrockCommand | undefined;
+        pi.registerCommand("bedrock", {
+            description: "Bedrock settings, spend and budget",
+            handler: async (args, context) => {
+                if (bedrockCommand) await bedrockCommand(args, context);
+                else await migration(args, context);
+            },
+        });
         const currentApi = (): BedrockApi => config?.api ?? "messages";
         const models: BedrockModel[] = [];
         let discoverySlow = false;
@@ -275,8 +283,7 @@ export function createBedrockProvider(
         });
         const identity = { profile: currentProfile, auth };
         const catalog = options.catalog ?? createAwsDiscovery(config);
-        const statistics = options.statistics ?? createStatistics(config);
-        const budget = options.budget ?? createBudget(config, undefined, undefined, undefined, statistics);
+        const spend = options.spend ?? new SpendTracker(config, options.env ?? process.env);
         registerSwitchNotice(pi, { env: options.env });
         const lifetime = new AbortController();
         const backgroundRefresh = options.backgroundRefresh !== false;
@@ -285,9 +292,8 @@ export function createBedrockProvider(
         let messages: RecoveredBedrock["messages"];
         let failed = false;
         let disposed = false;
-        let timer: ReturnType<typeof setInterval> | undefined;
         const readModels = () => {
-            const result = discoveredProfiles(catalog.load(), config.usageDir, currentApi());
+            const result = discoveredProfiles(catalog.load(), "", currentApi());
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
         };
@@ -482,18 +488,18 @@ export function createBedrockProvider(
                     context.ui.notify(`Bedrock catalog: ${models.length} models. Choose /model.`, "info");
             },
         });
-        registerStatisticsCommands(pi, {
+        const commands = registerBedrockCommands(pi, {
             config,
-            statistics,
+            spend,
             catalog,
             models: () => models,
-            budget,
-            publish: () => {},
             profiles,
             stored: () => profiles.stored,
             listProfiles: loginListProfiles,
             env: profileEnv,
+            migrate: migration,
         });
+        bedrockCommand = commands.bedrock;
         const resolveProfile = async (context: ExtensionContext): Promise<ProfileChoice> => {
             if (!options.preserveNativeAuth) {
                 // Pi resolves this provider's auth from its credential store; the credential is passed to the provider's
@@ -535,21 +541,29 @@ export function createBedrockProvider(
                 );
             else if (!models.length)
                 context.ui.notify("Bedrock models are not loaded yet; checking your AWS profiles now.", "info");
-            // Start in the background; session startup never awaits AWS or usage program. No profile and no ambient
-            // chain means discovery cannot succeed, so it is not started (the notice above already says what to do).
+            // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
+            // discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);
             if (backgroundRefresh && canRefresh) void refresh(false).catch(() => {});
-            if (context.mode === "tui") {
-                const tick = (): void => {
-                    if (isOwnModel(ctx?.model)) {
-                        void budget.refresh({ signal: lifetime.signal }).catch(() => {});
-                    }
-                };
-                tick();
-                timer = setInterval(tick, 10_000);
-                timer.unref();
-            }
+            void spend.start(config.agentDir ?? agentFolder(options.env), context).catch(() => {});
+            // UI notices are queued until the session's UI is ready; the footer can be set immediately.
+            setTimeout(() => {
+                if (ctx === context) spend.notice(context, true);
+            }, 1000).unref();
         });
+        pi.on("message_end", (event, context) => {
+            const message = event.message as unknown as Json | undefined;
+            if (message?.role !== "assistant" || message.provider !== "jig-bedrock") return;
+            const selected = models.find((model) => model.id === message.model);
+            const session = context.sessionManager.getSessionId();
+            const result = spend.record(message as Json, session, selected);
+            const writeError = result?.error === undefined ? undefined : spend.takeWriteError(session);
+            if (writeError !== undefined && context.hasUI) context.ui.notify(writeError, "warning");
+            spend.updateFooter(context);
+            spend.notice(context);
+            if (config.spendCommand !== undefined) void spend.refresh(false).then(() => spend.updateFooter(context));
+        });
+        pi.on("model_select", (_event, context) => spend.updateFooter(context));
         // Registered after the provider's session_start handler, so a refresh that is already running when the guard
         // checks the model list can explain a missing saved model; a refresh that never starts cannot.
         guard = registerBedrockSelectionGuard(pi, models, {
@@ -569,8 +583,8 @@ export function createBedrockProvider(
         pi.on("session_shutdown", () => {
             lifetime.abort();
             disposed = true;
+            if (ctx?.hasUI) ctx.ui.setStatus("jig-bedrock", undefined);
             ctx = undefined;
-            if (timer) clearInterval(timer);
         });
         return { models, refresh, failed };
     };

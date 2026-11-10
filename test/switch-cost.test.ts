@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { registerStatisticsCommands } from "../src/commands.ts";
 import { cacheWriteRate, promptCacheFor, retentionOf } from "../src/prompt-cache.ts";
 import { registerSwitchNotice, switchNotice, tokensLabel } from "../src/switch-cost.ts";
 
@@ -144,43 +143,4 @@ test("an expired cache is rewritten whichever model answers, so there is nothing
     assert.equal(h.notices.length, 2, "a failed response never touched the cache");
     h.select(event, h.ctx(190_000, []));
     assert.equal(h.notices.length, 3, "unknown age: warn rather than guess");
-});
-
-test("/bedrock-profiles shows the 5-minute and 1-hour cache write rates, and says when a model has no 1-hour tier", async () => {
-    const commands = new Map<string, any>(),
-        notices: string[] = [];
-    const pi: any = { registerCommand: (name: string, c: any) => commands.set(name, c), on() {} };
-    const model = (name: string, foundation: string, cost: object) => ({
-        name,
-        arn: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/x",
-        rateSource: "usage program",
-        cost,
-        promptCache: promptCacheFor(foundation),
-    });
-    const models = [
-        model("Opus", "anthropic.claude-opus-5-5", { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }),
-        model("Nova", "amazon.nova-pro-v1:0", { input: 0.8, output: 3.2, cacheRead: 0.2, cacheWrite: 0.8 }),
-        model("Other", "openai.gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }),
-    ];
-    registerStatisticsCommands(pi, {
-        config: {
-            team: "t",
-            profile: "p",
-            regions: ["us-east-1"],
-            usageDir: "/x",
-            ssoLoginCommand: [],
-            signInAtStart: false,
-        },
-        statistics: {} as any,
-        catalog: { load: () => undefined, refresh: async () => "ok" },
-        models: () => models as any,
-        budget: {} as any,
-        publish() {},
-    });
-    await commands
-        .get("bedrock-profiles")
-        .handler("", { mode: "rpc", ui: { notify: (text: string) => notices.push(text) } });
-    assert.match(notices[0]!, /Opus .*cache read \$0\.2, write \$5 \(5 min\) \/ \$8 \(1 h\)/);
-    assert.match(notices[0]!, /Nova .*cache read \$0\.2, write \$0\.8 \(5 min only\)/);
-    assert.match(notices[0]!, /Other .*cache read \$0\.01, write \$0\.125(?! \()/);
 });

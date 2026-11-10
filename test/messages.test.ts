@@ -30,13 +30,13 @@ const catalog: Catalog = {
     profiles: [{ arn: ARN, profile_name: "Fixture", foundation_model_id: FOUNDATION, region: REGION }],
 };
 
-function usageDir(): string {
+function tempDir(): string {
     return mkdtempSync(path.join(tmpdir(), "jig-bedrock-usage-"));
 }
 
 test("models use Pi's anthropic-messages API on Bedrock's /anthropic route, and Converse stays a setting away", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     try {
         const [messages] = discoveredProfiles(catalog, dir).available;
         assert.ok(messages);
@@ -78,7 +78,7 @@ test("models use Pi's anthropic-messages API on Bedrock's /anthropic route, and 
 
 test("a profile that is not Claude keeps the Converse route even when Messages is the default", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     const mixed: Catalog = {
         ...catalog,
         profiles: [
@@ -114,7 +114,7 @@ test("a profile that is not Claude keeps the Converse route even when Messages i
 
 test("Opus 5.5 has no off level; Sonnet 5.5 keeps one", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     const two: Catalog = {
         ...catalog,
         profiles: [
@@ -155,7 +155,7 @@ test("Pi records this package's provider and short id while the ARN goes on the 
     await registry();
     const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
     const anthropic = builtinProviders().find((provider: { id: string }) => provider.id === "anthropic");
-    const dir = usageDir();
+    const dir = tempDir();
     try {
         const [model] = discoveredProfiles(catalog, dir).available;
         assert.ok(model);
@@ -215,7 +215,7 @@ test("Pi records this package's provider and short id while the ARN goes on the 
 
 test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; the Converse wrapper does not", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     try {
         const [messagesModel] = discoveredProfiles(catalog, dir).available;
         const [converseModel] = discoveredProfiles(catalog, dir, "converse").available;
@@ -319,7 +319,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
 
 test("an older Claude keeps the old compat: no mid-conversation effort is copied", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     const old: Catalog = {
         ...catalog,
         profiles: [
@@ -346,7 +346,7 @@ test("an older Claude keeps the old compat: no mid-conversation effort is copied
 
 test("Opus 4.8 takes adaptive thinking from Pi's registry, like Pi's own Converse route", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     const adaptive: Catalog = {
         ...catalog,
         profiles: [
@@ -371,7 +371,7 @@ test("Opus 4.8 takes adaptive thinking from Pi's registry, like Pi's own Convers
 
 test("temperature follows Pi's Anthropic entry for each Claude family", async () => {
     await registry();
-    const dir = usageDir();
+    const dir = tempDir();
     const table: Array<[string, boolean]> = [
         ["anthropic.claude-sonnet-5-5", false],
         ["anthropic.claude-haiku-5-5", false],
@@ -404,7 +404,7 @@ test("a Pi without the Anthropic registry path falls back to the name pattern", 
     await usePiAnthropicRegistry(async () => {
         throw new Error("the path is not there");
     });
-    const dir = usageDir();
+    const dir = tempDir();
     try {
         const [model] = discoveredProfiles(catalog, dir).available;
         assert.ok(model, "the provider still builds its model");

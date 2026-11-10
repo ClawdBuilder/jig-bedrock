@@ -1,6 +1,8 @@
+// User-facing Bedrock commands. Part B adds `/bedrock usage` and `/bedrock budget`; /bedrock-usage and /bedrock-stats
+// call the same code. Every block is a title, marker rows, at most one Next, and plain words; without a UI the same text
+// goes to standard output.
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource } from "./aws-discovery.ts";
-import type { BudgetSource } from "./budget.ts";
 import type { BedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { checkLocalDependencies, dependencyLines } from "./doctor.ts";
@@ -13,387 +15,194 @@ import {
     type ProfileResolver,
     sourceLabel,
 } from "./profile.ts";
-import { cacheWriteRate } from "./prompt-cache.ts";
-import {
-    periodLabels,
-    pricedSpend,
-    type StatisticsSource,
-    type UsagePeriod,
-    type UsageReport,
-    type UsageSnapshot,
-} from "./statistics.ts";
-import { UsageError } from "./usage.ts";
+import { saveBudgetSetting } from "./settings-write.ts";
+import type { SpendTracker } from "./spend.ts";
 
-// biome-ignore lint/suspicious/noExplicitAny: Pi's session records, checked field by field where they are used
-type Json = any;
-const clean = (value: unknown, max = 256) =>
+type Json = Record<string, unknown>;
+const clean = (value: unknown, max = 100): string =>
     String(value ?? "")
         // biome-ignore lint/suspicious/noControlCharactersInRegex: strip terminal and bidi controls from a line
         .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ")
         .slice(0, max);
-const count = (value: number) => value.toLocaleString("en-US");
-const money = (value: number | null) => (value === null ? "unknown (unpriced usage)" : `$${value.toFixed(4)}`);
-/** usage program leaves the total null when any row is unpriced; the priced rows are still real spend, so show them as a lower bound. */
-const totalCost = (report: UsageReport) => {
-    const { spentUsd } = pricedSpend(report);
-    return report.totals.costUsd === null && spentUsd > 0
-        ? `${money(spentUsd)} + unpriced usage`
-        : money(report.totals.costUsd);
+const money = (value: number): string => `$${value.toFixed(2)}`;
+const route = (model: BedrockModel | undefined): string =>
+    model?.api === "anthropic-messages" ? "Messages" : "Converse";
+const usageText = (args: string): "day" | "week" | "month" | undefined => {
+    const value = args.trim().toLowerCase();
+    if (value === "" || value === "month" || value === "monthly") return "month";
+    if (value === "day" || value === "daily" || value === "today") return "day";
+    if (value === "week" || value === "weekly") return "week";
+    return undefined;
 };
-/** The 5-minute cache write rate and, for models with a 1-hour tier (PI_CACHE_RETENTION=long), Pi's 1-hour rate: twice the input rate. */
-function writeRates(m: BedrockModel): string {
-    const rate = (value: number) => String(Number(value.toFixed(4)));
-    if (m.promptCache?.long === undefined)
-        return `write $${rate(m.cost.cacheWrite)}${m.promptCache ? " (5 min only)" : ""}`;
-    return `write $${rate(m.cost.cacheWrite)} (5 min) / $${rate(cacheWriteRate(m.cost, 0, "long"))} (1 h)`;
+function emit(ctx: ExtensionCommandContext, title: string, rows: readonly string[]): void {
+    const text = [title, ...rows].map((line) => clean(line)).join("\n");
+    if (ctx.hasUI) ctx.ui.notify(text, "info");
+    else process.stdout.write(`${text}\n`);
 }
-export function usageLines(snapshot: UsageSnapshot): string[] {
-    const { report, observedAt } = snapshot,
-        t = report.totals;
-    return [
-        `usage program user estimate · ${periodLabels[report.period]} (UTC) · ${snapshot.stale ? "STALE" : "fresh"}`,
-        `User: ${clean(report.user)} · observed ${new Date(observedAt).toISOString()} · contract ${report.contract}`,
-        "Scope: this AWS user's inference profiles; excludes other users and is not a total across profiles.",
-        `Requests ${count(t.requests)} · fresh input ${count(t.inputFresh)} · output ${count(t.output)}`,
-        `Cache read ${count(t.cacheRead)} · cache write ${count(t.cacheWrite)} · total input ${count(t.input)}`,
-        `Estimated cost: ${totalCost(report)}. AWS metrics may arrive late.`,
-        ...(snapshot.refreshFailed ? ["Last refresh failed; showing the last valid report."] : []),
-        "Models / inference profiles:",
-        ...report.profiles.flatMap((p) => [
-            `${clean(p.model)} · ${clean(p.name)}`,
-            `  ${count(p.requests)} requests · ${money(p.costUsd)}`,
-            `  Fresh input ${count(p.inputFresh)} · output ${count(p.output)} · cache read ${count(p.cacheRead)} / write ${count(p.cacheWrite)}`,
-        ]),
-        ...(!report.profiles.length ? ["No usage reported for this period."] : []),
-    ];
-}
-function sessionLines(ctx: ExtensionCommandContext): string[] {
-    let requests = 0,
-        input = 0,
-        output = 0,
-        cacheRead = 0,
-        cacheWrite = 0,
-        costUsd = 0,
-        unknown = 0;
-    for (const entry of ctx.sessionManager.getBranch()) {
-        const message = entry.type === "message" ? (entry as { message?: Json }).message : undefined;
-        if (message?.role !== "assistant" || message.provider !== "jig-bedrock") continue;
-        const usage = message.usage;
-        if (!usage) continue;
-        requests++;
-        for (const [key, add] of [
-            [
-                "input",
-                (n: number) => {
-                    input += n;
-                },
-            ],
-            [
-                "output",
-                (n: number) => {
-                    output += n;
-                },
-            ],
-            [
-                "cacheRead",
-                (n: number) => {
-                    cacheRead += n;
-                },
-            ],
-            [
-                "cacheWrite",
-                (n: number) => {
-                    cacheWrite += n;
-                },
-            ],
-        ] as const) {
-            const value = usage[key];
-            if (typeof value === "number" && Number.isFinite(value) && value >= 0) add(value);
-        }
-        if (typeof usage.cost?.total === "number" && Number.isFinite(usage.cost.total) && usage.cost.total >= 0)
-            costUsd += usage.cost.total;
-        else unknown++;
-    }
-    return [
-        "Current Pi branch · Bedrock only (local session records)",
-        `${count(requests)} responses · input ${count(input)} · output ${count(output)} · cache read ${count(cacheRead)} / write ${count(cacheWrite)}`,
-        `Pi estimated cost: $${costUsd.toFixed(4)}${unknown ? ` + ${unknown} unpriced responses` : ""}. This is separate from usage program's user estimate.`,
-    ];
-}
-/** A local dialog owns the request and cancels it when dismissed; nothing enters model context. */
-async function showReport(
-    ctx: ExtensionCommandContext,
-    title: string,
-    load: (signal: AbortSignal) => Promise<string[]>,
-    active: Set<AbortController>,
-): Promise<void> {
-    const controller = new AbortController();
-    active.add(controller);
-    const abort = () => controller.abort();
-    ctx.signal?.addEventListener("abort", abort, { once: true });
-    const rows = async () => {
-        try {
-            return await load(controller.signal);
-        } catch (error) {
-            return [error instanceof UsageError ? error.message : "Report unavailable. Run /bedrock-doctor and retry."];
-        }
-    };
-    try {
-        if (ctx.signal?.aborted) controller.abort();
-        if (ctx.mode !== "tui" || !ctx.ui.custom) {
-            if (!controller.signal.aborted) {
-                const body = await rows();
-                if (!controller.signal.aborted) ctx.ui.notify(body.map((row) => clean(row, 1024)).join("\n"), "info");
-            }
-            return;
-        }
-        await ctx.ui.custom<void>((tui, theme, _keys, done) => {
-            let body = ["Loading…"],
-                offset = 0,
-                closed = false;
-            const close = () => {
-                if (closed) return;
-                closed = true;
-                controller.abort();
-                done();
-            };
-            controller.signal.addEventListener("abort", close, { once: true });
-            const component = {
-                invalidate() {},
-                dispose() {
-                    closed = true;
-                    controller.abort();
-                    controller.signal.removeEventListener("abort", close);
-                },
-                handleInput(data: string) {
-                    if (data === "q" || data === "\x1b") {
-                        close();
-                        return;
-                    }
-                    if (data === "\x1b[B" || data === "j") offset++;
-                    if (data === "\x1b[A" || data === "k") offset = Math.max(0, offset - 1);
-                    tui.requestRender();
-                },
-                render(width: number): string[] {
-                    const height = Math.max(4, Math.min(24, tui.terminal.rows - 4)),
-                        slots = height - 2,
-                        columns = Math.max(1, width);
-                    const wrapped = body.flatMap((row) => {
-                        const chars = Array.from(clean(row, 1024)),
-                            rows: string[] = [];
-                        do {
-                            rows.push(chars.splice(0, columns).join(""));
-                        } while (chars.length);
-                        return rows;
-                    });
-                    offset = Math.min(offset, Math.max(0, wrapped.length - slots));
-                    const clip = (row: string) => Array.from(clean(row)).slice(0, Math.max(0, width)).join("");
-                    return [
-                        theme.fg("accent", clip(title)),
-                        ...wrapped.slice(offset, offset + slots),
-                        theme.fg("muted", clip("↑/↓ or j/k scroll · q/Esc close")),
-                    ];
-                },
-            };
-            if (controller.signal.aborted) {
-                queueMicrotask(close);
-                return component;
-            }
-            void rows().then((value) => {
-                if (!closed) {
-                    body = value;
-                    tui.requestRender();
-                }
-            });
-            return component;
-        });
-    } finally {
-        controller.abort();
-        active.delete(controller);
-        ctx.signal?.removeEventListener("abort", abort);
-    }
-}
-/** One doctor line for the profile: its name, where it came from, and whether the AWS CLI lists it. */
 function profileLine(choice: ProfileChoice, m: Markers): string {
-    if (choice.ambient === true) return `${m.warn} Profile: none configured; using the AWS credential chain`;
-    if (choice.profile === undefined) return `${m.fail} Profile: none — ${NO_PROFILE}`;
+    if (choice.ambient === true) return `${m.warn} AWS profile: none chosen; using the environment credential chain`;
+    if (choice.profile === undefined) return `${m.fail} AWS profile: none chosen. ${NO_PROFILE}`;
     const source = sourceLabel(choice.source);
-    if (choice.problem !== undefined) return `${m.fail} Profile: ${choice.profile} (${source}) — ${choice.problem}`;
+    if (choice.problem !== undefined) return `${m.fail} AWS profile: ${choice.profile} (${source}) — ${choice.problem}`;
     if (choice.exists === false)
-        return `${m.fail} Profile: ${choice.profile} (${source}) — not in aws configure list-profiles; run ${LOGIN_PATH} to choose one`;
-    if (choice.exists === undefined)
-        return `${m.warn} Profile: ${choice.profile} (${source}) — aws configure list-profiles did not answer`;
-    return `${m.ok} Profile: ${choice.profile} (${source})`;
+        return `${m.fail} AWS profile: ${choice.profile} (${source}) — not listed; run ${LOGIN_PATH}`;
+    return `${m.ok} AWS profile: ${choice.profile} (${source})`;
 }
-
-/** One doctor line for discovery: the mode and the regions it looks in. */
 function discoveryLine(config: ResolvedConfig, m: Markers): string {
     const mode =
         config.mode === "explicit"
             ? `explicit list${config.profiles?.length ? ` (${config.profiles.length})` : ""}`
             : config.mode === "tag"
-              ? `tag ${config.tagKey ?? "Team"}=${config.tagValue ?? ""}`
-              : "system-defined";
+              ? `tag ${config.tagKey}=${config.tagValue}`
+              : "AWS-defined";
     return `${m.ok} Discovery: ${mode} · regions: ${config.regions.join(", ")}`;
 }
 
-export function registerStatisticsCommands(
-    pi: ExtensionAPI,
-    sources: {
-        config: ResolvedConfig;
-        statistics: StatisticsSource;
-        catalog: CatalogSource;
-        models(): BedrockModel[];
-        budget: BudgetSource;
-        publish(): void;
-        /** Resolves the profile for the doctor; absent in a test that only exercises another command. */
-        profiles?: ProfileResolver;
-        stored?: () => string | undefined;
-        /** The longer listing /login uses, so the doctor does not call a slow AWS CLI missing. */
-        listProfiles?: ListProfiles;
-        /** The local probes; a test supplies a controllable one instead of real child processes. */
-        check?: typeof checkLocalDependencies;
-        env?: NodeJS.ProcessEnv;
-    },
-): void {
-    const { config, statistics } = sources,
-        active = new Set<AbortController>();
-    const usage = async (period: UsagePeriod, signal: AbortSignal) => {
-        try {
-            const snapshot = await statistics.refresh(period, { force: true, signal });
-            if (period === "monthly") {
-                await sources.budget.refresh({ force: true, signal });
-                sources.publish();
-            }
-            return usageLines(snapshot);
-        } catch (error) {
-            if (signal.aborted) throw new UsageError("cancelled");
-            const old = statistics.load(period);
-            if (!old) throw error;
-            return [
-                error instanceof UsageError ? error.message : "Refresh failed.",
-                ...usageLines({ ...old, stale: true, refreshFailed: true }),
-            ];
+export interface BedrockCommandSources {
+    config: ResolvedConfig;
+    spend: SpendTracker;
+    catalog: CatalogSource;
+    models(): BedrockModel[];
+    profiles?: ProfileResolver;
+    stored?: () => string | undefined;
+    listProfiles?: ListProfiles;
+    check?: typeof checkLocalDependencies;
+    env?: NodeJS.ProcessEnv;
+    migrate?: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+}
+export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+
+export function registerBedrockCommands(pi: ExtensionAPI, sources: BedrockCommandSources): { bedrock: BedrockCommand } {
+    const { config, spend } = sources;
+    const env = sources.env ?? process.env;
+
+    const usage = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        const period = usageText(args);
+        if (period === undefined) {
+            emit(ctx, "Bedrock spend", ["✗ Unknown period.", "Next: /bedrock usage month"]);
+            return;
+        }
+        await spend.report(period, ctx);
+    };
+    const budget = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        const value = args.trim();
+        if (value === "") {
+            await spend.budgetReport(ctx);
+            return;
+        }
+        if (value === "off") {
+            config.monthlyBudgetUsd = undefined;
+            const saved = saveBudgetSetting(env, undefined);
+            emit(ctx, "Bedrock budget", [
+                saved.ok ? "✓ Budget removed." : `✗ ${saved.error}`,
+                "! Not an AWS limit; no request is blocked.",
+                "Next: /bedrock budget 200",
+            ]);
+            spend.updateFooter(ctx);
+            return;
+        }
+        const amount = Number(value);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            emit(ctx, "Bedrock budget", [
+                "✗ The budget must be a positive number of dollars.",
+                "Next: /bedrock budget 200",
+            ]);
+            return;
+        }
+        config.monthlyBudgetUsd = amount;
+        const saved = saveBudgetSetting(env, amount);
+        emit(ctx, "Bedrock budget", [
+            saved.ok ? `✓ Budget set to ${money(amount)}.` : `✗ ${saved.error}`,
+            "! Not an AWS limit; no request is blocked.",
+            "Next: /bedrock usage",
+        ]);
+        spend.updateFooter(ctx);
+    };
+    const profiles = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() !== "") {
+            emit(ctx, "Bedrock profiles", ["✗ Usage: /bedrock profiles"]);
+            return;
+        }
+        const catalog = sources.catalog.load();
+        const models = sources.models();
+        const m = markers(env);
+        emit(ctx, "Bedrock profiles", [
+            catalog
+                ? `${m.ok} ${catalog.profiles.length} profiles · ${models.length} models · observed ${new Date(catalog.fetched_at * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`
+                : `${m.warn} Catalog: not loaded. Run /bedrock-refresh.`,
+            `${m.ok} AWS profile: ${config.profile === undefined ? "none chosen" : clean(config.profile)}`,
+            discoveryLine(config, m),
+            "– Prices: Pi's model registry; no price means the reply counts as unpriced.",
+            ...models.slice(0, 3).map((model) => `✓ ${clean(model.id, 60)} · ${route(model)} · ${model.rateSource}`),
+            "Next: /bedrock-refresh",
+        ]);
+    };
+    const doctor = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() !== "") {
+            emit(ctx, "Bedrock doctor", ["✗ Usage: /bedrock doctor"]);
+            return;
+        }
+        const health = await (sources.check ?? checkLocalDependencies)({ signal: ctx.signal, env });
+        const m = markers(env);
+        let choice: ProfileChoice = sources.profiles
+            ? await sources.profiles.resolve({ stored: sources.stored?.(), signal: ctx.signal })
+            : { profile: config.profile };
+        if (choice.profile !== undefined && choice.exists === undefined && sources.listProfiles) {
+            const listed = await sources.listProfiles(ctx.signal);
+            if (listed !== undefined) choice = { ...choice, exists: listed.includes(choice.profile) };
+        }
+        emit(ctx, "Bedrock doctor", [
+            ...dependencyLines(health).map(
+                (line, index) =>
+                    `${index <= 1 && health[index === 0 ? "node" : "aws"].status !== "ready" ? m.fail : m.ok} ${line}`,
+            ),
+            profileLine(choice, m),
+            discoveryLine(config, m),
+            sources.catalog.load() ? `${m.ok} Catalog: loaded` : `${m.skip} Catalog: not loaded`,
+            `${config.spendCommand === undefined ? m.skip : spend.commandStatus().startsWith("ok") ? m.ok : m.warn} Spend command: ${spend.commandStatus()}`,
+            "Only local checks; no AWS call, credential read or model invocation.",
+        ]);
+    };
+    const full: BedrockCommand = async (args, ctx) => {
+        const [command = "", ...rest] = args.trim().split(/\s+/);
+        const tail = rest.join(" ");
+        switch (command) {
+            case "":
+            case "usage":
+                await usage(tail, ctx);
+                return;
+            case "budget":
+                await budget(tail, ctx);
+                return;
+            case "profiles":
+                await profiles(tail, ctx);
+                return;
+            case "doctor":
+                await doctor(tail, ctx);
+                return;
+            case "migrate":
+                if (sources.migrate) await sources.migrate("migrate", ctx);
+                else emit(ctx, "Bedrock", ["! No 0.2.x settings to migrate."]);
+                return;
+            default:
+                emit(ctx, "Bedrock", ["✗ Unknown command.", "Next: /bedrock usage"]);
         }
     };
     pi.registerCommand("bedrock-usage", {
-        description: "usage program user usage: daily | weekly | monthly (default), with tokens and estimated cost",
-        handler: async (args, ctx) => {
-            const period = args.trim() || "monthly";
-            if (!["daily", "weekly", "monthly"].includes(period)) {
-                ctx.ui.notify("Usage: /bedrock-usage [daily|weekly|monthly]", "warning");
-                return;
-            }
-            await showReport(
-                ctx,
-                "Bedrock · usage program usage",
-                (signal) => usage(period as UsagePeriod, signal),
-                active,
-            );
-        },
+        description: "Show this machine's Bedrock spend and the optional spend command",
+        handler: (args, ctx) => usage(args, ctx),
     });
     pi.registerCommand("bedrock-stats", {
-        description: "Compare local Pi Bedrock session usage with usage program's monthly user estimate",
-        handler: async (args, ctx) => {
-            if (args.trim()) {
-                ctx.ui.notify("Usage: /bedrock-stats", "warning");
-                return;
-            }
-            await showReport(
-                ctx,
-                "Bedrock · Statistics",
-                async (signal) => [
-                    ...sessionLines(ctx),
-                    "",
-                    ...(await usage("monthly", signal)),
-                    ...(config.monthlyBudgetUsd === undefined
-                        ? []
-                        : [
-                              `Personal monthly display budget: $${config.monthlyBudgetUsd}. This is not an AWS quota or enforced spend limit.`,
-                          ]),
-                ],
-                active,
-            );
-        },
+        description: "Show this machine's Bedrock spend (same as /bedrock usage)",
+        handler: (args, ctx) => usage(args, ctx),
     });
     pi.registerCommand("bedrock-profiles", {
-        description: "Show your available Bedrock models, regions and pricing sources from the current catalog",
-        handler: async (args, ctx) => {
-            if (args.trim()) {
-                ctx.ui.notify("Usage: /bedrock-profiles", "warning");
-                return;
-            }
-            await showReport(
-                ctx,
-                "Bedrock · Your profiles",
-                async () => {
-                    const catalog = sources.catalog.load(),
-                        models = sources.models();
-                    return [
-                        `${config.mode === "system" ? "Mode: system-defined" : config.mode === "explicit" ? "Mode: explicit list" : `Tag: ${clean(config.tagKey ?? "Team")}=${clean(config.tagValue)}`} · AWS profile: ${config.profile === undefined ? "none chosen" : clean(config.profile)} · regions: ${config.regions.join(", ")}`,
-                        catalog
-                            ? `Catalog observed ${new Date(catalog.fetched_at * 1000).toISOString()}${Date.now() / 1000 - catalog.fetched_at > 86_400 ? " (stale; /bedrock-refresh)" : ""}. ${catalog.profiles.length} active profiles / ${models.length} usable models.`
-                            : "No catalog yet. Run /login, then /bedrock-refresh.",
-                        "Catalog tags filter presentation; AWS IAM authorizes model access.",
-                        ...(catalog?.warnings ?? []).map((line) => `Note: ${line}`),
-                        ...(catalog?.errors ?? []).map(
-                            (error) => `Could not read ${clean(error.profile)}: ${clean(error.message)}.`,
-                        ),
-                        ...models.map(
-                            (m) =>
-                                `${clean(m.name)} · ${m.arn.split(":")[3]} · ${m.rateSource} / million tokens: input $${m.cost.input}, output $${m.cost.output}, cache read $${m.cost.cacheRead}, ${writeRates(m)}`,
-                        ),
-                    ];
-                },
-                active,
-            );
-        },
+        description: "Show the discovered Bedrock profiles and models",
+        handler: (args, ctx) => profiles(args, ctx),
     });
     pi.registerCommand("bedrock-doctor", {
-        description:
-            "Check local dependency versions, the configured AWS profile, optional usage program setup and catalog health without network calls or reading credentials",
-        handler: async (args, ctx) => {
-            if (args.trim()) {
-                ctx.ui.notify("Usage: /bedrock-doctor", "warning");
-                return;
-            }
-            await showReport(
-                ctx,
-                "Bedrock · Local health",
-                async (signal) => {
-                    const h = await (sources.check ?? checkLocalDependencies)(config, { signal }),
-                        cached = statistics.load("monthly");
-                    let choice: ProfileChoice = sources.profiles
-                        ? await sources.profiles.resolve({ stored: sources.stored?.(), signal })
-                        : { profile: config.profile };
-                    if (choice.profile !== undefined && choice.exists === undefined && sources.listProfiles) {
-                        const listed = await sources.listProfiles(signal);
-                        if (listed !== undefined) choice = { ...choice, exists: listed.includes(choice.profile) };
-                    }
-                    const m = markers(sources.env ?? process.env);
-                    return [
-                        "Local checks only; no network calls, credential reads, login or model invocation.",
-                        ...dependencyLines(h),
-                        profileLine(choice, m),
-                        discoveryLine(config, m),
-                        sources.catalog.load() ? `${m.ok} Catalog: loaded` : `${m.skip} Catalog: not loaded`,
-                        cached
-                            ? `usage program report contract: ${cached.report.contract} · ${cached.stale ? "stale" : "fresh"} · ${cached.refreshFailed ? "last refresh failed" : "last refresh succeeded"}`
-                            : "usage program report: unavailable; /bedrock-usage tests the read-only statistics path.",
-                        ...(!h.usage || h.bash.status !== "ready" || h.jq.status !== "ready"
-                            ? [
-                                  "Install usage program's prerequisites and set usageDir to the directory containing its executable usage file. Shell aliases and RC functions are not used.",
-                              ]
-                            : []),
-                        "usage program is optional for model use. /login chooses the AWS profile; /aws-login renews its SSO session; /bedrock-refresh refreshes the catalog.",
-                    ];
-                },
-                active,
-            );
-        },
+        description: "Check local dependencies, the AWS profile and the catalog without network calls",
+        handler: (args, ctx) => doctor(args, ctx),
     });
-    pi.on("session_shutdown", () => {
-        for (const controller of active) controller.abort();
-        active.clear();
-    });
+    return { bedrock: full };
 }

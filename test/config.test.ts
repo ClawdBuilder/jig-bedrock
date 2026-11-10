@@ -86,20 +86,33 @@ describe("the section's messages", () => {
 });
 
 describe("the environment", () => {
-    test("JIG_BEDROCK_TEAM, _PROFILE, _REGIONS and _PAT_DIR still win over the file, and give a team the file lacks", () => {
+    test("JIG_BEDROCK_TEAM, _PROFILE, _REGIONS and _REGIONS still win over the file, and give a team the file lacks", () => {
         const env = {
             JIG_BEDROCK_TEAM: "From The Environment",
             JIG_BEDROCK_PROFILE: "env-profile",
             JIG_BEDROCK_REGIONS: "us-west-2, eu-west-1",
-            JIG_BEDROCK_USAGE_DIR: "/env/usage",
         };
-        const raw = { team: "From The File", profile: "file-profile", regions: ["us-east-1"], usageDir: "/file/usage" };
+        const raw = { team: "From The File", profile: "file-profile", regions: ["us-east-1"] };
         const config = loadConfig({ raw, env }).config;
         assert.equal(config?.team, "From The Environment");
         assert.equal(config?.profile, "env-profile");
         assert.deepEqual(config?.regions, ["us-west-2", "eu-west-1"]);
-        assert.equal(config?.usageDir, "/env/usage");
         assert.equal(loadConfig({ raw: undefined, env }).config?.team, "From The Environment");
+    });
+});
+
+describe("bedrock.spendCommand", () => {
+    test("is an argv array and a bad one names the key", () => {
+        assert.deepEqual(validateBedrock({ team: "t", spendCommand: ["my-spend", "--json"] }), []);
+        const okay = loadConfig({ raw: { team: "t", spendCommand: ["my-spend"] }, env: {} });
+        assert.deepEqual(okay.config?.spendCommand, ["my-spend"]);
+        for (const value of ["my-spend", [], ["my-spend", 1], ["my-spend", ""]]) {
+            assert.match(
+                validateBedrock({ team: "t", spendCommand: value })[0] ?? "",
+                /^bedrock\.spendCommand must be/,
+            );
+            assert.equal(loadConfig({ raw: { team: "t", spendCommand: value }, env: {} }).config, undefined);
+        }
     });
 });
 

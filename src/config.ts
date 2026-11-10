@@ -5,7 +5,6 @@
 //   profile            the AWS profile to sign in with; absent means /login's choice, then AWS_PROFILE, then the
 //                      default profile if AWS lists it (no placeholder)
 //   regions            where to look for profiles (default us-east-1)
-//   usageDir             a folder holding an executable named usage that prints the usage JSON (optional; default ~/.local/share/usage-tool)
 //   monthlyBudgetUsd   a figure to show in the footer next to the month's spend; not an AWS limit (optional)
 //   ssoLoginCommand    the argv of the login, with {profile} for the profile (default aws sso login --profile {profile})
 //   signInAtStart      sign in when Pi starts and the SSO session has expired, instead of at the first failed request (default false)
@@ -13,7 +12,7 @@
 //   api                the Bedrock route: messages, the Anthropic Messages route (default), or converse, the older route
 //
 // Environment variables override the settings: JIG_BEDROCK_TEAM, JIG_BEDROCK_PROFILE, JIG_BEDROCK_REGIONS (comma
-// separated) and JIG_BEDROCK_USAGE_DIR.
+// separated).
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Check } from "./check.ts";
@@ -34,7 +33,8 @@ export interface ResolvedConfig {
     /** Where an explicitly configured profile came from, for diagnostics. */
     profileSource?: "setting" | "env";
     regions: string[];
-    usageDir: string;
+    /** Optional argv that prints { month, spentUsd }; never a shell. */
+    spendCommand?: string[];
     monthlyBudgetUsd?: number;
     ssoLoginCommand: string[];
     signInAtStart: boolean;
@@ -65,7 +65,7 @@ export const FIELDS = [
     "profiles",
     "profile",
     "regions",
-    "usageDir",
+    "spendCommand",
     "monthlyBudgetUsd",
     "ssoLoginCommand",
     "signInAtStart",
@@ -75,7 +75,6 @@ export const FIELDS = [
 
 export const DEFAULTS = {
     regions: ["us-east-1"],
-    usageDir: "~/.local/share/usage-tool",
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
     signInAtStart: false,
     api: "messages" as BedrockApi,
@@ -96,7 +95,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         profiles,
         profile,
         regions,
-        usageDir,
+        spendCommand,
         monthlyBudgetUsd,
         ssoLoginCommand,
         signInAtStart,
@@ -158,8 +157,16 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     ) {
         problems.push("bedrock.regions must contain 1-16 unique AWS region names");
     }
-    if (typeof usageDir !== "string" || usageDir.trim() === "" || control.test(usageDir)) {
-        problems.push("bedrock.usageDir must be a nonempty local path");
+    if (
+        spendCommand !== undefined &&
+        (!Array.isArray(spendCommand) ||
+            spendCommand.length === 0 ||
+            spendCommand.length > 64 ||
+            spendCommand.some(
+                (part) => typeof part !== "string" || part === "" || part.length > 4096 || control.test(part),
+            ))
+    ) {
+        problems.push("bedrock.spendCommand must be a nonempty argv array of strings, without a shell");
     }
     if (
         monthlyBudgetUsd !== undefined &&
@@ -238,7 +245,6 @@ export function loadConfig(
         c.profile = env.JIG_BEDROCK_PROFILE;
         profileSource = "env";
     }
-    if (env.JIG_BEDROCK_USAGE_DIR !== undefined) c.usageDir = env.JIG_BEDROCK_USAGE_DIR;
     if (env.JIG_BEDROCK_REGIONS !== undefined)
         c.regions = env.JIG_BEDROCK_REGIONS.split(",").map((region) => region.trim());
     if (typeof c.profile === "string" && c.profile.trim() === "") {

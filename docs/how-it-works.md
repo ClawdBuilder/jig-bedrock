@@ -1,7 +1,7 @@
 # How it works
 
-What happens between a setting and a streamed reply: discovery, the two routes to Claude, model ids, and the usage
-footer. Read it when a profile is missing, a request fails, or a model shows an unexpected name.
+What happens between a setting and a streamed reply: discovery, the two routes to Claude, model ids, and the spend
+record and footer. Read it when a profile is missing, a request fails, or a model shows an unexpected name.
 
 ## When things run
 
@@ -47,7 +47,7 @@ inference-profile ARNs. Every other model uses Converse, and `api: "converse"` p
 stream.
 
 On Messages the tools array stays stable, so a changed tool list does not break the prompt cache; on Converse it does.
-The footer and usage figures are the same on both.
+The footer and spend figures are the same on both.
 
 ## Model ids
 
@@ -64,19 +64,20 @@ under another provider still selects the model by its ARN.
 A profile whose foundation model is not in Pi's registry, or whose model has no price, is not listed. `/bedrock-profiles`
 gives the reason, and the startup notice names the first.
 
-## The usage footer
+## Spend and the footer
 
-The provider runs the spend command with `--monthly`; without one there is nothing to show. The budget and footer are
-part of this package's own interface, not another program's event bus.
+After every assistant reply from this provider, the extension appends one line to its monthly JSONL record under
+`${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`. The record has the time, session id, short model id, region, route,
+four token counts, Pi's computed cost and a priced flag; it has no prompt, ARN, account id or profile.
 
-The label is `<Mon> $spend / $budget`, for example `Oct $203 / $200`. A trailing `+` on the spend means some usage had no
-price, so the figure is a lower bound. From 80% of `monthlyBudgetUsd` the part turns to a warning, and at or over the
-budget it is an error. With no `monthlyBudgetUsd` it shows the spend alone. Months roll over in UTC, and a figure from
-another month is not shown.
+`ctx.ui.setStatus("jig-bedrock", …)` shows the month and this machine's priced total, for example `Nov $12.40`; with a
+`monthlyBudgetUsd` it adds `/ $200`. A trailing `+` marks a month with an unpriced reply. The status clears when another
+provider's model is selected. It is set at session start and after each reply, only when `ctx.hasUI` is true.
 
-The figure is cached in `~/.cache/jig-bedrock/budget.json`. While a Bedrock model is selected in the TUI, the provider
-refreshes it in the background at most every five minutes; a failed refresh keeps the last figure.
-`/bedrock-usage monthly` shows the same figure with its per-model rows, and `/bedrock-stats` compares it with the local
-session records.
+The budget is a display figure, not an AWS limit. The first reply over 80% and over 100% each produce one notice; the
+state file under the same spend folder keeps those notices to once per month per machine, and a session that starts over
+100% gets its own one-line reminder. Requests are never blocked.
 
-[Back to the README](../README.md).
+An optional `spendCommand` (argv, no shell) prints `{ "month": "2026-11", "spentUsd": 203.4 }`; it is run at most once
+every 10 minutes and at `/bedrock usage`, with the configured AWS profile and first region. While it works, the footer and
+budget use its figure; on failure the local record is used and `/bedrock doctor` names the reason.

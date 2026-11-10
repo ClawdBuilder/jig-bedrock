@@ -19,7 +19,6 @@ const arn = (id: string) => `arn:aws:bedrock:${REGION}:${ACCOUNT}:inference-prof
 const config = {
     profile: "my-profile",
     regions: [REGION],
-    usageDir: "/missing-usage",
     ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
     signInAtStart: false,
 };

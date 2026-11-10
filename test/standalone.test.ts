@@ -14,7 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { category, createAwsDiscovery, discoveryHelp, type Runner } from "../src/aws-discovery.ts";
-import { createBudget, parseBudget } from "../src/budget.ts";
 import { bedrockStream, discoveredProfiles, registerBedrockSelectionGuard, usePiRegistry } from "../src/catalog.ts";
 import { checkBedrock, loadConfig } from "../src/config.ts";
 import { createRecovery } from "../src/login.ts";
@@ -30,7 +29,6 @@ const config = {
     team: "fixture-team",
     profile: "fixture-profile",
     regions: ["us-east-1", "us-west-2"],
-    usageDir: "/missing-usage",
     ssoLoginCommand: ["fixture", "{profile}"],
     signInAtStart: false,
 };
@@ -181,13 +179,11 @@ test("config precedence and invalid or missing teams fail closed without throwin
         JIG_BEDROCK_TEAM: "env-team",
         JIG_BEDROCK_PROFILE: "env-profile",
         JIG_BEDROCK_REGIONS: "eu-west-1",
-        JIG_BEDROCK_USAGE_DIR: "/explicit-usage",
     })!;
     assert.equal(c.team, "env-team");
     assert.equal(c.profile, "env-profile");
     assert.deepEqual(c.regions, ["eu-west-1"]);
     assert.equal(c.monthlyBudgetUsd, 25);
-    assert.equal(c.usageDir, "/explicit-usage");
     // The section alone, with the package defaults filling the rest.
     const plain = resolveConfig(section)!;
     assert.deepEqual(
@@ -196,7 +192,6 @@ test("config precedence and invalid or missing teams fail closed without throwin
     );
     assert.deepEqual(resolveConfig({ team: "t" })!.ssoLoginCommand, ["aws", "sso", "login", "--profile", "{profile}"]);
     assert.equal(resolveConfig({ team: "t" })!.profile, undefined);
-    assert.equal(resolveConfig({ team: "t" })!.usageDir, "~/.local/share/usage-tool");
     for (const team of ["", " ", "bad\nteam", "x".repeat(257)])
         assert.equal(resolveConfig(undefined, { JIG_BEDROCK_TEAM: team }), undefined);
     assert.equal(
@@ -223,7 +218,7 @@ test("configuration diagnostics identify invalid fields without exposing their c
         assert.doesNotMatch(result.error!, /private-canary/);
     }
 });
-test("the bedrock section is checked when jig.json is read: each problem names its key and none repeats a value", () => {
+test("the bedrock section is checked: each problem names its key and none repeats a value", () => {
     const errors = (raw: unknown): string[] => {
         const found: string[] = [];
         checkBedrock(raw, found);
@@ -235,7 +230,6 @@ test("the bedrock section is checked when jig.json is read: each problem names i
             team: "t",
             profile: "p",
             regions: ["us-east-1", "eu-west-1"],
-            usageDir: "~/usage",
             ssoLoginCommand: ["aws", "sso", "login", "--profile", "{profile}"],
         }),
         [],
@@ -324,80 +318,6 @@ test("no team is the system-defined mode, not a disabled provider", () => {
     assert.equal(config.mode, "system");
     assert.equal(config.team, undefined);
 });
-test("usage program parse and scoped cache throttle refresh and preserve last good spend", async (t) => {
-    let now = Date.now(),
-        calls = 0,
-        fail = false;
-    const report =
-        "shell preamble\n" +
-        JSON.stringify({
-            user: "fixture",
-            period: "Current Month",
-            summary: {
-                total_requests: 1,
-                total_input_tokens_fresh: 2,
-                total_cache_read_tokens: 3,
-                total_cache_write_tokens: 4,
-                total_input_tokens: 9,
-                total_output_tokens: 5,
-                total_estimated_cost_usd: 12.5,
-            },
-            profiles: [
-                {
-                    user: "fixture",
-                    model_slug: "fixture-model",
-                    profile_name: "fixture-profile",
-                    requests: 1,
-                    input_tokens_fresh: 2,
-                    cache_read_tokens: 3,
-                    cache_write_tokens: 4,
-                    total_input_tokens: 9,
-                    output_tokens: 5,
-                    estimated_cost_usd: 12.5,
-                },
-            ],
-        });
-    const file = join(directory(t), "budget.json"),
-        budget = createBudget(
-            { ...config, monthlyBudgetUsd: 100 },
-            async (_program, args) => {
-                calls++;
-                assert.deepEqual(args, ["--monthly", "--output", "json"]);
-                if (fail) throw new Error("secret");
-                return report;
-            },
-            file,
-            () => now,
-        );
-    assert.equal(parseBudget(report, new Date(now).toISOString().slice(0, 7), now).limitUsd, undefined);
-    await Promise.all([budget.refresh(), budget.refresh()]);
-    await budget.refresh();
-    assert.equal(calls, 1);
-    assert.equal(budget.load()?.remainingUsd, 87.5);
-    now += 300001;
-    fail = true;
-    await budget.refresh();
-    assert.equal(budget.load()?.spentUsd, 12.5);
-    assert.equal(budget.load()?.refreshFailed, true);
-    assert.doesNotMatch(readFileSync(file, "utf8"), /secret|summary/);
-    assert.equal(
-        createBudget(
-            { ...config, profile: "other" },
-            async () => "",
-            file,
-            () => now,
-        ).load(),
-        undefined,
-    );
-    for (const raw of [true, -1, "12"])
-        assert.throws(() =>
-            parseBudget(
-                JSON.stringify({ period: "Current Month", summary: { total_estimated_cost_usd: raw } }),
-                new Date(now).toISOString().slice(0, 7),
-                now,
-            ),
-        );
-});
 test("SSO lock shares one browser, cleans stale owners, ignores output and bounds abort", async (t) => {
     const dir = directory(t),
         lock = join(dir, "login.lock"),
@@ -437,7 +357,7 @@ test("standalone stream blocks unknown, removed and cross-scope profiles before 
             },
         ],
     } as any);
-    const models = discoveredProfiles(source.load(), config.usageDir, "converse").available;
+    const models = discoveredProfiles(source.load(), "", "converse").available;
     assert.equal(models.length, 1);
     let calls = 0;
     const stream = bedrockStream(
@@ -547,7 +467,7 @@ test("catalog rejects symlinks, loose permissions, duplicate ARNs and future tim
     writeFileSync(file, "x".repeat(1048577), { mode: 0o600 });
     assert.equal(source.load(), undefined);
 });
-test("catalog uses exact registry metadata and usage program pricing without copying unrelated fields", async (t) => {
+test("catalog uses exact Pi registry metadata and marks a model with no price", async (t) => {
     const dir = directory(t),
         file = join(dir, "catalog.json"),
         f = fixture();
@@ -568,23 +488,11 @@ test("catalog uses exact registry metadata and usage program pricing without cop
             },
         ],
     } as any);
-    writeFileSync(
-        join(dir, "models.json"),
-        JSON.stringify([
-            {
-                key: "fixture",
-                pricing: { input: 3, output: 4, cache_read: 1, cache_write: 2 },
-                token: "credential-canary",
-            },
-        ]),
-    );
     const found = discoveredProfiles(source.load(), dir);
-    assert.equal(found.available[0]!.rateSource, "usage program");
+    assert.equal(found.available[0]!.rateSource, "Pi registry");
     assert.equal(found.available[0]!.contextWindow, 2000);
-    assert.equal(found.available[0]!.cost.input, 3);
+    assert.equal(found.available[0]!.cost.input, 1);
     assert.doesNotMatch(JSON.stringify(found), /credential-canary|apiKey|token/);
-    rmSync(join(dir, "models.json"));
-    assert.equal(discoveredProfiles(source.load(), dir).available[0]!.rateSource, "Pi registry");
     usePiRegistry({ getModels: () => [] } as any);
     const unknown = discoveredProfiles(source.load(), dir);
     assert.equal(unknown.available.length, 0);

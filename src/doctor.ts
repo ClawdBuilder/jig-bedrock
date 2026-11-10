@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import type { ResolvedConfig } from "./config.ts";
-import { executableExists, usageExecutable } from "./usage.ts";
 
 type CheckStatus = "ready" | "old" | "missing" | "timeout" | "cancelled" | "overflow" | "unrecognized" | "unavailable";
 export interface DependencyCheck {
@@ -10,9 +8,6 @@ export interface DependencyCheck {
 export interface LocalDependencyHealth {
     node: DependencyCheck;
     aws: DependencyCheck;
-    bash: DependencyCheck;
-    jq: DependencyCheck;
-    usage: boolean;
     platform: NodeJS.Platform;
 }
 interface CheckOptions {
@@ -25,16 +20,12 @@ interface CheckOptions {
     spawn?: typeof spawn;
     timer?: (fn: () => void, ms: number) => () => void;
 }
-type Tool = "aws" | "bash" | "jq";
+type Tool = "aws";
 const commands: Record<Tool, string[]> = {
     aws: ["--version"],
-    bash: ["--noprofile", "--norc", "--version"],
-    jq: ["--version"],
 };
 const patterns: Record<Tool, RegExp> = {
     aws: /\baws-cli\/(\d{1,6}\.\d{1,6}\.\d{1,6})(?![\d.])/,
-    bash: /\bGNU bash, version (\d{1,6}\.\d{1,6}\.\d{1,6})(?![\d.])/,
-    jq: /\bjq-(\d{1,6}\.\d{1,6}(?:\.\d{1,6})?)(?![\d.])/,
 };
 const atLeast = (version: string, minimum: number[]) => {
     const parts = version.split(".").map(Number);
@@ -134,25 +125,11 @@ function probe(tool: Tool, minimum: number[] | undefined, options: CheckOptions)
         if (options.signal?.aborted) abort();
     });
 }
-export async function checkLocalDependencies(
-    config: ResolvedConfig,
-    options: CheckOptions = {},
-): Promise<LocalDependencyHealth> {
+export async function checkLocalDependencies(options: CheckOptions = {}): Promise<LocalDependencyHealth> {
     const platform = options.platform ?? process.platform;
     const nodeVersion = /^(\d{1,6}\.\d{1,6}\.\d{1,6})$/.exec(options.nodeVersion ?? process.versions.node)?.[1];
-    const [aws, bash, jq] = await Promise.all([
-        probe("aws", [2, 0, 0], options),
-        probe("bash", [4, 0, 0], options),
-        probe("jq", platform === "darwin" ? [1, 8] : undefined, options),
-    ]);
-    return {
-        node: versionCheck(nodeVersion, [22, 19, 0]),
-        aws,
-        bash,
-        jq,
-        usage: executableExists(usageExecutable(config)),
-        platform,
-    };
+    const aws = await probe("aws", [2, 0, 0], options);
+    return { node: versionCheck(nodeVersion, [22, 19, 0]), aws, platform };
 }
 const statusText: Record<CheckStatus, string> = {
     ready: "ready",
@@ -170,18 +147,6 @@ export function dependencyLines(health: LocalDependencyHealth): string[] {
     return [
         line("Node (this Pi process)", health.node, "requires 22.19+"),
         line("AWS CLI", health.aws, "requires v2"),
-        line("Bash", health.bash, "usage program statistics require 4+"),
-        line(
-            "jq",
-            health.jq,
-            health.platform === "darwin"
-                ? "usage program on macOS requires 1.8+"
-                : "usage program statistics dependency; no documented Linux version floor",
-        ),
-        `usage program executable: ${health.usage ? "found" : "missing"} (optional; not executed by this check)`,
-        ...(health.aws.version && atLeast(health.aws.version, [2, 0, 0]) && !atLeast(health.aws.version, [2, 22, 0])
-            ? ["usage program's tooling check requires AWS CLI 2.22 or later."]
-            : []),
-        "Only local --version output is checked; IAM access and the full usage program toolchain are not verified.",
+        "Only local --version output is checked; IAM access is not verified.",
     ];
 }
