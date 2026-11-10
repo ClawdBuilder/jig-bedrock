@@ -11,6 +11,7 @@
 - A reply is recorded as `jig-bedrock/<short model id>`, while the inference-profile ARN goes on the wire. Sessions written by 0.2.x with the built-in provider and an ARN resume on the same model; built-in sessions with a plain id are left alone.
 - A one-release migration reads a 0.2.x `jig.json` only to show one notice and copy its `bedrock` section to `bedrock.json` through `/bedrock migrate`; the copy is private and never overwrites an existing file.
 - The subagent-child environment check and the remaining internal names were removed; the scan still covers the public tree.
+- The AWS SDK's credential chain (`@aws-sdk/credential-provider-node`) is now this package's own dependency, installed with it, instead of being looked up in Pi's install folder. A new Pi that moves or drops that dependency no longer breaks sign-in checks or signed requests; the install is about 5 MB larger. `PI_HOST_DIR` is no longer read.
 
 ## [0.2.5] - 2026-11-10
 

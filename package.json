@@ -32,6 +32,9 @@
         "scan": "node scripts/scan-company-strings.mjs",
         "check:emails": "node scripts/check-commit-emails.mjs"
     },
+    "dependencies": {
+        "@aws-sdk/credential-provider-node": "3.972.95"
+    },
     "devDependencies": {
         "@biomejs/biome": "2.6.4",
         "@types/node": "26.6.6",

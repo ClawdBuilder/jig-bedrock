@@ -35,11 +35,11 @@ import { isObject } from "./check.ts";
 import { registerStatisticsCommands } from "./commands.ts";
 import type { BedrockApi, ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
+import { loadCredentialProvider } from "./credential-provider.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { runLoginFlow } from "./login-flow.ts";
-import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
 import {
     createListProfiles,
@@ -300,21 +300,20 @@ export function createBedrockProvider(
         // waiting) and be an SSO profile, or no `aws sso login` child starts.
         const recoveryForLogin =
             options.ssoRecover ?? checkedRecovery(recovery, { manualList: loginListProfiles, env: profileEnv });
-        // The Messages route signs with the profile's SSO credentials; the credential chain is loaded from Pi's install on the
-        // first request, so nothing here reaches AWS at registration. Tests supply both.
+        // The Messages route signs with the profile's SSO credentials; the credential chain is loaded from this package's own SDK on
+        // the first request, so nothing here reaches AWS at registration. Tests supply both.
         const signedFetch = createSignedFetch({
             credentials:
                 options.credentials ??
                 (() => {
                     // One chain per profile, made on the first request: it caches the role's credentials and
                     // refreshes them. No profile means the SDK's own chain (environment, container, instance).
-                    const host = findPiHost(options.env);
                     let chain: { profile: string | undefined; load: () => Promise<AwsCredentials> } | undefined;
                     return async () => {
                         const profile = currentProfile();
                         let entry = chain;
                         if (entry === undefined || entry.profile !== profile) {
-                            const provider = loadCredentialProvider(host);
+                            const provider = await loadCredentialProvider();
                             entry = {
                                 profile,
                                 load: provider(

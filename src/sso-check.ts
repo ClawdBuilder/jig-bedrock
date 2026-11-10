@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { CredentialProvider } from "./pi-host.ts";
-import { findPiHost, loadCredentialProvider } from "./pi-host.ts";
+import type { CredentialProvider } from "./credential-provider.ts";
+import { loadCredentialProvider } from "./credential-provider.ts";
 
 /** `ok`: the credentials resolve. `sign-in`: the SSO session has expired. `error`: the check itself could not tell. */
 export type SsoState = "ok" | "sign-in" | "error";
@@ -51,8 +51,8 @@ export interface SsoCheckDeps {
     /** The text of a file; throws when it cannot be read. */
     readText(file: string): string;
     now(): number;
-    /** The SDK's `defaultProvider`, from Pi's install. Throws when it cannot be loaded. */
-    credentialProvider(): CredentialProvider;
+    /** The SDK's `defaultProvider`, from this package's own dependency. Rejects when it cannot be loaded. */
+    credentialProvider(): Promise<CredentialProvider>;
     /** How long the SDK may take before the answer is `error`. */
     timeoutMs: number;
 }
@@ -63,7 +63,7 @@ export function systemSsoDeps(env: NodeJS.ProcessEnv = process.env): SsoCheckDep
         home: homedir(),
         readText: (file) => readFileSync(file, "utf8"),
         now: Date.now,
-        credentialProvider: () => loadCredentialProvider(findPiHost(env)),
+        credentialProvider: loadCredentialProvider,
         timeoutMs: 10_000,
     };
 }
@@ -106,7 +106,9 @@ export async function checkSso(
     const timer = setTimeout(() => controller.abort(), deps.timeoutMs);
     try {
         // The SDK's answer is dropped: only whether it resolved matters.
-        await until(deps.credentialProvider()({ profile })(), signal ? AbortSignal.any([signal, limit]) : limit);
+        // Loading the SDK is inside the limit too: a first import from a slow disk is the check's time, not extra.
+        const resolve = async () => (await deps.credentialProvider())({ profile })();
+        await until(resolve(), signal ? AbortSignal.any([signal, limit]) : limit);
         return "ok";
     } catch (error) {
         return classify(error);
