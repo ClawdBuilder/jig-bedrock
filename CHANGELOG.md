@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- When Jig's `bedrock` settings arrive after jig-bedrock loads, a catalog cache that matches the new profile and tag is used first, with no AWS call and no wait even when the AWS CLI is slow. A slow discovery now says so instead of reporting the saved model as unavailable.
+
 ## [0.2.4] - 2026-11-10
 
 Choose how you sign in to AWS from `/login`, and create an SSO or role profile without leaving Pi.

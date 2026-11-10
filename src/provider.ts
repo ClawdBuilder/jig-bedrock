@@ -169,7 +169,13 @@ export function createJigBedrock(
         const currentApi = (): BedrockApi => config?.api ?? "messages";
         const events = options.events ?? { provider: "jig-bedrock:provider", usage: "jig-bedrock:usage" };
         const models: TeamBedrockModel[] = [];
-        const guard = registerBedrockSelectionGuard(pi, models, options.selection ?? { agentDir: config?.agentDir });
+        let discoverySlow = false;
+        const guard = registerBedrockSelectionGuard(pi, models, {
+            ...(options.selection ?? { agentDir: config?.agentDir }),
+            // The provider's own start-up notice covers "still loading"; input warns if no model appeared.
+            deferStartupWarning: () => backgroundRefresh,
+            discoverySlow: () => discoverySlow,
+        });
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
             const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;
@@ -341,6 +347,13 @@ export function createJigBedrock(
         const refresh = async (force = true): Promise<Status> => {
             const status = await catalog.refresh(force);
             if (disposed) return status;
+            discoverySlow = status === "timeout" || status === "network";
+            if (status !== "ok" && models.length === 0 && ctx) {
+                const message = discoverySlow
+                    ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh."
+                    : `Bedrock discovery ${status}. ${discoveryHelp(status)}`;
+                ctx.ui.notify(message, "warning");
+            }
             const updated = readModels().available;
             const selected = ctx?.model;
             if (isJigBedrock(selected)) {

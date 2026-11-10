@@ -527,11 +527,21 @@ export async function registerTeamBedrock(
 export function registerBedrockSelectionGuard(
     pi: Pick<ExtensionAPI, "on" | "setModel">,
     models: TeamBedrockModel[],
-    options: { agentDir?: string; explicitSelection?: () => boolean } = {},
+    options: {
+        agentDir?: string;
+        explicitSelection?: () => boolean;
+        /** While a background discovery is running, the provider has a better "still loading" notice; warn on input. */
+        deferStartupWarning?: () => boolean;
+        /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
+        discoverySlow?: () => boolean;
+    } = {},
 ): { blockUntilChoice(): void } {
     let unresolvedSavedSelection = false;
-    const warning =
+    const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
+    const slowWarning =
+        "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh.";
+    const warning = () => (options.discoverySlow?.() === true ? slowWarning : unavailableWarning);
     const unsupported = (ctx: ExtensionContext) =>
         unresolvedSavedSelection ||
         (isJigBedrock(ctx.model) &&
@@ -571,28 +581,31 @@ export function registerBedrockSelectionGuard(
                 target = match && ctx.modelRegistry.find(JIG_BEDROCK, match.id);
             if (!target) {
                 unresolvedSavedSelection = true;
-                ctx.ui.notify(warning, "warning");
-                warned = true;
+                if (options.deferStartupWarning?.() !== true) {
+                    ctx.ui.notify(warning(), "warning");
+                    warned = true;
+                }
             } else if (ctx.model?.provider !== target.provider || ctx.model.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
-                    ctx.ui.notify(warning, "warning");
+                    ctx.ui.notify(warning(), "warning");
                     warned = true;
                 } else unresolvedSavedSelection = false;
             }
         }
-        if (!warned && unsupported(ctx)) ctx.ui.notify(warning, "warning");
+        if (!warned && options.deferStartupWarning?.() !== true && unsupported(ctx))
+            ctx.ui.notify(warning(), "warning");
     };
     pi.on("session_start", restore);
     pi.on("model_select", (event, ctx) => {
         if (event.source === "set" || event.source === "cycle") unresolvedSavedSelection = false;
-        if (unsupported(ctx)) ctx.ui.notify(warning, "warning");
+        if (unsupported(ctx)) ctx.ui.notify(warning(), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
-        ctx.ui.notify(warning, "warning");
+        ctx.ui.notify(warning(), "warning");
         return { action: "handled" };
     });
     return {
