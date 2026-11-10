@@ -37,8 +37,8 @@ type AnthropicRegistryModule = {
     builtinProviders?: () => Array<{ id?: unknown; getModels?: () => readonly unknown[] }>;
 };
 /**
- * Pi's registry path is not a stable peer API. A Pi that lacks it (older or newer) must leave the fallback name
- * pattern in charge, never stop the provider: an import failure empties the registry.
+ * Pi's registry path is not a stable peer API. A Pi that lacks it (older or newer) must not stop the provider: an
+ * import failure empties the registry, and with no entry to vouch for a model every model uses Converse (`routeOf`).
  */
 export async function usePiAnthropicRegistry(
     load: () => Promise<unknown> = () => import("@earendil-works/pi-ai/providers/all"),
