@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `/login` now asks how you sign in to AWS: an existing profile, a sign-in to an existing IAM Identity Center (SSO) profile, access keys or a role set up in the AWS CLI, or the ambient credential chain. It refuses a Bedrock API key and names the alternatives, checks the profile with `aws sts get-caller-identity`, and saves the discovery mode and regions it asks for.
+
+### Changed
+
+- The discovery choice and regions from `/login` are saved to `bedrock.json`, never the profile and never a secret. When Jig's `bedrock` section sets the same key, the login says which value wins.
+
 ## [0.2.3] - 2026-11-10
 
 Sign in from `/login` with an AWS profile, clear first-run messages, and Jig in either install order.

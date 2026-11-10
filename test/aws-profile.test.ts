@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkedRecovery, parseAwsConfig, profileProblem } from "../src/aws-profile.ts";
+import { checkedRecovery, isSsoProfile, parseAwsConfig, profileProblem, verifyAwsProfile } from "../src/aws-profile.ts";
 import { SsoRecoveryError } from "../src/sso.ts";
 
 const MODERN = [
@@ -156,4 +156,52 @@ test("the automatic repair does not wait for a profile listing", async () => {
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test("isSsoProfile reads the config for modern, legacy and non-SSO profiles", () => {
+    const modern = configWith(MODERN);
+    try {
+        assert.equal(isSsoProfile("demo-sso", modern.env), true);
+        assert.equal(isSsoProfile("keys", modern.env), false);
+        assert.equal(isSsoProfile("absent", modern.env), false);
+    } finally {
+        rmSync(modern.dir, { recursive: true, force: true });
+    }
+    const legacy = configWith(LEGACY);
+    try {
+        assert.equal(isSsoProfile("legacy", legacy.env), true);
+    } finally {
+        rmSync(legacy.dir, { recursive: true, force: true });
+    }
+});
+
+test("verifyAwsProfile reports only success or a plain failure, never raw CLI output", async () => {
+    const env = {};
+    const calls: Array<{ profile: string | undefined; timeout: number }> = [];
+    const ok = await verifyAwsProfile("demo-sso", {
+        env,
+        run: async (profile, _env, timeout) => {
+            calls.push({ profile, timeout });
+            return true;
+        },
+    });
+    assert.deepEqual(ok, { ok: true });
+    assert.deepEqual(calls, [{ profile: "demo-sso", timeout: 15_000 }]);
+
+    const failed = await verifyAwsProfile(undefined, {
+        env,
+        run: async () => false,
+    });
+    assert.equal(failed.ok, false);
+    assert.match(failed.ok ? "" : failed.message, /credential chain/);
+    assert.match(failed.ok ? "" : failed.message, /did not answer/);
+
+    const threw = await verifyAwsProfile("keys", {
+        env,
+        run: async () => {
+            throw new Error("private-canary stderr");
+        },
+    });
+    assert.equal(threw.ok, false);
+    assert.doesNotMatch(threw.ok ? "" : threw.message, /private-canary/);
 });

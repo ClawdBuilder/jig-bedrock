@@ -2,6 +2,7 @@
 // AWS CLI when the profile `aws configure list-profiles` names is an IAM Identity Center (SSO) profile in the AWS config.
 // It reads the config (never the credentials file) and the profile list; the profile list is only asked for when a person
 // is waiting, because it costs one CLI start.
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,69 @@ export function parseAwsConfig(text: string): Map<string, Map<string, string>> {
         current.set(line.slice(0, equals).trim().toLowerCase(), line.slice(equals + 1).trim());
     }
     return sections;
+}
+
+function readConfig(env: NodeJS.ProcessEnv): string | undefined {
+    try {
+        return readFileSync(awsConfigFile(env), "utf8");
+    } catch {
+        return undefined;
+    }
+}
+
+/** Whether the AWS config gives this profile an IAM Identity Center section (modern or legacy). */
+export function isSsoProfile(profile: string, env: NodeJS.ProcessEnv = process.env): boolean {
+    const text = readConfig(env);
+    if (text === undefined) return false;
+    const sections = parseAwsConfig(text);
+    const section = sections.get(`profile:${profile}`) ?? sections.get(profile);
+    return section?.get("sso_session") !== undefined || section?.get("sso_start_url") !== undefined;
+}
+
+/** One `aws sts get-caller-identity` call: does this profile (or the credential chain) answer? */
+export type StsRun = (
+    profile: string | undefined,
+    env: NodeJS.ProcessEnv,
+    timeoutMs: number,
+    signal?: AbortSignal,
+) => Promise<boolean>;
+
+export const runStsIdentity: StsRun = (profile, env, timeoutMs, signal) =>
+    new Promise((resolve) => {
+        execFile(
+            "aws",
+            [
+                "sts",
+                "get-caller-identity",
+                "--output",
+                "json",
+                ...(profile === undefined ? [] : ["--profile", profile]),
+            ],
+            { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
+            (error) => resolve(error === null),
+        );
+    });
+
+export type VerifyResult = { ok: true } | { ok: false; message: string };
+
+/** The documented cheap check that a profile or the ambient chain answers; the output is never shown. */
+export async function verifyAwsProfile(
+    profile: string | undefined,
+    options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; run?: StsRun; timeoutMs?: number } = {},
+): Promise<VerifyResult> {
+    const env = options.env ?? process.env;
+    const run = options.run ?? runStsIdentity;
+    let ok = false;
+    try {
+        ok = await run(profile, env, options.timeoutMs ?? 15_000, options.signal);
+    } catch {
+        ok = false;
+    }
+    if (ok) return { ok: true };
+    return {
+        ok: false,
+        message: `AWS did not answer for ${profile === undefined ? "the credential chain" : profile}. Check the profile and your network access, then try again.`,
+    };
 }
 
 /** What is wrong with this profile for an SSO sign-in, or undefined when it is a listed SSO profile. */

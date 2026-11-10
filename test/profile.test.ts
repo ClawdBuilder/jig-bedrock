@@ -217,6 +217,33 @@ test("the auth never uses a key and never offers a bearer token", async () => {
     );
 });
 
+test("a keyless credential is the ambient chain; a key is never treated as one", async () => {
+    const resolver = new ProfileResolver({
+        settings: { env: {} },
+        listProfiles: async () => ["other"],
+    });
+    const auth = createProfileAuth(resolver);
+    assert.deepEqual(
+        await auth.apiKey?.resolve({
+            ctx: {},
+            credential: { type: "api_key" },
+            signal: new AbortController().signal,
+        }),
+        { auth: {}, source: "AWS credential chain" },
+    );
+    assert.deepEqual(await resolver.resolve(), { ambient: true }, "the start-up resolve keeps the chain choice");
+
+    const keyed = new ProfileResolver({ settings: { env: {} }, listProfiles: async () => [] });
+    assert.equal(
+        await createProfileAuth(keyed).apiKey?.resolve({
+            ctx: {},
+            credential: { type: "api_key", key: "key-canary" },
+            signal: new AbortController().signal,
+        }),
+        undefined,
+    );
+});
+
 test("after /login the provider can start discovery before the credential is returned", async () => {
     const resolver = new ProfileResolver({ settings: { env: {} }, listProfiles: async () => ["demo-sso"] });
     const seen: Array<{ profile: string; aborted: boolean }> = [];

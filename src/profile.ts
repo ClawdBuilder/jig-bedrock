@@ -143,6 +143,7 @@ export class ProfileResolver {
     private cached?: { at: number; profiles: string[] | undefined };
     /** The profile Pi stores in the /login credential; set whenever the provider's resolve sees it. */
     stored?: string;
+    private ambientCredential = false;
 
     constructor(options: ResolverOptions) {
         this.settings = options.settings;
@@ -153,6 +154,12 @@ export class ProfileResolver {
 
     invalidate(): void {
         this.cached = undefined;
+    }
+
+    /** A bare /login credential (the "credential chain" method): use the ambient chain unless a setting/env profile wins. */
+    setAmbientCredential(value: boolean): void {
+        this.ambientCredential = value;
+        if (value) this.stored = undefined;
     }
 
     /** Jig's `bedrock` section can appear after this resolver is built; the next resolve uses the new setting. */
@@ -202,6 +209,7 @@ export class ProfileResolver {
                 exists: await this.has(first.profile, options.signal),
             };
         }
+        if (this.ambientCredential) return { ambient: true };
         if (await this.has("default", options.signal)) return { profile: "default", source: "default", exists: true };
         if (hasAmbientCredentials(this.settings.env ?? process.env)) return { ambient: true };
         return {};
@@ -274,8 +282,14 @@ export function createProfileAuth(
     resolver: ProfileResolver,
     loginList?: ListProfiles,
     options: {
+        /** The guided "how do you sign in?" flow; without it, the single profile prompt below. */
+        guided?: (interaction: ProviderAuthInteraction) => Promise<ApiKeyCredential>;
         /** Runs before the credential is returned, so discovery can start while the login dialog is still open. */
-        afterLogin?: (profile: string, interaction: ProviderAuthInteraction, signal: AbortSignal) => Promise<void>;
+        afterLogin?: (
+            profile: string | undefined,
+            interaction: ProviderAuthInteraction,
+            signal: AbortSignal,
+        ) => Promise<void>;
     } = {},
 ): ProviderAuth {
     return {
@@ -283,16 +297,19 @@ export function createProfileAuth(
             name: "AWS profile",
             // /login may wait for the AWS CLI; the resolver's cached listing keeps a short timeout for start-up.
             login: async (interaction) => {
-                const credential = await loginWithProfile(
-                    interaction,
-                    loginList ?? ((signal) => resolver.listing(signal)),
-                );
-                const profile = credential.env?.AWS_PROFILE;
-                if (profile !== undefined) await options.afterLogin?.(profile, interaction, interaction.signal);
+                const credential = options.guided
+                    ? await options.guided(interaction)
+                    : await loginWithProfile(interaction, loginList ?? ((signal) => resolver.listing(signal)));
+                await options.afterLogin?.(credential.env?.AWS_PROFILE, interaction, interaction.signal);
                 return credential;
             },
             // Pi asks this before each request and for /model; the listing is cached, so it is a local check.
             resolve: async ({ credential, signal }) => {
+                resolver.setAmbientCredential(
+                    credential !== undefined &&
+                        credential.key === undefined &&
+                        credential.env?.AWS_PROFILE === undefined,
+                );
                 const choice = await resolver.resolve({ stored: credential?.env?.AWS_PROFILE, signal });
                 if (choice.ambient === true) return { auth: {}, source: "AWS credential chain" };
                 if (!choice.profile || choice.problem !== undefined || choice.exists === false) return undefined;
