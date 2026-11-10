@@ -1,23 +1,25 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.3] - 2026-11-10
+
+Sign in from `/login` with an AWS profile, clear first-run messages, and Jig in either install order.
 
 ### Fixed
 
-- Jig's `bedrock` settings apply whichever extension loads first: the section is registered as soon as jig-core appears, and a jig-core that loads after the provider is applied without a reload. The install order no longer changes the profile.
-- The client copy keeps only the two lookup functions jig-bedrock uses; a test-only `@clawdbuilder/jig` devDependency pins the global symbols and the `config.registerSection`/`section` calls against the published package, and is not shipped.
-
-- `/aws-login` checks that the profile exists and is an IAM Identity Center (SSO) profile before starting the AWS CLI, and the automatic repair after an expired session uses the same check; a missing or key-based profile gets a plain message instead of a failed login.
-- After `/login` chooses a profile, jig-bedrock starts discovery itself, says “Loading Bedrock models…”, and then either names the model count or says what to run next; the profile listing now shows “Looking up your AWS profiles…” while the CLI answers.
-- With no AWS profile, the start-up notice says which setting is missing and points to `/login` instead of sending you to `/aws-login`; `/aws-login` no longer tries the placeholder `my-bedrock-profile`.
-- `/bedrock-doctor` names the AWS profile and where it came from, the discovery mode and the regions, and marks what is missing (with plain words when the terminal cannot show the symbols).
-- `/login` on Amazon Bedrock (jig-bedrock) no longer offers a bearer token and never asks for a secret: its one method is an AWS profile, stored as `env.AWS_PROFILE` with no key.
-- `docs/` is part of the npm package, so the README's More detail links work after an install.
+- With no AWS profile, the start-up notice names what is missing and points to `/login`; `/aws-login` and the repair after an expired session check that the profile exists and is an IAM Identity Center (SSO) profile before starting a sign-in, and a missing or key-based profile gets a plain message.
+- `/login` on Amazon Bedrock (jig-bedrock) offers an AWS profile only and never asks for a secret or stores a key. It says “Looking up your AWS profiles…” while the AWS CLI answers, then loads your models and tells you what it found.
+- `/bedrock-doctor` names the AWS profile you use and where it came from, the discovery mode and the regions; missing pieces are marked, with plain words when the terminal cannot show the symbols.
+- Jig's `bedrock` settings apply whichever extension loads first: the install order no longer changes the profile, and a jig-core that loads after jig-bedrock no longer asks for a reload.
+- The README's `docs/` pages are included in the npm package.
 
 ### Changed
 
-- The profile comes from `bedrock.profile`, `JIG_BEDROCK_PROFILE`, the profile chosen at `/login`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, or the default profile when `aws configure list-profiles` lists it; with none, the ambient AWS credential chain is used. A profile that does not exist resolves to no models instead of models that cannot answer.
+- The AWS profile comes from `bedrock.profile`, `JIG_BEDROCK_PROFILE`, the profile chosen at `/login`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, or the default profile when `aws configure list-profiles` lists it; with none, the ambient AWS credential chain is used. A profile that does not exist shows no models instead of models that cannot answer.
 - Each release has a GitHub release page with that version's changelog.
+
+### Internal
+
+- The Jig integration keeps only the lookup half of Jig's client, and a test-only `@clawdbuilder/jig` dependency checks that the global symbols and the `config` calls still exist; it is not shipped.
 
 ## [0.2.2] - 2026-11-09
 
