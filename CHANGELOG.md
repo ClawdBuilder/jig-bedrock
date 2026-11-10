@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Jig's `bedrock` settings apply whichever extension loads first: the section is registered as soon as jig-core appears, and a jig-core that loads after the provider is applied without a reload. The install order no longer changes the profile.
+- The client copy keeps only the two lookup functions jig-bedrock uses; a test-only `@clawdbuilder/jig` devDependency pins the global symbols and the `config.registerSection`/`section` calls against the published package, and is not shipped.
+
 - `/aws-login` checks that the profile exists and is an IAM Identity Center (SSO) profile before starting the AWS CLI, and the automatic repair after an expired session uses the same check; a missing or key-based profile gets a plain message instead of a failed login.
 - After `/login` chooses a profile, jig-bedrock starts discovery itself, says “Loading Bedrock models…”, and then either names the model count or says what to run next; the profile listing now shows “Looking up your AWS profiles…” while the CLI answers.
 - With no AWS profile, the start-up notice says which setting is missing and points to `/login` instead of sending you to `/aws-login`; `/aws-login` no longer tries the placeholder `my-bedrock-profile`.

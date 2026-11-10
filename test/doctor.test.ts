@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { registerStatisticsCommands } from "../src/commands.ts";
 import { checkLocalDependencies, dependencyLines } from "../src/doctor.ts";
 
@@ -44,23 +45,6 @@ function fixtures(t: any, versions = { aws: "2.22.1", bash: "5.2.21", jq: "1.8.1
         `require("node:fs").writeFileSync(${JSON.stringify(join(dir, "usage-was-executed"))}, "bad"); process.exit(91);`,
     );
     return dir;
-}
-// A deadline, not a count: starting a fake executable can take seconds while the whole suite runs in parallel.
-async function eventually(check: () => boolean) {
-    const end = Date.now() + 15_000;
-    while (Date.now() < end) {
-        if (check()) return;
-        await delay(10);
-    }
-    assert.fail("fixture condition did not complete");
-}
-function alive(pid: number) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
 }
 
 test("local doctor parses only numeric versions with fixed argv, an isolated environment and no usage program invocation", async (t) => {
@@ -162,55 +146,97 @@ test("version checks bound the combined stdout and stderr bytes", async (t) => {
     assert.equal(h.aws.status, "overflow");
     assert.doesNotMatch(JSON.stringify(h), /private-canary|xxxx/);
 });
-test("version checks time out and kill the owned process group", async (t) => {
-    const dir = fixtures(t),
-        marker = join(dir, "aws-pid");
-    executable(
-        dir,
-        "aws",
-        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); process.stderr.write("private-canary"); setInterval(()=>{},1000);`,
-    );
-    const h = await checkLocalDependencies(config, { env: { PATH: dir }, timeout: 3_000 });
+/** A child process stand-in: the probe gets events it can drive, and kill() is recorded instead of signaling a PID. */
+function fakeChildren() {
+    const children: any[] = [];
+    const spawnImpl = (() => {
+        const child: any = new EventEmitter();
+        child.pid = 900_000 + children.length;
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.killed = 0;
+        child.kill = () => {
+            child.killed++;
+        };
+        children.push(child);
+        return child;
+    }) as any;
+    return { spawn: spawnImpl, children };
+}
+
+/** Runs the timeout callback on the next microtask, so a test never waits on a wall clock. */
+const now = (fn: () => void) => {
+    queueMicrotask(fn);
+    return () => {};
+};
+
+const cancelledHealth = {
+    node: { status: "cancelled" as const },
+    aws: { status: "cancelled" as const },
+    bash: { status: "cancelled" as const },
+    jq: { status: "cancelled" as const },
+    usage: false,
+    platform: "linux" as const,
+};
+
+test("version checks time out and kill the child, with no wall clock", async () => {
+    const fake = fakeChildren();
+    const h = await checkLocalDependencies(config, {
+        env: { PATH: "/nonexistent" },
+        timeout: 10,
+        spawn: fake.spawn,
+        timer: now,
+    });
     assert.equal(h.aws.status, "timeout");
-    assert.equal(existsSync(marker), true);
-    const pid = Number(readFileSync(marker, "utf8"));
-    await eventually(() => !alive(pid));
+    assert.equal(fake.children.length, 3, "one child per tool");
+    assert.ok(
+        fake.children.every((child) => child.killed > 0),
+        "every probe is killed",
+    );
     assert.doesNotMatch(JSON.stringify(h), /private-canary/);
 });
-test("abort cancels active local checks and a pre-aborted request launches no executable", async (t) => {
-    const dir = fixtures(t),
-        marker = join(dir, "aws-pid"),
-        controller = new AbortController();
-    executable(
-        dir,
-        "aws",
-        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(()=>{},1000);`,
-    );
-    const pending = checkLocalDependencies(config, { env: { PATH: dir }, signal: controller.signal });
-    await eventually(() => existsSync(marker));
+
+test("abort cancels active local checks and a pre-aborted request launches no executable", async () => {
+    const fake = fakeChildren();
+    const controller = new AbortController();
+    const pending = checkLocalDependencies(config, {
+        env: { PATH: "/nonexistent" },
+        spawn: fake.spawn,
+        timer: () => () => {},
+        signal: controller.signal,
+    });
     controller.abort();
     const h = await pending;
     assert.equal(h.aws.status, "cancelled");
-    const pid = Number(readFileSync(marker, "utf8"));
-    await eventually(() => !alive(pid));
-    rmSync(marker);
-    const cancelled = await checkLocalDependencies(config, { env: { PATH: dir }, signal: controller.signal });
+    assert.equal(h.bash.status, "cancelled");
+    assert.equal(h.jq.status, "cancelled");
+    assert.ok(
+        fake.children.every((child) => child.killed > 0),
+        "the child that started is killed",
+    );
+    const before = fake.children.length;
+    const cancelled = await checkLocalDependencies(config, {
+        env: { PATH: "/nonexistent" },
+        spawn: fake.spawn,
+        signal: controller.signal,
+    });
     assert.equal(cancelled.aws.status, "cancelled");
     assert.equal(cancelled.bash.status, "cancelled");
     assert.equal(cancelled.jq.status, "cancelled");
-    assert.equal(existsSync(marker), false);
+    assert.equal(fake.children.length, before, "a pre-aborted request starts nothing");
 });
+
 for (const action of ["dialog close", "session shutdown"] as const)
     test(`doctor ${action} cancels local probes without model messages or usage program calls`, async (t) => {
-        const dir = fixtures(t),
-            marker = join(dir, "aws-pid");
-        executable(
-            dir,
-            "aws",
-            `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(()=>{},1000);`,
-        );
+        const dir = directory(t);
         const commands = new Map<string, any>(),
             hooks = new Map<string, Hook>();
+        let started = 0,
+            aborted = 0;
+        let markStarted: () => void = () => {};
+        const startedPromise = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
         const pi: any = {
             registerCommand: (name: string, command: any) => commands.set(name, command),
             on: (name: string, handler: Hook) => hooks.set(name, handler),
@@ -232,52 +258,58 @@ for (const action of ["dialog close", "session shutdown"] as const)
             models: () => [],
             budget: { load: () => undefined, refresh: async () => undefined },
             publish: () => assert.fail("No provider event"),
+            check: (_config, options) =>
+                new Promise((resolve) => {
+                    started++;
+                    markStarted();
+                    options.signal?.addEventListener(
+                        "abort",
+                        () => {
+                            aborted++;
+                            resolve(cancelledHealth);
+                        },
+                        { once: true },
+                    );
+                }),
         });
-        const originalPath = process.env.PATH;
-        process.env.PATH = dir;
-        try {
-            await commands.get("bedrock-doctor").handler("", {
-                mode: "tui",
-                ui: {
-                    notify: () => assert.fail("No notification"),
-                    custom: (factory: any) =>
-                        new Promise<void>((resolve) => {
-                            const component = factory(
-                                { terminal: { rows: 20 }, requestRender() {} },
-                                { fg: (_role: string, value: string) => value },
-                                {},
-                                resolve,
-                            );
-                            void eventually(() => existsSync(marker)).then(() =>
+        await commands.get("bedrock-doctor").handler("", {
+            mode: "tui",
+            ui: {
+                notify: () => assert.fail("No notification"),
+                custom: (factory: any) =>
+                    new Promise<void>((resolve) => {
+                        const component = factory(
+                            { terminal: { rows: 20 }, requestRender() {} },
+                            { fg: (_role: string, value: string) => value },
+                            {},
+                            resolve,
+                        );
+                        void startedPromise.then(() =>
+                            queueMicrotask(() =>
                                 action === "dialog close"
                                     ? component.handleInput("q")
                                     : hooks.get("session_shutdown")!(),
-                            );
-                        }),
-                },
-            });
-        } finally {
-            if (originalPath === undefined) delete process.env.PATH;
-            else process.env.PATH = originalPath;
-        }
-        const pid = Number(readFileSync(marker, "utf8"));
-        await eventually(() => !alive(pid));
-        assert.equal(existsSync(join(dir, "usage-was-executed")), false);
+                            ),
+                        );
+                    }),
+            },
+        });
+        assert.equal(started, 1, "the probes started");
+        assert.equal(aborted, 1, "closing the dialog aborted them");
     });
 
 for (const action of ["context abort", "session shutdown"] as const)
     test(`RPC doctor ${action} cancels probes and suppresses a late notification`, async (t) => {
-        const dir = fixtures(t),
-            marker = join(dir, "aws-pid"),
-            controller = new AbortController();
-        executable(
-            dir,
-            "aws",
-            `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(()=>{},1000);`,
-        );
+        const controller = new AbortController();
         const commands = new Map<string, any>(),
             hooks = new Map<string, Hook>(),
             notifications: string[] = [];
+        let started = 0,
+            aborted = 0;
+        let markStarted: () => void = () => {};
+        const startedPromise = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
         const pi: any = {
             registerCommand: (name: string, command: any) => commands.set(name, command),
             on: (name: string, handler: Hook) => hooks.set(name, handler),
@@ -295,28 +327,33 @@ for (const action of ["context abort", "session shutdown"] as const)
             models: () => [],
             budget: { load: () => undefined, refresh: async () => undefined },
             publish() {},
+            check: (_config, options) =>
+                new Promise((resolve) => {
+                    started++;
+                    markStarted();
+                    options.signal?.addEventListener(
+                        "abort",
+                        () => {
+                            aborted++;
+                            resolve(cancelledHealth);
+                        },
+                        { once: true },
+                    );
+                }),
         });
         const ctx: any = {
             mode: "rpc",
             signal: controller.signal,
             ui: { notify: (text: string) => notifications.push(text) },
         };
-        const originalPath = process.env.PATH;
-        process.env.PATH = dir;
-        try {
-            await commands.get("bedrock-doctor").handler("--profile another", ctx);
-            assert.match(notifications.pop()!, /Usage:/);
-            assert.equal(existsSync(marker), false);
-            const pending = commands.get("bedrock-doctor").handler("", ctx);
-            await eventually(() => existsSync(marker));
-            if (action === "context abort") controller.abort();
-            else hooks.get("session_shutdown")!();
-            await pending;
-            assert.equal(notifications.length, 0);
-        } finally {
-            if (originalPath === undefined) delete process.env.PATH;
-            else process.env.PATH = originalPath;
-        }
-        const pid = Number(readFileSync(marker, "utf8"));
-        await eventually(() => !alive(pid));
+        await commands.get("bedrock-doctor").handler("--profile another", ctx);
+        assert.match(notifications.pop()!, /Usage:/);
+        assert.equal(started, 0, "a bad argument starts no probes");
+        const pending = commands.get("bedrock-doctor").handler("", ctx);
+        await startedPromise;
+        if (action === "context abort") controller.abort();
+        else hooks.get("session_shutdown")!();
+        await pending;
+        assert.equal(aborted, 1);
+        assert.equal(notifications.length, 0);
     });

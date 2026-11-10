@@ -69,31 +69,48 @@ export function hasAmbientCredentials(env: NodeJS.ProcessEnv = process.env): boo
     );
 }
 
+/** Runs `aws configure list-profiles`: its standard output, or undefined on failure. Injectable so tests need no clock. */
+export type ListProfilesRun = (
+    env: NodeJS.ProcessEnv,
+    timeoutMs: number,
+    signal?: AbortSignal,
+) => Promise<string | undefined>;
+
+export const runListProfiles: ListProfilesRun = (env, timeoutMs, signal) =>
+    new Promise((resolve) => {
+        execFile(
+            "aws",
+            ["configure", "list-profiles"],
+            { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
+            (error, stdout) => resolve(error ? undefined : String(stdout)),
+        );
+    });
+
 /**
  * Runs the AWS CLI's local profile listing; its output is only names, never a value. The start-up check keeps a short
  * timeout (it must not delay a session); /login passes a long one, because the person is already waiting.
  */
-export function createListProfiles(env: NodeJS.ProcessEnv = process.env, timeoutMs = 2000): ListProfiles {
-    return (signal) =>
-        new Promise((resolve) => {
-            execFile(
-                "aws",
-                ["configure", "list-profiles"],
-                { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
-                (error, stdout) => {
-                    if (error) {
-                        resolve(undefined);
-                        return;
-                    }
-                    resolve(
-                        stdout
-                            .split("\n")
-                            .map((line) => line.trim())
-                            .filter((line) => line !== ""),
-                    );
-                },
-            );
-        });
+export function createListProfiles(
+    env: NodeJS.ProcessEnv = process.env,
+    timeoutMs = 2000,
+    run: ListProfilesRun = runListProfiles,
+): ListProfiles {
+    return async (signal) => {
+        const text = await run(env, timeoutMs, signal);
+        if (text === undefined) return undefined;
+        return text
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line !== "");
+    };
+}
+
+/** What /login says after discovery ran, or when it did not finish within the bound. */
+export function loginOutcomeMessage(modelCount: number, settled: boolean): string {
+    if (modelCount > 0) return `Bedrock models loaded: ${modelCount}. Choose one with /model.`;
+    return settled
+        ? "Bedrock models are not loaded yet; run /aws-login, then /bedrock-refresh."
+        : "Loading Bedrock models; /model lists them in a moment.";
 }
 
 /** One slow CLI start serves the /aws-login preflight and the recovery that follows it; a failure is retried. */
@@ -136,6 +153,12 @@ export class ProfileResolver {
 
     invalidate(): void {
         this.cached = undefined;
+    }
+
+    /** Jig's `bedrock` section can appear after this resolver is built; the next resolve uses the new setting. */
+    updateSetting(setting: string | undefined, source: "setting" | "env" | undefined): void {
+        this.settings.setting = setting;
+        this.settings.settingSource = source;
     }
 
     /** The candidates in order. The default profile is not here: it is tried only when the list shows it exists. */

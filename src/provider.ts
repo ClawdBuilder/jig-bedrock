@@ -26,10 +26,11 @@ import {
 import { isObject } from "./check.ts";
 import { isSubagentChild } from "./child.ts";
 import { registerStatisticsCommands } from "./commands.ts";
-import type { ConfigResult, ResolvedConfig } from "./config.ts";
+import type { BedrockApi, ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { MODEL_NAMES_EVENT, modelNames, SEGMENT_EVENT, spendSegment } from "./events.ts";
 import { isJigBedrock, JIG_BEDROCK } from "./identity.ts";
+import { jigApi } from "./jig/client.ts";
 import type { JigApi } from "./jig/types.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
@@ -38,6 +39,7 @@ import type { ListProfiles, ProfileChoice } from "./profile.ts";
 import {
     createListProfiles,
     createProfileAuth,
+    loginOutcomeMessage,
     memoizedList,
     missingProfileNotice,
     NO_PROFILE,
@@ -93,6 +95,8 @@ export interface BedrockOptions {
 export interface BedrockHandle {
     models: TeamBedrockModel[];
     refresh: (force?: boolean) => Promise<Status>;
+    /** Re-read the settings; `live` also resolves the profile and refreshes when a session is already running. */
+    applySettings: (live?: boolean) => void;
     failed: boolean;
 }
 
@@ -148,20 +152,10 @@ export function createJigBedrock(
                   ...(options.env === undefined ? {} : { env: options.env }),
               });
         const config = resolved.config;
-        const api = config?.api ?? "messages";
+        const currentApi = (): BedrockApi => config?.api ?? "messages";
         const events = options.events ?? { provider: "jig-bedrock:provider", usage: "jig-bedrock:usage" };
         const models: TeamBedrockModel[] = [];
         const guard = registerBedrockSelectionGuard(pi, models, options.selection ?? { agentDir: config?.agentDir });
-        {
-            const dropped = safeSection(options.api).dropped;
-            if (dropped.length > 0)
-                pi.on("session_start", (_event, ctx) =>
-                    ctx.ui.notify(
-                        `Bedrock ignores ${dropped.join(" and ")} from a project's jig.json; set them in ${path.join(agentFolder(options.env), "bedrock.json")} or the environment.`,
-                        "warning",
-                    ),
-                );
-        }
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
             const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;
@@ -188,6 +182,29 @@ export function createJigBedrock(
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
         const identity = { profile: currentProfile, auth };
+        // jig-core can appear after this provider (the install order is Pi's load order). Re-read the settings then, and
+        // at every session start: the same `bedrock` section must win in either order.
+        const apiForSettings = (): JigApi | undefined => options.api ?? jigApi();
+        const applySettings = (live = false): void => {
+            if (options.config !== undefined) return;
+            const next = loadConfig({
+                raw: settingsFrom(apiForSettings(), options.env),
+                ...(options.env === undefined ? {} : { env: options.env }),
+                ...(config.agentDir === undefined ? {} : { agentDir: config.agentDir }),
+            });
+            if (!next.config) {
+                if (ctx) ctx.ui.notify(`Bedrock settings were not applied: ${next.error}`, "warning");
+                return;
+            }
+            for (const key of Object.keys(config)) delete (config as unknown as Record<string, unknown>)[key];
+            Object.assign(config, next.config);
+            profiles.updateSetting(config.profile, config.profileSource);
+            if (live && ctx) {
+                void resolveProfile(ctx)
+                    .then(() => (backgroundRefresh ? refresh(false) : undefined))
+                    .catch(() => undefined);
+            }
+        };
         const catalog = options.catalog ?? createAwsDiscovery(config);
         const statistics = options.statistics ?? createStatistics(config);
         const budget = options.budget ?? createBudget(config, undefined, undefined, undefined, statistics);
@@ -204,7 +221,7 @@ export function createJigBedrock(
         let disposed = false;
         let timer: ReturnType<typeof setInterval> | undefined;
         const readModels = () => {
-            const result = discoveredProfiles(catalog.load(), config.usageDir, api);
+            const result = discoveredProfiles(catalog.load(), config.usageDir, currentApi());
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
         };
@@ -235,37 +252,32 @@ export function createJigBedrock(
             options.ssoRecover ?? checkedRecovery(recovery, { manualList: loginListProfiles, env: profileEnv });
         // The Messages route signs with the profile's SSO credentials; the credential chain is loaded from Pi's install on the
         // first request, so nothing here reaches AWS at registration. Tests supply both.
-        const signedFetch =
-            api === "messages"
-                ? createSignedFetch({
-                      credentials:
-                          options.credentials ??
-                          (() => {
-                              // One chain per profile, made on the first request: it caches the role's credentials and
-                              // refreshes them. No profile means the SDK's own chain (environment, container, instance).
-                              const host = findPiHost(options.env);
-                              let chain:
-                                  | { profile: string | undefined; load: () => Promise<AwsCredentials> }
-                                  | undefined;
-                              return async () => {
-                                  const profile = currentProfile();
-                                  let entry = chain;
-                                  if (entry === undefined || entry.profile !== profile) {
-                                      const provider = loadCredentialProvider(host);
-                                      entry = {
-                                          profile,
-                                          load: provider(
-                                              profile === undefined ? {} : { profile },
-                                          ) as () => Promise<AwsCredentials>,
-                                      };
-                                      chain = entry;
-                                  }
-                                  return entry.load();
-                              };
-                          })(),
-                      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-                  })
-                : undefined;
+        const signedFetch = createSignedFetch({
+            credentials:
+                options.credentials ??
+                (() => {
+                    // One chain per profile, made on the first request: it caches the role's credentials and
+                    // refreshes them. No profile means the SDK's own chain (environment, container, instance).
+                    const host = findPiHost(options.env);
+                    let chain: { profile: string | undefined; load: () => Promise<AwsCredentials> } | undefined;
+                    return async () => {
+                        const profile = currentProfile();
+                        let entry = chain;
+                        if (entry === undefined || entry.profile !== profile) {
+                            const provider = loadCredentialProvider(host);
+                            entry = {
+                                profile,
+                                load: provider(
+                                    profile === undefined ? {} : { profile },
+                                ) as () => Promise<AwsCredentials>,
+                            };
+                            chain = entry;
+                        }
+                        return entry.load();
+                    };
+                })(),
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        });
         try {
             const recovered = await registerBedrockSsoRecovery(
                 pi,
@@ -355,12 +367,7 @@ export function createJigBedrock(
                 timeout,
             ]);
             if (signal.aborted) return;
-            const message =
-                models.length > 0
-                    ? `Bedrock models loaded: ${models.length}. Choose one with /model.`
-                    : settled
-                      ? "Bedrock models are not loaded yet; run /aws-login, then /bedrock-refresh."
-                      : "Loading Bedrock models; /model lists them in a moment.";
+            const message = loginOutcomeMessage(models.length, settled);
             interaction.notify({ type: "info", message });
             // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
             // the dialog's teardown cannot clear the only lasting explanation of what happened.
@@ -427,7 +434,14 @@ export function createJigBedrock(
         };
         pi.on("session_start", async (_event, context) => {
             disposed = false;
+            applySettings(false);
             ctx = context;
+            const dropped = safeSection(apiForSettings()).dropped;
+            if (dropped.length > 0)
+                context.ui.notify(
+                    `Bedrock ignores ${dropped.join(" and ")} from a project's jig.json; set them in ${path.join(agentFolder(options.env), "bedrock.json")} or the environment.`,
+                    "warning",
+                );
             const choice = await resolveProfile(context);
             provider();
             if (usageEvents) publish();
@@ -487,6 +501,6 @@ export function createJigBedrock(
             ctx = undefined;
             if (timer) clearInterval(timer);
         });
-        return { models, refresh, failed };
+        return { models, refresh, applySettings, failed };
     };
 }

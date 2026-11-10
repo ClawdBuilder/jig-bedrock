@@ -21,6 +21,9 @@ interface CheckOptions {
     nodeVersion?: string;
     platform?: NodeJS.Platform;
     timeout?: number;
+    /** Test seams: a fake child and a timer that does not depend on the wall clock. */
+    spawn?: typeof spawn;
+    timer?: (fn: () => void, ms: number) => () => void;
 }
 type Tool = "aws" | "bash" | "jq";
 const commands: Record<Tool, string[]> = {
@@ -67,8 +70,14 @@ function probe(tool: Tool, minimum: number[] | undefined, options: CheckOptions)
             bytes = 0,
             settled = false;
         const output: Buffer[] = [];
-        let timer: ReturnType<typeof setTimeout> | undefined;
+        let cancelTimer: (() => void) | undefined;
         const stop = () => {
+            if (options.spawn !== undefined) {
+                try {
+                    child?.kill("SIGKILL");
+                } catch {}
+                return;
+            }
             if (!child?.pid) return;
             try {
                 process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
@@ -77,14 +86,14 @@ function probe(tool: Tool, minimum: number[] | undefined, options: CheckOptions)
         const finish = (result: DependencyCheck) => {
             if (settled) return;
             settled = true;
-            if (timer) clearTimeout(timer);
+            cancelTimer?.();
             options.signal?.removeEventListener("abort", abort);
             if (result.status !== "ready" && result.status !== "old") stop();
             resolve(result);
         };
         const abort = () => finish({ status: "cancelled" });
         try {
-            child = spawn(tool, commands[tool], {
+            child = (options.spawn ?? spawn)(tool, commands[tool], {
                 shell: false,
                 env,
                 stdio: ["ignore", "pipe", "pipe"],
@@ -114,8 +123,14 @@ function probe(tool: Tool, minimum: number[] | undefined, options: CheckOptions)
             ),
         );
         options.signal?.addEventListener("abort", abort, { once: true });
-        timer = setTimeout(() => finish({ status: "timeout" }), options.timeout ?? 3_000);
-        timer.unref();
+        const schedule =
+            options.timer ??
+            ((fn: () => void, ms: number) => {
+                const handle = setTimeout(fn, ms);
+                handle.unref();
+                return () => clearTimeout(handle);
+            });
+        cancelTimer = schedule(() => finish({ status: "timeout" }), options.timeout ?? 3_000);
         if (options.signal?.aborted) abort();
     });
 }

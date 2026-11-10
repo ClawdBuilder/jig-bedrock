@@ -251,6 +251,8 @@ export function registerStatisticsCommands(
         stored?: () => string | undefined;
         /** The longer listing /login uses, so the doctor does not call a slow AWS CLI missing. */
         listProfiles?: ListProfiles;
+        /** The local probes; a test supplies a controllable one instead of real child processes. */
+        check?: typeof checkLocalDependencies;
         env?: NodeJS.ProcessEnv;
     },
 ): void {
@@ -359,7 +361,7 @@ export function registerStatisticsCommands(
                 ctx,
                 "Bedrock · Local health",
                 async (signal) => {
-                    const h = await checkLocalDependencies(config, { signal }),
+                    const h = await (sources.check ?? checkLocalDependencies)(config, { signal }),
                         cached = statistics.load("monthly");
                     let choice: ProfileChoice = sources.profiles
                         ? await sources.profiles.resolve({ stored: sources.stored?.(), signal })

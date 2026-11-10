@@ -4,8 +4,8 @@
 
 A Pi provider for Claude on AWS Bedrock. It discovers the Claude inference profiles your account can use, sends Claude
 through Bedrock's Anthropic Messages route where possible, and falls back to Converse per model. It works in plain Pi;
-when [Jig](https://github.com/ClawdBuilder/jig) is installed it also uses Jig's records and footer, but Jig is not
-required.
+when [Jig](https://github.com/ClawdBuilder/jig) is installed it also reads `bedrock` settings from `jig.json` and
+uses Jig's records and footer, but Jig is not required.
 
 Pi's built-in Bedrock provider uses Converse only, has a fixed model list, and has no profile discovery, SSO repair or
 budget footer. This package adds the Messages route with SigV4, discovery in three modes, repair through `aws sso login`,
