@@ -9,9 +9,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { createAwsDiscovery, discoveryHelp } from "./aws-discovery.ts";
-import { checkedRecovery, isSsoProfile, profileProblem, type VerifyResult, verifyAwsProfile } from "./aws-profile.ts";
+import {
+    awsConfigFile,
+    checkedRecovery,
+    isSsoProfile,
+    profileProblem,
+    type VerifyResult,
+    verifyAwsProfile,
+} from "./aws-profile.ts";
 import { createSignedFetch } from "./bedrock-fetch.ts";
 import type { BudgetSource } from "./budget.ts";
 import { createBudget } from "./budget.ts";
@@ -201,6 +209,8 @@ export function createJigBedrock(
                 saveDiscovery: (settings) =>
                     saveDiscoverySettings(profileEnv, settings, safeSection(apiForSettings()).section),
                 regions: config.regions,
+                configFile: awsConfigFile(profileEnv),
+                writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
             });
         const auth = createProfileAuth(profiles, loginListProfiles, {
             guided,

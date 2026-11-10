@@ -2,6 +2,7 @@
 // asks for a secret. The AWS CLI owns credentials; the returned credential holds only AWS_PROFILE (or nothing for chain).
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ConfigSection } from "../src/aws-config-write.ts";
 import { type LoginFlowOptions, runLoginFlow } from "../src/login-flow.ts";
 import type { DiscoverySettings, SaveDiscoveryResult } from "../src/settings-write.ts";
 
@@ -350,5 +351,197 @@ test("no prompt ever asks for a secret and no credential carries a key", async (
         }
         assert.equal("key" in credential, false);
         assert.doesNotMatch(JSON.stringify(credential), /secret|access.?key/i);
+    }
+});
+
+const ssoAnswers =
+    (overrides: Record<string, string> = {}) =>
+    (prompt: Prompt): string => {
+        const text = prompt.message ?? "";
+        if (text.includes("How do you sign in to AWS?")) return "sso-new";
+        if (text.includes("Add these lines")) return "write";
+        if (text.includes("New SSO profile name")) return overrides.name ?? "team-sso";
+        if (text.includes("SSO session name")) return overrides.session ?? "team";
+        if (text.includes("SSO start URL")) return overrides.url ?? "https://my-sso-portal.awsapps.com/start";
+        if (text.includes("SSO region")) return overrides.ssoRegion ?? "us-east-1";
+        if (text.includes("SSO account ID")) return overrides.account ?? "123456789012";
+        if (text.includes("SSO role name")) return overrides.role ?? "ReadOnly";
+        if (text.includes("Profile region")) return overrides.region ?? "us-east-1";
+        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text === "AWS regions for discovery (comma separated)") return "";
+        return "";
+    };
+
+test("a new SSO profile shows its exact lines, writes only after confirmation, then signs in", async () => {
+    const fake = interaction(ssoAnswers());
+    const written: ConfigSection[][] = [];
+    const signed: string[] = [];
+    const credential = await runLoginFlow(fake.value as never, {
+        ...options(),
+        configFile: "/tmp/aws-config",
+        writeConfig: (sections) => {
+            written.push(sections);
+            return { file: "/tmp/aws-config", written: true, backup: "/tmp/aws-config.jig-bedrock.bak" };
+        },
+        signIn: async (profile) => {
+            signed.push(profile);
+        },
+    });
+    assert.deepEqual(signed, ["team-sso"]);
+    assert.deepEqual(credential.env, { AWS_PROFILE: "team-sso" });
+    assert.equal(written.length, 1);
+    const rendered = JSON.stringify(written[0]);
+    assert.match(rendered, /"header":"profile team-sso"/);
+    assert.match(rendered, /"sso_account_id","123456789012"/);
+    assert.match(rendered, /"header":"sso-session team"/);
+    assert.match(rendered, /"sso_start_url","https:\/\/my-sso-portal.awsapps.com\/start"/);
+    const confirm = fake.prompts.find((prompt) => prompt.message?.includes("Add these lines"));
+    assert.match(confirm?.message ?? "", /Add these lines to \/tmp\/aws-config\?/);
+    assert.match(confirm?.message ?? "", /\[profile team-sso\]\nsso_session = team/);
+    assert.match(confirm?.message ?? "", /\[sso-session team\]\nsso_region = us-east-1/);
+});
+
+test("Back on the new SSO lines writes nothing and returns to the methods", async () => {
+    let methods = 0;
+    const fake = interaction((prompt) => {
+        const text = prompt.message ?? "";
+        if (text.includes("How do you sign in to AWS?")) return methods++ === 0 ? "sso-new" : "existing";
+        if (text.includes("Add these lines")) return "back";
+        if (text.includes("New SSO profile name")) return "team-sso";
+        if (text.includes("SSO session name")) return "team";
+        if (text.includes("SSO start URL")) return "https://my-sso-portal.awsapps.com/start";
+        if (text.includes("SSO region")) return "us-east-1";
+        if (text.includes("SSO account ID")) return "123456789012";
+        if (text.includes("SSO role name")) return "ReadOnly";
+        if (text.includes("Profile region")) return "us-east-1";
+        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text === "AWS regions for discovery (comma separated)") return "";
+        if (text === "Which AWS profile should Bedrock use?") return "profile:keys";
+        return "";
+    });
+    let written = 0;
+    const credential = await runLoginFlow(fake.value as never, {
+        ...options(),
+        configFile: "/tmp/aws-config",
+        writeConfig: () => {
+            written++;
+            return { file: "/tmp/aws-config", written: true };
+        },
+    });
+    assert.equal(written, 0);
+    assert.equal(methods, 2);
+    assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
+});
+
+test("a bad SSO account ID is reported before anything is written", async () => {
+    let methods = 0;
+    const fake = interaction((prompt) => {
+        if ((prompt.message ?? "").includes("How do you sign in to AWS?"))
+            return methods++ === 0 ? "sso-new" : "existing";
+        if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+        if ((prompt.message ?? "").includes("Which Bedrock profiles should be listed?")) return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "";
+        return ssoAnswers({ account: "12" })(prompt);
+    });
+    let written = 0;
+    const credential = await runLoginFlow(fake.value as never, {
+        ...options(),
+        configFile: "/tmp/aws-config",
+        writeConfig: () => {
+            written++;
+            return { file: "/tmp/aws-config", written: true };
+        },
+    });
+    assert.equal(written, 0);
+    assert.match(fake.notices.map((notice) => notice.message).join("\n"), /12-digit AWS account ID/);
+    assert.deepEqual(
+        credential.env,
+        { AWS_PROFILE: "keys" },
+        "the flow goes back to the methods and can finish another way",
+    );
+});
+
+test("a new role profile shows role_arn and source_profile, writes after confirmation, then verifies", async () => {
+    const fake = interaction((prompt) => {
+        const text = prompt.message ?? "";
+        if (text.includes("How do you sign in to AWS?")) return "role-new";
+        if (text.includes("Add these lines")) return "write";
+        if (text.includes("New role profile name")) return "team-role";
+        if (text.includes("Role ARN")) return "arn:aws:iam::123456789012:role/ReadOnly";
+        if (text.includes("source_profile")) return "profile:keys";
+        if (text.includes("Role region")) return "us-east-1";
+        if (text.includes("MFA serial number")) return "";
+        if (text.includes("External ID")) return "";
+        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text === "AWS regions for discovery (comma separated)") return "";
+        return "";
+    });
+    const written: ConfigSection[][] = [];
+    const verified: Array<string | undefined> = [];
+    const credential = await runLoginFlow(fake.value as never, {
+        ...options(),
+        listProfiles: async () => ["keys", "role"],
+        configFile: "/tmp/aws-config",
+        writeConfig: (sections) => {
+            written.push(sections);
+            return { file: "/tmp/aws-config", written: true };
+        },
+        verify: async (profile) => {
+            verified.push(profile);
+            return { ok: true };
+        },
+    });
+    assert.equal(written.length, 1);
+    assert.deepEqual(written[0]?.[0]?.entries, [
+        ["role_arn", "arn:aws:iam::123456789012:role/ReadOnly"],
+        ["source_profile", "keys"],
+        ["region", "us-east-1"],
+    ]);
+    assert.deepEqual(verified, ["team-role"]);
+    assert.deepEqual(credential.env, { AWS_PROFILE: "team-role" });
+});
+
+test("a source profile that does not exist is refused before writing", async () => {
+    let methods = 0;
+    const fake = interaction((prompt) => {
+        const text = prompt.message ?? "";
+        if (text.includes("How do you sign in to AWS?")) return methods++ === 0 ? "role-new" : "existing";
+        if (text.includes("New role profile name")) return "team-role";
+        if (text.includes("Role ARN")) return "arn:aws:iam::123456789012:role/ReadOnly";
+        if (text.includes("source_profile")) return "type";
+        if (text === "Source profile name") return "missing-source";
+        if (text === "Which AWS profile should Bedrock use?") return "profile:keys";
+        if (text.includes("Which Bedrock profiles should be listed?")) return "system";
+        if (text === "AWS regions for discovery (comma separated)") return "";
+        return "";
+    });
+    let written = 0;
+    const credential = await runLoginFlow(fake.value as never, {
+        ...options(),
+        listProfiles: async () => ["keys"],
+        configFile: "/tmp/aws-config",
+        writeConfig: () => {
+            written++;
+            return { file: "/tmp/aws-config", written: true };
+        },
+    });
+    assert.equal(written, 0);
+    assert.match(
+        fake.notices.map((notice) => notice.message).join("\n"),
+        /missing-source is not in aws configure list-profiles/,
+    );
+    assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
+});
+
+test("the new-profile questions never ask for a secret", async () => {
+    const fake = interaction(ssoAnswers());
+    await runLoginFlow(fake.value as never, {
+        ...options(),
+        configFile: "/tmp/aws-config",
+        writeConfig: () => ({ file: "/tmp/aws-config", written: true }),
+    });
+    for (const prompt of fake.prompts) {
+        assert.notEqual(prompt.type, "secret");
+        assert.doesNotMatch(prompt.message ?? "", /enter (your |the )?(secret|access key)|secret access key:/i);
     }
 });
