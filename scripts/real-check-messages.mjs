@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Real Bedrock check for the Messages route with thinking on: a turn that thinks, loads a deferred tool through
-// tool_search, calls it, and answers. Prints cache read/write per model call and any 400. Run it yourself; this script
-// never runs in CI and is not shipped in the package.
+// tool_search, calls it, and answers. Prints cache read/write per model call and any 400.
 //
-//   node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile> [--thinking high]
-//     [--region us-east-1] [--team my-team | --profiles arn,arn] [--pi <path>] [--timeout 240] [--keep] [--dry-run]
+//   node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile>
+//     [--thinking high] [--region us-east-1] [--team my-team | --profiles arn,arn]
+//     [--pi <path>] [--timeout 240] [--keep] [--dry-run] [--fake-aws]
 //
-// <model-id> is a model in Pi's /model for jig-bedrock whose profile points at Claude Sonnet 5.5 (the Messages route).
-// <package-copy-dir> is an extracted package tarball (or this checkout) to install into a temporary Pi home.
+// It first starts Pi without a model and runs /bedrock-refresh (a fresh home has no catalog), then starts the real
+// session with jig-bedrock/<model-id>. A bare id or a provider/id id are both accepted.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -21,9 +21,11 @@ const options = {
     timeout: 240,
     keep: false,
     dryRun: false,
+    fakeAws: false,
     pi: undefined,
     team: undefined,
     profiles: undefined,
+    profile: undefined,
 };
 for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -36,20 +38,33 @@ for (let i = 0; i < argv.length; i++) {
     else if (arg === "--profiles") options.profiles = argv[++i];
     else if (arg === "--keep") options.keep = true;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--fake-aws") options.fakeAws = true;
+    else if (arg === "--help" || arg === "-h") options.help = true;
     else positional.push(arg);
 }
-const [modelId, packageDir] = positional;
-if (!modelId || !packageDir) {
-    console.error("usage: node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile>");
+
+const usage = [
+    "usage: node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile>",
+    "         [--thinking high] [--region us-east-1] [--team my-team | --profiles arn,arn]",
+    "         [--pi <path>] [--timeout 240] [--keep] [--dry-run] [--fake-aws]",
+].join("\n");
+if (options.help) {
+    console.log(usage);
+    process.exit(0);
+}
+const [modelArg, packageDir] = positional;
+if (!modelArg || !packageDir) {
+    console.error(usage);
     process.exit(2);
 }
 if (!options.profile) {
-    console.error(
-        "--profile is required: use a profile that can call Bedrock Claude and run `aws configure list-profiles`.",
-    );
+    console.error("--profile is required: use a profile that can call Bedrock Claude.");
     process.exit(2);
 }
-
+if (options.team !== undefined && options.profiles !== undefined) {
+    console.error("use either --team or --profiles, not both");
+    process.exit(2);
+}
 const defaultPi = "/home/hp/.nvm/versions/node/v26.13.0/bin/pi";
 const piBinary = options.pi ?? (existsSync(defaultPi) ? defaultPi : undefined);
 if (!piBinary) {
@@ -66,35 +81,20 @@ if (!existsSync(realAws)) {
     console.error(`no ${realAws}; the check needs the real AWS profile and SSO cache`);
     process.exit(2);
 }
+
 const redact = (text) => String(text).replace(/\b\d{12}\b/g, "<account>");
+const bareId = modelArg.replace(/^(?:jig-bedrock|amazon-bedrock)\//, "");
+const fullModel = `jig-bedrock/${bareId}`;
 const root = mkdtempSync(join(tmpdir(), "jig-bedrock-real-check-"));
 const home = join(root, "home");
 const agent = join(root, "agent");
 const project = join(root, "project");
 const extension = join(agent, "extensions", "deferred-check.ts");
-for (const dir of [home, agent, project, join(agent, "extensions")]) mkdirSync(dir, { recursive: true });
+const fakeBin = join(root, "fake-bin");
+for (const dir of [home, agent, project, join(agent, "extensions"), fakeBin]) mkdirSync(dir, { recursive: true });
 // The AWS CLI and SDK read the real profile and SSO cache through this link; they are never copied.
 symlinkSync(realAws, join(home, ".aws"), "dir");
 
-// A profile in settings (not AWS_PROFILE) keeps the check's "AWS_PROFILE unset" habit while using the real account.
-writeFileSync(
-    join(agent, "bedrock.json"),
-    JSON.stringify({
-        profile: options.profile,
-        regions: [options.region],
-        signInAtStart: false,
-        ...(options.team === undefined ? {} : { team: options.team, tagKey: "Team", tagValue: options.team }),
-        ...(options.profiles === undefined
-            ? {}
-            : {
-                  profiles: options.profiles
-                      .split(",")
-                      .map((value) => value.trim())
-                      .filter(Boolean),
-              }),
-    }),
-    { mode: 0o600 },
-);
 const deferredTool = (name, index) => `
     pi.registerTool({
         name: ${JSON.stringify(name)},
@@ -118,114 +118,244 @@ ${Array.from({ length: 7 }, (_, i) => deferredTool(`orders_api_${i + 1}`, i + 1)
 `,
 );
 
+const fakeAws = `#!/bin/sh
+case "$1" in
+  --version) echo "aws-cli/2.34.46 Python/3.14.4 Linux/6.18 exe/x86_64.ubuntu.24"; exit 0 ;;
+  configure) if [ "$2" = "list-profiles" ]; then echo my-profile; exit 0; fi; exit 0 ;;
+  sts) echo '{"Account":"123456789012"}'; exit 0 ;;
+  resourcegroupstaggingapi) echo '{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/orders-api","Tags":[{"Key":"Team","Value":"my-team"},{"Key":"Active","Value":"true"}]}]}'; exit 0 ;;
+  bedrock)
+    if [ "$2" = "list-inference-profiles" ]; then
+      echo '{"inferenceProfileSummaries":[{"inferenceProfileArn":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/orders-api","inferenceProfileName":"Orders API"}]}'
+      exit 0
+    fi
+    if [ "$2" = "get-inference-profile" ]; then
+      id=""; prev=""
+      for arg in "$@"; do
+        if [ "$prev" = "--inference-profile-identifier" ]; then id="$arg"; fi
+        prev="$arg"
+      done
+      printf '{"inferenceProfileArn":"%s","inferenceProfileName":"Orders API","status":"ACTIVE","type":"APPLICATION","models":[{"modelArn":"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5"}]}' "$id"
+      exit 0
+    fi
+    echo '{}'; exit 0 ;;
+esac
+echo '{}'
+exit 0
+`;
+if (options.fakeAws) writeFileSync(join(fakeBin, "aws"), fakeAws, { mode: 0o700 });
+
+// A profile in settings (not AWS_PROFILE) keeps the check's "AWS_PROFILE unset" habit while using the real account.
+writeFileSync(
+    join(agent, "bedrock.json"),
+    JSON.stringify({
+        profile: options.profile,
+        regions: [options.region],
+        signInAtStart: false,
+        ...(options.team === undefined ? {} : { team: options.team, tagKey: "Team", tagValue: options.team }),
+        ...(options.profiles === undefined
+            ? {}
+            : {
+                  profiles: options.profiles
+                      .split(",")
+                      .map((value) => value.trim())
+                      .filter(Boolean),
+              }),
+    }),
+    { mode: 0o600 },
+);
+
 const env = {
     ...process.env,
     HOME: home,
     PI_CODING_AGENT_DIR: agent,
     BROWSER: "true",
-    PATH: `${dirname(piBinary)}:${process.env.PATH ?? ""}`,
+    PATH: `${options.fakeAws ? `${fakeBin}:` : ""}${dirname(piBinary)}:${process.env.PATH ?? ""}`,
 };
 delete env.AWS_PROFILE;
 delete env.AWS_DEFAULT_PROFILE;
 delete env.JIG_BEDROCK_PROFILE;
+if (options.fakeAws) env.AWS_EC2_METADATA_DISABLED = "true";
+
+const children = new Set();
+let cleaned = false;
+const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const child of children) {
+        try {
+            child.kill("SIGTERM");
+        } catch {}
+    }
+    if (!options.keep) rmSync(root, { recursive: true, force: true });
+};
+process.on("exit", cleanup);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => {
+        cleanup();
+        process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+}
+const fail = (message, stderr) => {
+    if (stderr) console.error(redact(String(stderr)).slice(0, 2000));
+    console.error(message);
+    process.exit(1);
+};
 
 const install = spawnSync(piBinary, ["install", resolve(packageDir)], { cwd: project, env, encoding: "utf8" });
-if (install.status !== 0) {
-    console.error(`pi install failed:\n${redact(`${install.stdout}\n${install.stderr}`)}`);
-    process.exit(1);
+if (install.status !== 0) fail(`pi install failed:\n${redact(`${install.stdout}\n${install.stderr}`)}`);
+console.log(`model ${fullModel}, thinking ${options.thinking}, profile ${options.profile}, package ${packageDir}`);
+console.log(`isolated home: ${root}`);
+if (options.fakeAws)
+    console.log("fake aws: sts, listing and get-inference-profile are answers from the recorded shapes");
+if (options.dryRun) {
+    console.log(`dry run: would first start: ${piBinary} --mode rpc (refresh)`);
+    console.log(
+        `dry run: then: ${piBinary} --mode rpc --model ${fullModel} --thinking ${options.thinking} --tools +tool_search --extension ${extension}`,
+    );
+    console.log(`dry run: discovery team=${options.team ?? "none"} profiles=${options.profiles ?? "none"}`);
+    process.exit(0);
 }
 
-const piArgs = [
-    "--mode",
-    "rpc",
+function start(args) {
+    const child = spawn(piBinary, ["--mode", "rpc", ...args], { cwd: project, env, stdio: ["pipe", "pipe", "pipe"] });
+    children.add(child);
+    child.on("exit", () => children.delete(child));
+    return child;
+}
+
+function lines(child, onEvent) {
+    let buffer = "";
+    child.stdout.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        for (let index = buffer.indexOf("\n"); index >= 0; index = buffer.indexOf("\n")) {
+            const line = buffer.slice(0, index);
+            buffer = buffer.slice(index + 1);
+            try {
+                onEvent(JSON.parse(line));
+            } catch {}
+        }
+    });
+}
+
+async function refreshCatalog() {
+    const child = start([]);
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    let done;
+    const finished = new Promise((resolve) => (done = resolve));
+    let failure = "";
+    lines(child, (event) => {
+        if (event.type === "extension_ui_request" && event.method === "notify") {
+            const message = String(event.message ?? "");
+            const success = /Bedrock catalog: (\d+) models/.exec(message);
+            if (success) {
+                if (Number(success[1]) === 0) {
+                    failure = "the catalog refresh reported 0 models";
+                } else console.log(`catalog ready: ${success[1]} models`);
+                done();
+            } else if (
+                event.notifyType === "warning" &&
+                /Bedrock|AWS discovery|could not load|No AWS profile/.test(message)
+            ) {
+                failure = message;
+                done();
+            }
+        }
+    });
+    child.on("exit", () => {
+        if (!failure) failure = stderr ? `Pi exited: ${stderr}` : "Pi exited before the catalog was ready";
+        done();
+    });
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    await wait(4_000);
+    child.stdin.write(`${JSON.stringify({ id: "refresh", type: "prompt", message: "/bedrock-refresh" })}\n`);
+    const timer = setTimeout(() => {
+        failure = failure || "timed out waiting for /bedrock-refresh";
+        done();
+    }, 90_000);
+    await finished;
+    clearTimeout(timer);
+    if (failure) {
+        child.stdin.end();
+        fail(`catalog refresh failed: ${failure}`, stderr);
+    }
+    child.stdin.end();
+    await wait(500);
+    if (child.exitCode === null) child.kill("SIGTERM");
+}
+
+await refreshCatalog();
+if (options.fakeAws) {
+    // No credentials are used here, so the request below is expected to fail; reaching it is the proof of the setup.
+}
+
+const child = start([
     "--model",
-    modelId,
+    fullModel,
     "--thinking",
     options.thinking,
     "--tools",
     "+tool_search",
     "--extension",
     extension,
-];
-if (options.dryRun) {
-    console.log(`dry run: would start: ${piBinary} ${piArgs.join(" ")}`);
-    console.log(`dry run: discovery team=${options.team ?? "none"} profiles=${options.profiles ?? "none"}`);
-    console.log(`dry run: extension ${extension}`);
-    if (!options.keep) rmSync(root, { recursive: true, force: true });
-    process.exit(0);
-}
-const pi = spawn(piBinary, piArgs, { cwd: project, env, stdio: ["pipe", "pipe", "pipe"] });
-console.log(`model ${modelId}, thinking ${options.thinking}, profile ${options.profile}, package ${packageDir}`);
-console.log(`isolated home: ${root}`);
-
-let buffer = "";
+]);
+let stderr = "";
 const calls = [];
-const notices = [];
 let doneResolve;
 const done = new Promise((resolve) => (doneResolve = resolve));
-const send = (message) => pi.stdin.write(`${JSON.stringify({ id: `check-${Date.now()}`, type: "prompt", message })}\n`);
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-pi.stdout.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
-    for (let index = buffer.indexOf("\n"); index >= 0; index = buffer.indexOf("\n")) {
-        const line = buffer.slice(0, index);
-        buffer = buffer.slice(index + 1);
-        let event;
-        try {
-            event = JSON.parse(line);
-        } catch {
-            continue;
-        }
-        if (event.type === "extension_ui_request" && event.method === "notify") {
-            notices.push(String(event.message ?? ""));
-        }
-        if (event.type === "message_end" && event.message?.role === "assistant") {
-            const message = event.message;
-            const usage = message.usage ?? {};
-            const tools = (message.content ?? []).filter((part) => part.type === "toolCall").map((part) => part.name);
-            const thinking = (message.content ?? []).some((part) => part.type === "thinking" && part.thinking?.trim());
-            calls.push({
-                api: message.api,
-                input: usage.input ?? 0,
-                cacheRead: usage.cacheRead ?? 0,
-                cacheWrite: usage.cacheWrite ?? 0,
-                output: usage.output ?? 0,
-                tools,
-                thinking,
-                error: message.stopReason === "error" ? String(message.errorMessage ?? "error") : "",
-            });
-            const label = tools.join(",") || "answer";
-            console.log(
-                `call ${calls.length} [${message.api}] ${label} | thinking ${thinking ? "yes" : "no"} | ` +
-                    `input ${usage.input ?? 0} | cache read ${usage.cacheRead ?? 0} | cache write ${usage.cacheWrite ?? 0} | output ${usage.output ?? 0}` +
-                    (message.errorMessage ? ` | ERROR ${redact(message.errorMessage).slice(0, 400)}` : ""),
-            );
-        }
-        if (event.type === "agent_end") {
-            doneResolve();
-        }
+let promptSent = false;
+let agentEnded = false;
+child.stderr.on("data", (chunk) => (stderr += chunk));
+lines(child, (event) => {
+    if (event.type === "message_end" && event.message?.role === "assistant") {
+        const message = event.message;
+        const usage = message.usage ?? {};
+        const tools = (message.content ?? []).filter((part) => part.type === "toolCall").map((part) => part.name);
+        const thinking = (message.content ?? []).some((part) => part.type === "thinking" && part.thinking?.trim());
+        calls.push({
+            api: message.api,
+            cacheRead: usage.cacheRead ?? 0,
+            cacheWrite: usage.cacheWrite ?? 0,
+            tools,
+            thinking,
+            error: message.stopReason === "error" ? String(message.errorMessage ?? "error") : "",
+        });
+        console.log(
+            `call ${calls.length} [${message.api}] ${tools.join(",") || "answer"} | thinking ${thinking ? "yes" : "no"} | ` +
+                `input ${usage.input ?? 0} | cache read ${usage.cacheRead ?? 0} | cache write ${usage.cacheWrite ?? 0} | output ${usage.output ?? 0}` +
+                (message.errorMessage ? ` | ERROR ${redact(message.errorMessage).slice(0, 400)}` : ""),
+        );
+    }
+    if (event.type === "agent_end") {
+        agentEnded = true;
+        doneResolve();
     }
 });
-pi.stderr.on("data", (chunk) => console.log(`stderr: ${redact(String(chunk)).slice(0, 400)}`));
+child.on("exit", (code) => {
+    if (!promptSent) fail(`Pi exited before the prompt was sent (code ${code})`, stderr);
+    if (!agentEnded && !options.fakeAws) fail(`Pi exited before the check finished (code ${code})`, stderr);
+    doneResolve();
+});
 
-// Wait for the model list to be ready: a cold discovery can take a minute. The doctor reads the catalog only.
-await wait(3_000);
-for (let waited = 0; waited < 90_000 && !notices.some((text) => /Catalog: loaded/.test(text)); waited += 5_000) {
-    send("/bedrock-doctor");
-    await wait(5_000);
-}
-if (!notices.some((text) => /Catalog: loaded/.test(text)))
-    console.log("warning: the catalog did not report loaded; trying the model anyway");
-send(
-    "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Think this through carefully before you " +
-        "answer. Then use tool_search with the query orders_api_7 to load that tool, call orders_api_7 with orderId " +
-        "42, and reply with the number of sheep and the order status in one short sentence.",
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await wait(4_000);
+console.log("PROMPT SENT: think through the sheep puzzle, then load orders_api_7 with tool_search and call it");
+child.stdin.write(
+    `${JSON.stringify({
+        id: "check",
+        type: "prompt",
+        message:
+            "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Think this through carefully before you " +
+            "answer. Then use tool_search with the query orders_api_7 to load that tool, call orders_api_7 with orderId " +
+            "42, and reply with the number of sheep and the order status in one short sentence.",
+    })}\n`,
 );
+promptSent = true;
 await Promise.race([done, wait(options.timeout * 1_000)]);
-pi.stdin.end();
+child.stdin.end();
 await wait(500);
-if (pi.exitCode === null) pi.kill("SIGTERM");
+if (child.exitCode === null) child.kill("SIGTERM");
 
 const any400 = calls.some((call) => /400|invalid signature|thinking block|tools list differs/i.test(call.error));
 const toolSearch = calls.some((call) => call.tools.includes("tool_search"));
@@ -233,19 +363,25 @@ const deferredCall = calls.some((call) => call.tools.some((name) => /^orders_api
 const thought = calls.some((call) => call.thinking);
 const afterToolLoad = calls.findIndex((call) => call.tools.includes("tool_search"));
 const cacheAfterLoad = afterToolLoad >= 0 && calls[afterToolLoad + 1] ? calls[afterToolLoad + 1].cacheRead : 0;
-const pass = !any400 && toolSearch && deferredCall && thought && cacheAfterLoad > 0;
 
 console.log("");
 console.log(`thinking used: ${thought ? "yes" : "no"}`);
 console.log(`tool_search used: ${toolSearch ? "yes" : "no"}`);
 console.log(`deferred tool called: ${deferredCall ? "yes" : "no"}`);
 console.log(
-    `first call after the tool load: cache read ${cacheAfterLoad}, cache write ${afterToolLoad >= 0 && calls[afterToolLoad + 1] ? calls[afterToolLoad + 1].cacheWrite : "n/a"}`,
+    `first call after the tool load: cache read ${cacheAfterLoad}, cache write ${
+        afterToolLoad >= 0 && calls[afterToolLoad + 1] ? calls[afterToolLoad + 1].cacheWrite : "n/a"
+    }`,
 );
 console.log(`400/thinking-binding error seen: ${any400 ? "YES" : "no"}`);
+if (options.fakeAws) {
+    console.log(
+        "RESULT: SETUP OK (fake aws: the prompt was sent; the request failure without credentials is expected)",
+    );
+    process.exit(0);
+}
 if (!any400 && cacheAfterLoad === 0)
-    console.log("note: the first call after the tool load read no cache; check the call-2 numbers above.");
+    console.log("note: the first call after the tool load read no cache; the check fails on this.");
+const pass = !any400 && toolSearch && deferredCall && thought && cacheAfterLoad > 0;
 console.log(`RESULT: ${pass ? "PASS" : "FAIL"}`);
-if (!options.keep) rmSync(root, { recursive: true, force: true });
-else console.log(`kept: ${root}`);
 process.exit(pass ? 0 : 1);
