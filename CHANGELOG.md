@@ -4,7 +4,7 @@
 
 ### Added
 
-- `/login` now asks how you sign in to AWS: an existing profile, a sign-in to an existing IAM Identity Center (SSO) profile, access keys or a role set up in the AWS CLI, or the ambient credential chain. It refuses a Bedrock API key and names the alternatives, checks the profile with `aws sts get-caller-identity`, and saves the discovery mode and regions it asks for.
+- `/login` now asks how you sign in to AWS: an existing profile, a sign-in to an existing IAM Identity Center (SSO) profile, access keys or a role set up in the AWS CLI, or the ambient credential chain. It refuses a Bedrock API key and names the alternatives, checks the profile with `aws sts get-caller-identity`, and saves the discovery mode and regions it asks for. Access-key and role instructions stay on screen until you say the profile exists, then the list is fetched.
 
 ### Changed
 

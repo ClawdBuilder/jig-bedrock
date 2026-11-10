@@ -176,20 +176,23 @@ export async function runLoginFlow(
             await askDiscovery(interaction, options);
             return { type: "api_key" };
         }
-        if (method === "keys") {
-            interaction.notify({
-                type: "info",
-                message:
-                    "Run aws configure --profile my-profile in a terminal; it asks for the key and writes it to ~/.aws/credentials. Then choose that profile here.",
+        if (method === "keys" || method === "role") {
+            // The instruction is the dialog: the person can switch to a terminal, and the list is fetched only after
+            // they say the profile exists. A notify would vanish when the pick-list replaced it.
+            const guidance =
+                method === "keys"
+                    ? "Run this in a terminal, then come back:\n\n  aws configure --profile my-profile\n\nIt asks for the access key ID and secret access key and writes them to ~/.aws/credentials; the region and output go to ~/.aws/config. jig-bedrock never asks for or stores them.\n\nWhen the profile exists, continue."
+                    : "Add a profile to ~/.aws/config, then come back:\n\n  [profile my-profile]\n  role_arn = arn:aws:iam::123456789012:role/MyRole\n  source_profile = my-source-profile\n  region = us-east-1\n\nsource_profile must already exist. The AWS CLI obtains and caches the role's temporary credentials (and asks for an MFA code when mfa_serial is set); jig-bedrock never asks for it.\n\nWhen the profile exists, continue.";
+            const ready = await interaction.prompt({
+                type: "select",
+                message: guidance,
+                options: [
+                    { id: "ready", label: "I have created it — list my profiles" },
+                    { id: "back", label: "Back to the sign-in methods" },
+                ],
             });
-            interaction.notify({ type: "progress", message: "Looking up your AWS profiles…" });
-            listed = await (options.refreshProfiles?.() ?? options.listProfiles(interaction.signal));
-        } else if (method === "role") {
-            interaction.notify({
-                type: "info",
-                message:
-                    "A role profile names role_arn and source_profile in ~/.aws/config. Set it up in a terminal, then choose it here.",
-            });
+            interaction.signal.throwIfAborted();
+            if (ready !== "ready") continue;
             interaction.notify({ type: "progress", message: "Looking up your AWS profiles…" });
             listed = await (options.refreshProfiles?.() ?? options.listProfiles(interaction.signal));
         } else if (method === "sso") {
