@@ -1,122 +1,112 @@
 # Settings
 
-Every setting of the `bedrock` section, the three discovery modes, and where each value comes from. The provider reads
-the settings at Pi start and resolves the profile when the session starts, so `/login` takes effect without a reload.
+Every setting of jig-bedrock, its type, its default, its environment variable and what it means. Read this page before
+you edit `bedrock.json` by hand. `/bedrock settings` shows the same list with each value and where it comes from
+(default, file or environment).
 
 ## Where settings come from
 
-The provider reads `~/.pi/agent/bedrock.json` and then applies the environment on top. A file may hold the keys at the
-top level or inside a `bedrock` object.
+The package reads `~/.pi/agent/bedrock.json` (in the folder `PI_CODING_AGENT_DIR` names, if you set it), then applies the
+environment variables below on top. The file holds the keys at the top level; a file that wraps them in a `bedrock`
+object is still read. Nothing is required: with no file, the defaults apply.
 
-`bedrock.json` holds the keys directly or inside a `bedrock` object. Three settings start programs: `ssoLoginCommand`,
-`browser`; set them in `bedrock.json`.
+```json
+{ "profile": "my-profile", "regions": ["us-east-1"] }
+```
+
+You can change a setting in two ways: edit the file, or run `/bedrock set <key> <value>` (and `/bedrock unset <key>`).
+`set` checks the value first, writes the file with mode 0600, and applies it at once where it can. Lists are comma
+separated: `/bedrock set regions us-east-1,eu-west-1`.
+
+An unknown key is ignored, with a warning that names the key. A bad value for a known key stops the provider and names
+the field; `/bedrock`, with `settings`, `set` and `unset`, keeps working so you can repair it from inside Pi.
+
+If you used 0.2.x, your settings may be in the `bedrock` section of a file called `jig.json` in the agent folder. The
+first session says so; `/bedrock migrate` copies that section to `bedrock.json`, once, and never overwrites an existing
+file.
 
 ## Every setting
 
-| Setting            | Default                                         | Meaning                                                 |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------- |
-| `profile`          | unset                                           | The AWS profile for discovery, requests and sign-in     |
-| `regions`          | `["us-east-1"]`                                 | Where to look for profiles                              |
-| `tagKey`           | none                                            | Tag mode: the tag name to filter on                     |
-| `tagValue`         | none                                            | Tag mode: the tag value to filter on                    |
-| `activeTagKey`     | none                                            | Tag mode: an extra tag that must also match             |
-| `activeTagValue`   | none                                            | Tag mode: the optional second tag's value               |
-| `profiles`         | none                                            | Explicit mode: inference-profile ARNs or ids            |
-| `spendCommand`     | none                                            | Optional argv that prints this month's spend            |
-| `monthlyBudgetUsd` | none                                            | A figure for the footer; not an AWS limit               |
-| `ssoLoginCommand`  | `["aws","sso","login","--profile","{profile}"]` | The argv that starts sign-in; `{profile}` is replaced   |
-| `signInAtStart`    | `false`                                         | Refresh an expired SSO session when Pi starts           |
-| `browser`          | unset                                           | The program that opens the sign-in address              |
-| `api`              | `messages`                                      | `messages` (the Anthropic Messages route) or `converse` |
-| `converseModels`   | none                                            | Short model ids (`claude-opus-5`) that stay on Converse |
-| `messagesModels`   | none                                            | Short model ids to put on Messages, for a newer model   |
-| `debug`            | `false`                                         | Write the request log described under Debug log         |
+| Setting            | Type                         | Default                                         | Environment variable                    | Meaning                                                                                                                                                                                                                                                  |
+| ------------------ | ---------------------------- | ----------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile`          | string                       | unset                                           | `JIG_BEDROCK_PROFILE`                   | The AWS profile for discovery, requests and sign-in. Unset means the choice made at `/login`, then the AWS environment (see below).                                                                                                                      |
+| `regions`          | list of strings              | `["us-east-1"]`                                 | `JIG_BEDROCK_REGIONS` (comma separated) | The AWS regions to look in, 1 to 16 of them. The first one also decides which geography keeps the plain model id.                                                                                                                                        |
+| `tagKey`           | string                       | unset                                           | `JIG_BEDROCK_TAG_KEY`                   | Tag mode: the tag name an application inference profile must carry. Set it together with `tagValue`.                                                                                                                                                     |
+| `tagValue`         | string                       | unset                                           | `JIG_BEDROCK_TAG_VALUE`                 | Tag mode: the tag value to match.                                                                                                                                                                                                                        |
+| `activeTagKey`     | string                       | unset                                           | none                                    | Tag mode: a second tag that must also match. Set it together with `activeTagValue`.                                                                                                                                                                      |
+| `activeTagValue`   | string                       | unset                                           | none                                    | Tag mode: the value of the second tag.                                                                                                                                                                                                                   |
+| `profiles`         | list of strings              | unset                                           | none                                    | Explicit mode: inference-profile ARNs or ids, up to 256. When set, no tag search and no listing run.                                                                                                                                                     |
+| `team`             | string                       | unset                                           | `JIG_BEDROCK_TEAM`                      | The 0.2.x short form of tag mode, read for one more release. It means `tagKey` `Team`, `tagValue` this value, and the second tag `Active` = `true`. `/bedrock migrate` rewrites it into the generic keys. Do not combine it with `tagKey` or `tagValue`. |
+| `api`              | `"messages"` or `"converse"` | `"messages"`                                    | none                                    | `converse` puts every model on Converse. `messages` does not force Messages: each Claude model still gets the route [the rule](how-it-works.md#which-route-a-model-gets) picks for it.                                                                   |
+| `converseModels`   | list of short model ids      | unset                                           | none                                    | Models that stay on Converse, such as `claude-opus-5`.                                                                                                                                                                                                   |
+| `messagesModels`   | list of short model ids      | unset                                           | none                                    | Models that go on Messages even where the installed Pi does not list tool changes for them: use it for a model newer than your Pi. A model cannot be in both lists.                                                                                      |
+| `monthlyBudgetUsd` | number above 0               | unset                                           | none                                    | The budget the footer shows next to the month's spend. It is a figure to compare with, not an AWS limit, and it never blocks a request. `/bedrock budget` sets it.                                                                                       |
+| `spendCommand`     | list of strings (argv)       | unset                                           | none                                    | A program, with no shell, that prints this month's spend as JSON. See [Spend command](spend-command.md).                                                                                                                                                 |
+| `ssoLoginCommand`  | list of strings (argv)       | `["aws","sso","login","--profile","{profile}"]` | none                                    | The program that signs in. `{profile}` is replaced by the AWS profile's name; no other placeholder exists.                                                                                                                                               |
+| `signInAtStart`    | boolean                      | `false`                                         | none                                    | `true` renews an expired SSO sign-in when Pi starts, which may open a browser. `false` leaves it to the first failing request or `/bedrock login`.                                                                                                       |
+| `browser`          | string                       | unset                                           | none                                    | The program that opens the sign-in address: a full path, or a name on your PATH, with no arguments. Unset on WSL means the Windows browser.                                                                                                              |
+| `debug`            | boolean                      | `false`                                         | `JIG_BEDROCK_DEBUG=1`                   | Append one line per request to `debug.log` in the state folder. It never holds credentials, prompt text or account ids.                                                                                                                                  |
 
-The package never handles a password or token: `ssoLoginCommand` starts the owning tool's login, and `/login` stores
-only the profile name (in Pi's `auth.json`, as `env.AWS_PROFILE`).
+A key must be spelled exactly as above. Three settings start programs: `ssoLoginCommand`, `browser` and `spendCommand`. The package
+runs them without a shell.
 
-### Where the profile comes from
+## Which AWS profile is used
 
-When `profile` is unset, the provider takes the first of these that exists:
+When `profile` is unset, the package takes the first of these that exists:
 
-1. the `profile` setting (or `JIG_BEDROCK_PROFILE`, which overrides it);
-2. the profile chosen at `/login` (Sign in with an API key → Amazon Bedrock (jig-bedrock)), kept in Pi's credential
-   for this provider;
+1. `profile` in the file, or `JIG_BEDROCK_PROFILE` (the variable wins over the file);
+2. the AWS profile chosen at `/login`, which Pi keeps as its credential for this provider;
 3. `AWS_PROFILE`;
 4. `AWS_DEFAULT_PROFILE`;
-5. the `default` profile, when your AWS config or credentials file has one;
-6. with none of those, the AWS credential chain (environment, container or instance role).
+5. the AWS profile called `default`, when your AWS config or credentials file has one;
+6. otherwise the AWS credential chain of the environment (keys in variables, a container role or an instance role).
 
-A configured profile that is in neither your AWS config nor your credentials file (`[profile NAME]` or `[NAME]`; `aws configure list-profiles` prints the same names) resolves to no models: the start-up notice and
-`/bedrock doctor` say which profile is missing and point to `/login`.
+An explicit choice is never replaced by a lower one, even when it is missing: a name that is in neither your AWS config
+nor your credentials file gives no models, and `/bedrock doctor` says which name is wrong.
 
-`signInAtStart: true` refreshes an expired session when Pi starts; the default leaves sign-in to a failing request or `/bedrock login`. The start-up check still runs read-only, and
-an expired session shows “Bedrock models not loaded yet; run /bedrock login, then /bedrock refresh.”
+## The three ways models are found
 
-## The three discovery modes
+The settings choose one way. [How it works](how-it-works.md#how-models-are-found) says what each one calls.
 
-The settings choose one mode; there is no fallback between them.
+1. **AWS-defined (default).** No tag setting and no `profiles`: every AWS-defined Claude inference profile in `regions`.
+   It includes `global.` ones, whose price and data residency differ.
+2. **By tag.** `tagKey` and `tagValue` (with the optional `activeTagKey` and `activeTagValue`) select application
+   inference profiles that carry the tag.
+3. **Listed by hand.** `profiles` names them.
 
-1. **System-defined (default).** With no tag setting or `profiles`, discovery lists the AWS-defined cross-region
-   Claude profiles in `regions`. It includes `global.` profiles, whose cost and data residency differ.
-2. **Tag filter.** `tagKey` and `tagValue` turn the mode on. `activeTagKey`/`activeTagValue` add a second tag that must
-   match. A 0.2.x `team` value is still read once as `tagKey: "Team"`, `tagValue: <team>`, `activeTagKey: "Active"`,
-   `activeTagValue: "true"`; `/bedrock migrate` writes the generic keys. When the old `team` is set and
-   `activeTagKey` is not, `Active=true` is still required, so existing settings behave exactly as before.
-3. **Explicit list.** `profiles` names ARNs or profile ids, and no tag or system search runs. An ARN in a region
-   outside `regions` is reported, not read: add the region.
+## Sign-in methods
 
-Only `ACTIVE` profiles are listed. The calls each mode makes are in [How it works](how-it-works.md#discovery).
+Requests use the AWS SDK's credential chain; discovery uses the AWS CLI with `--profile`, so the AWS profile must work
+in both.
 
-## Environment
+| What you have                                        | Requests and discovery                                      | Sign-in repair | Run against real AWS                                                                              |
+| ---------------------------------------------------- | ----------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| SSO (IAM Identity Center)                            | yes                                                         | yes            | yes                                                                                               |
+| Access keys in the AWS profile                       | yes                                                         | no             | yes (temporary keys)                                                                              |
+| Access keys in environment variables, no AWS profile | yes                                                         | no             | yes                                                                                               |
+| Assumed role (`role_arn`)                            | yes                                                         | no             | timed out at 90 seconds on 0.2.4, because each AWS CLI call assumes the role again; not run since |
+| `credential_process`                                 | yes                                                         | no             | no                                                                                                |
+| Web identity or instance role                        | requests only, unless an AWS profile the CLI can use exists | no             | no                                                                                                |
+| Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`)         | not used by this package; Pi's built-in provider takes it   | no             | no                                                                                                |
 
-These variables override the same setting: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`,
-`JIG_BEDROCK_PROFILE` and `JIG_BEDROCK_REGIONS` (comma separated). `JIG_BEDROCK_DEBUG=1` turns the debug log on.
+"No" in the last column means the SDK and the CLI support it and the tests fake it, but no real run of this package
+used it. A Bedrock API key in the environment is hidden from this package's own Converse requests, so it never
+replaces the AWS profile, and Pi's built-in provider still sees it.
 
-`PI_CACHE_RETENTION` sets Pi's own cache retention;
-the provider does not change it. `PI_CODING_AGENT_DIR` moves the agent folder, and with it `bedrock.json`.
+## Other variables the package reads
 
-## Credentials
+| Variable                             | Used for                                                                                                                                             |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PI_CODING_AGENT_DIR`                | Moves Pi's agent folder, and with it `bedrock.json`.                                                                                                 |
+| `XDG_STATE_HOME`                     | Moves the state folder (default `~/.local/state`) that holds the spend record and the debug log.                                                     |
+| `XDG_CACHE_HOME`                     | Moves the cache folder (default `~/.cache`) that holds the catalog.                                                                                  |
+| `AWS_CONFIG_FILE`                    | The AWS config file `/login` adds a new AWS profile to (default `~/.aws/config`).                                                                    |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE` | An AWS profile when `profile` is unset (see above).                                                                                                  |
+| `BROWSER`                            | The program that opens the sign-in address, when `browser` is unset.                                                                                 |
+| `PI_CACHE_RETENTION`                 | Pi's own cache lifetime. The package does not change it. It has no effect on the Messages route, which sends only the 5-minute lifetime.             |
+| `NO_COLOR`, `TERM`, `LANG`, `LC_ALL` | With `NO_COLOR` set, `TERM=dumb` or a locale that is not UTF-8, command output uses the words ok, warning, failure and skipped instead of the marks. |
 
-Requests use the AWS SDK's default credential chain, loaded from Pi's install. Discovery runs the AWS CLI with
-`--profile`, so the configured profile must be usable by the CLI as well as by the SDK.
-
-| What you have                                | Requests               | Discovery                              | Sign-in repair                                       |
-| -------------------------------------------- | ---------------------- | -------------------------------------- | ---------------------------------------------------- |
-| SSO / IAM Identity Center                    | yes, SDK chain         | yes, `--profile`                       | yes: checked at start, one retry before any response |
-| Access keys in a profile                     | yes                    | yes, `--profile`                       | no                                                   |
-| Assume role in a profile                     | yes                    | yes, `--profile`                       | no                                                   |
-| `credential_process` in a profile            | yes                    | yes, `--profile`                       | no                                                   |
-| Web identity or instance role                | yes                    | only through a profile the CLI can use | no                                                   |
-| Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) | Pi's built-in provider | no                                     | no                                                   |
-
-What has run against real AWS, and what the other rows rest on: [Not verified](not-verified.md).
-
-A Bedrock API key belongs to Pi's built-in Amazon Bedrock provider. This package's models use the AWS profile; an
-ambient `AWS_BEARER_TOKEN_BEDROCK` is cleared for their requests and does not replace the profile. `/login` says where
-to go for a key and does not ask for one.
-
-## Spend and budget
-
-After every reply this package appends one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/YYYY-MM.jsonl`:
-the time, session, short model id, region, route, the four token counts, the cost Pi computed and whether the model had a
-price. The folder is private to the user. Nothing from a prompt, an ARN, an account id or a profile is written.
-
-The footer shows `Nov $12.40` (or `Nov $12.40 / $200` with a budget); a trailing `+` means some reply had no price. It
-is display only: it is not AWS spend and it never blocks a request.
-
-`/bedrock settings` shows every key and whether it comes from the default, `bedrock.json` or the environment.
-`/bedrock set <key> <value>` and `/bedrock unset <key>` validate, write atomically with mode 0600, and apply without
-`/reload` when the file is valid. Lists are comma separated.
-
-`monthlyBudgetUsd` sets the display budget; the minimum is $1. One notice appears when the month passes 80%, one when it passes 100%, and
-one at session start while over 100%. The state file remembers the first two for the month, across Pi processes.
-
-`spendCommand` is optional: an argv array, run without a shell at most once every 10 minutes and at `/bedrock usage`, with
-the settings' AWS profile and first region in its environment. It prints one JSON object:
-`{ "month": "2026-11", "spentUsd": 203.4 }`. When it works, the footer and budget use its figure; when it fails, they fall
-back to this machine's record and `/bedrock doctor` says why. The contract and a ten-line example:
-[Spend command](spend-command.md).
+[Back to the README](../README.md).
 
 ## Debug log
 
@@ -134,13 +124,3 @@ A prompt, a reply, a tool argument, a credential, a signature and an authorizati
 message an AWS account id becomes `<account>` and a full ARN becomes its last path segment. The file is private (mode 0600, in a
 0700 folder). When it passes 5 MB it is renamed to `debug.log.1`, replacing an older one, and a new file starts. A log that
 cannot be written is dropped; it never fails a request.
-
-## Platforms
-
-Linux and WSL2 are supported. macOS is expected to work but is not tested; reports and fixes are welcome.
-
-Native Windows is not supported. The sign-in lock needs a POSIX owner and a private `0700` directory, and the
-no-browser fallback is the WSL-only `bin/windows-browser` script: on WSL, an unset `browser` runs it, so the sign-in
-address opens in the Windows browser.
-
-[Back to the README](../README.md).

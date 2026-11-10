@@ -1,134 +1,164 @@
 # jig-bedrock: Claude on AWS Bedrock for Pi
 
-A Pi provider for Claude on AWS Bedrock. It discovers the Claude inference profiles your account can use. A default
-install uses Converse for AWS-defined (system) profiles and the Messages route for application inference profiles; the
-`api` setting can force either route. It reads its settings from `~/.pi/agent/bedrock.json` and the `JIG_BEDROCK_*`
-environment; nothing else is required.
+jig-bedrock adds Claude on AWS Bedrock to the Pi coding agent, for people who reach Claude through an AWS account. After a tool is loaded in the middle of a session, the next request read 34,216 tokens from the prompt cache and wrote 275; Pi's built-in Bedrock provider read 0 and wrote 34,463 (the session cost $0.0051 against $0.0099, with a prompt of about 34,000 tokens). This holds for Haiku 5.5, Sonnet 5.5, Opus 5.5 and Opus 4.8, which use the Messages route; the other Claude models use the Converse route and behave like the built-in provider.
 
-Pi's built-in Bedrock provider uses Converse only, has a fixed model list, and has no profile discovery, SSO repair or
-budget footer. This package adds the Messages route with SigV4, discovery in three modes, repair through `aws sso login`,
-and a local spend record with an optional display budget.
+It also finds the models your account can use, renews an expired SSO sign-in, and shows the month's spend in Pi's footer.
 
-This package sits beside Pi's built-in Bedrock provider: both model lists appear in `/model`, and the built-in provider
-keeps its API-key sign-in and its own models. This package uses an AWS profile for its models; an ambient
-`AWS_BEARER_TOKEN_BEDROCK` is ignored for them. Use Pi's built-in provider when you sign in with a Bedrock API key.
+![How a request runs: Pi sends a turn to jig-bedrock, which picks the Messages or the Converse route for the model and signs the request with your AWS profile. Around it: an expired sign-in is renewed, the models are kept for 24 hours, each reply's cost goes to a monthly record that feeds the footer, and Pi's built-in Bedrock provider keeps working.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/request-flow.svg)
 
-## Install
+_A request: jig-bedrock picks the route for the model, signs with your AWS profile, and records the cost of the reply._
+
+## Set up in five steps
+
+You need Node 22.19 or later, Pi 1.5 or later (1.5.0 is the oldest; CI runs the tests on it), the AWS CLI v2, and an AWS profile (a named sign-in in `~/.aws/config`) that can call Bedrock.
+
+**1. Install the package.**
 
 ```sh
 pi install npm:@clawdbuilder/jig-bedrock
 ```
 
-Requirements: Node 22.19 or later, Pi 1.5 or later, and the AWS CLI v2 for discovery. You need an AWS profile the CLI can
-use; **SSO is one option, not a requirement**. Linux and WSL2 are supported. macOS is expected to work but is not
-tested; reports and fixes are welcome. Native Windows is not supported ([why](docs/settings.md#windows)).
-
-Run `/bedrock doctor` after installing; it checks Node and the AWS CLI without calling AWS.
-
-## Settings
-
-Put the keys in `~/.pi/agent/bedrock.json`; a file that wraps them in a `bedrock` object is still read. Nothing is required: `/login` → Sign in with an API key → Amazon Bedrock
-(jig-bedrock) asks how you sign in (an existing profile, an SSO sign-in, a new SSO or role profile, access keys, or
-the ambient credential chain), checks the profile with AWS, and saves the discovery choice and regions. A new profile
-shows its exact lines first and is appended to `~/.aws/config` only after you confirm. You can also set
-`bedrock.profile` yourself.
-
-```json
-{ "bedrock": { "profile": "my-aws-profile", "regions": ["us-east-1"] } }
+```text
+<!-- real output: Claude -->
 ```
 
-| Setting            | Default         | Meaning                                                                                        |
-| ------------------ | --------------- | ---------------------------------------------------------------------------------------------- |
-| `profile`          | unset           | The AWS profile for discovery and requests; `/login` chooses it, and this setting overrides it |
-| `regions`          | `["us-east-1"]` | Where to look for profiles                                                                     |
-| `tagKey`           | none            | Tag mode: the tag name to filter on                                                            |
-| `tagValue`         | none            | Tag mode: the tag value to filter on                                                           |
-| `api`              | `messages`      | `messages` (cache-friendly) or `converse`                                                      |
-| `monthlyBudgetUsd` | none            | Display budget for the footer and budget notices; not an AWS limit                             |
-| `spendCommand`     | none            | Optional argv that prints this month's spend (see Spend command)                               |
+Done when: `pi list` shows `npm:@clawdbuilder/jig-bedrock`.
 
-A profile chosen at `/login` is Pi's credential for this provider: the record holds the profile name, never a key. The
-same flow saves the discovery mode and regions to `bedrock.json`; it never writes the profile there.
+**2. Sign in.** In Pi, run `/login` and choose Amazon Bedrock (jig-bedrock). Pi lists it under "Sign in with an API key", but it asks for no key: it asks which AWS profile to use, and may open a browser.
 
-If you used 0.2.x, your settings may be in the `bedrock` section of `jig.json`. The first session says so; `/bedrock
-migrate` copies that section to `bedrock.json`, once, and leaves `jig.json` alone.
+```text
+<!-- real output: Claude -->
+```
 
-With no tag settings, discovery lists every AWS-defined cross-region Claude profile in `regions`.
-`tagKey`/`tagValue` narrow it to tagged application profiles, and `profiles` names profiles explicitly. A 0.2.x `team`
-value is still read once as the old short form; `/bedrock migrate` rewrites it. A successful
-catalog is cached for 24 hours; `/bedrock refresh` forces a new run.
+Done when: Pi says `Bedrock models loaded:` with a number above 0.
 
-Sign-in is repaired when an SSO session has expired: the provider checks at start and retries once before a response,
-and `/bedrock login` starts the login. `signInAtStart: false` (the default) leaves it to the failing request. Requests use the AWS SDK's
-credential chain; discovery uses the AWS CLI, so the profile must work in both.
+**3. Load the models.**
 
-Every setting, the three discovery modes and the environment variables: [Settings](docs/settings.md).
-The optional spend command and its ten-line example: [Spend command](docs/spend-command.md).
-The first session in a new agent folder with no profile says once: “Bedrock: run /login, choose Amazon Bedrock
-(jig-bedrock), then /model.”
+```text
+/bedrock refresh
+```
 
-## Routes and model ids
+```text
+<!-- real output: Claude -->
+```
 
-A default install uses **Converse** for AWS-defined (system) profiles and the **Messages** route for application
-inference profiles. `api: "messages"` only applies the Messages route where the profile kind supports it; `api:
-"converse"` puts every model on Converse.
+Done when: the output has no row marked `✗` and `/bedrock models` lists at least one model.
 
-AWS-defined discovery can show two models for one foundation model, for example `claude-haiku-4-5` and
-`claude-haiku-4-5-global`. The **short id** is the preferred system profile: the geography prefix that matches your
-first configured region (`us`, `eu`, `apac`, `jp`, `au`, `us-gov`), then `global`, then the other regions in the order
-you configured them. The other profile gets a short geography suffix (`-global`, `-eu`, `-apac`, …); if two would
-collide it adds the region, and the old `<slug>--<region>--<profile id>` form is kept as an alias. Both are separate AWS
-inference profiles with their own routing and price, so both stay in `/model`.
+**4. Choose a model.** Run `/model` and pick one that starts with `jig-bedrock/`, such as `jig-bedrock/claude-sonnet-5-5`.
+
+```text
+<!-- real output: Claude -->
+```
+
+Done when: the footer of Pi shows that model's name.
+
+**5. Check everything.**
+
+```text
+/bedrock doctor
+```
+
+```text
+<!-- real output: Claude -->
+```
+
+Done when: the last row says `Bedrock is ready`.
+
+You are set up when `/bedrock doctor` ends with `Bedrock is ready`.
+
+## Budget
+
+```text
+/bedrock budget 200
+```
+
+The footer then shows the month and the spend, for example `Nov $12.40 / $200`. It turns to Pi's warning colour at 80% and its error colour at 100%, and one notice appears at each. A `+` after the amount means some reply had no price.
+
+The figure counts the replies of the `jig-bedrock` models in this machine's Pi sessions, at the prices in Pi's model list. It does not count other machines, other tools, or Pi's built-in provider. It is a figure to compare with, not an AWS limit, and it never blocks a request. To count something else, set a `spendCommand` ([Spend command](docs/spend-command.md)).
+
+## Compared with Pi's built-in Bedrock provider
+
+Both stay in `/model`; this package does not replace the built-in one.
+
+|                              | Pi's built-in provider                                        | jig-bedrock                                                                                |
+| ---------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Install                      | None; it is part of Pi                                        | `pi install`                                                                               |
+| Sign-in                      | A Bedrock API key, or the AWS credentials of your environment | An AWS profile (SSO, keys or a role)                                                       |
+| Models                       | Pi's own list, with non-Claude models                         | Claude models found in your account, including application inference profiles found by tag |
+| Expired SSO sign-in          | The request fails; you sign in again                          | Renewed, then the request is sent once more                                                |
+| Cache after a tool is loaded | Rewritten                                                     | Kept, on the four models above                                                             |
+| 1-hour cache                 | Yes, on Claude 4.5 and later                                  | Not on the Messages route; the Converse models keep it                                     |
+| Month's spend and budget     | Not included                                                  | In the footer                                                                              |
+
+![The same session on both routes. On Messages, call 2 after a tool load reads 34,216 tokens from the cache and writes 275, and the session costs $0.0051. On Converse, as in Pi's built-in provider, call 2 reads 0 and writes 34,463, and the session costs $0.0099.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/cache-after-tool-load.svg)
+
+_One session, three calls, measured on AWS: a tool loaded in the middle rewrites the cache on Converse and not on Messages._
 
 ## Commands
 
-One command, with completions:
+| Command            | What it does                                                         |
+| ------------------ | -------------------------------------------------------------------- |
+| `/bedrock status`  | One screen: AWS profile, sign-in, models, route, spend. No AWS call. |
+| `/bedrock doctor`  | Checks everything, then tells you the one next step.                 |
+| `/bedrock models`  | Lists the models with their route and price.                         |
+| `/bedrock refresh` | Reads the models from AWS again.                                     |
+| `/bedrock login`   | Renews the AWS sign-in.                                              |
+| `/bedrock usage`   | The spend by model, for a day, a week or a month.                    |
 
-| Command                                               | Does                                                                        |
-| ----------------------------------------------------- | --------------------------------------------------------------------------- |
-| `/bedrock` or `/bedrock status`                       | Profile, sign-in as last seen, models, route, spend and budget; no AWS call |
-| `/bedrock doctor [offline\|call]`                     | Local checks, free AWS checks, or one tiny call                             |
-| `/bedrock models`                                     | Short id, region, route and price; not-usable profiles after                |
-| `/bedrock refresh`                                    | Re-read the profiles from AWS                                               |
-| `/bedrock login`                                      | Renew the chosen AWS sign-in                                                |
-| `/bedrock usage [day\|week\|month]`                   | Spend by model, tokens and cache share                                      |
-| `/bedrock budget [amount\|off]`                       | Show, set or remove the display budget                                      |
-| `/bedrock settings`                                   | Every setting, value and source                                             |
-| `/bedrock set <key> <value>` / `/bedrock unset <key>` | Change `bedrock.json` safely                                                |
-| `/bedrock migrate`                                    | Copy a 0.2.x `jig.json` section once                                        |
-| `/bedrock help`                                       | The short table                                                             |
+`/bedrock help` lists all of them, including `settings`, `set` and `budget`.
 
-The old names `/bedrock doctor`, `/bedrock usage`, `/bedrock stats`, `/bedrock models`,
-`/bedrock refresh` and `/bedrock login` still work for this release and name their replacement.
+## When something is wrong
 
-## IAM
+| You see                            | Run                |
+| ---------------------------------- | ------------------ |
+| Sign-in expired                    | `/bedrock login`   |
+| Access denied                      | `/bedrock doctor`  |
+| No models in `/model`              | `/bedrock refresh` |
+| A model is missing after an update | `/bedrock models`  |
+| The footer shows no amount         | `/bedrock usage`   |
 
-The AWS CLI and every signed request need these actions:
+What to expect, and the permissions AWS needs: [Troubleshooting](docs/troubleshooting.md).
 
-| Action                                  | Needed for                                  | Resource                                                   |
-| --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
-| `sts:GetCallerIdentity`                 | The account check before discovery          | `*`                                                        |
-| `bedrock:ListInferenceProfiles`         | System mode: the profile list               | `*`                                                        |
-| `tag:GetResources`                      | Tag mode: profiles by tag                   | `*`                                                        |
-| `bedrock:GetInferenceProfile`           | Tag and explicit modes: one profile's model | The inference-profile ARN                                  |
-| `bedrock:InvokeModelWithResponseStream` | Requests, on both routes                    | The profile ARN and each foundation-model ARN it routes to |
+## Limits
 
-Every request streams. Messages goes to Bedrock's Anthropic route, and Converse uses the SDK's `ConverseStream`, which
-`bedrock:InvokeModelWithResponseStream` authorizes; `bedrock:InvokeModel` is not needed. No `ListFoundationModels` or
-`GetFoundationModel` permission is needed: the code reads the foundation model from the profile's ARN.
+- Linux and WSL are tested. macOS runs the unit tests in CI but has not been tested against real AWS; reports and fixes are welcome. Native Windows is not supported.
+- A Bedrock API key works through Pi's built-in provider, not this package.
+- The spend figure counts this machine's Pi sessions, unless a `spendCommand` is set.
+- The budget is a figure to compare with, not an AWS limit, and it never blocks a request.
+- Opus 4.1 with thinking on fails on Converse, in Pi's built-in provider too.
+- The Fable models need an account data-retention setting from AWS. They use Messages by the rule, but no real run could test them.
+- Only SSO sign-ins are renewed. SSO and access keys were run against real AWS; an assumed role, `credential_process` and web identity were not ([sign-in methods](docs/settings.md#sign-in-methods)).
+- On the Messages route the 1-hour cache is not used, so `PI_CACHE_RETENTION=long` has no effect there.
+- The oldest supported Pi is 1.5.0; CI proves it.
 
-An inference profile must allow the profile **and** the foundation model in every region it routes to. AWS's
-[inference-profile permissions][ip-iam] say the same.
+## Update and uninstall
+
+Update with `pi update npm:@clawdbuilder/jig-bedrock`, then `/reload`. Pi shows the changelog at the next start. Remove with `/logout` (choose this provider) and then `pi remove npm:@clawdbuilder/jig-bedrock`. Removal leaves these behind, and you can delete them:
+
+| Left behind                               | What it is                                                                                                                              |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.pi/agent/bedrock.json`                | Your settings (in `PI_CODING_AGENT_DIR` if you set it).                                                                                 |
+| `~/.cache/jig-bedrock/`                   | The catalog of models (in `XDG_CACHE_HOME` if you set it).                                                                              |
+| `~/.local/state/jig-bedrock/`             | The spend record in `spend/`, `debug.log` if you turned it on, and `sso-runtime/` if it was needed (in `XDG_STATE_HOME` if you set it). |
+| `~/.aws/config.jig-bedrock-backup-<time>` | Up to five backups of your AWS config, made before `/login` added an AWS profile. The AWS profiles it added stay in `~/.aws/config`.    |
+
+Pi's own `auth.json` keeps the AWS profile's name until you run `/logout`. Sessions recorded with these models stay in Pi's session folder, and they need the package to resume.
 
 ## More detail
 
-- [Settings](docs/settings.md): read before you change one; every field, the modes, credentials, environment.
-- [How it works](docs/how-it-works.md): read when a profile is missing; discovery, routes, model ids, the footer.
-- [Spend command](docs/spend-command.md): the optional JSON contract and a ten-line example.
-- [Not verified](docs/not-verified.md): read before you rely on it; what has run against real AWS, what the tests fake.
+- Read [Settings](docs/settings.md) before you edit `bedrock.json` by hand.
+- Read [How it works](docs/how-it-works.md) when you wonder why a model is on one route, or how models are found.
+- Read [Troubleshooting](docs/troubleshooting.md) when a command ends with `✗` or a request fails.
+- Read [Spend command](docs/spend-command.md) before you set a `spendCommand`.
+- Read [Contributing](docs/contributing.md) before you change the package.
+- Read [CHANGELOG.md](CHANGELOG.md) before you update.
+
+## For an agent setting this up
+
+- Do the five steps above in order. Each one has a "Done when" line: check it before the next.
+- Step 2 opens a browser: ask the user to finish the sign-in. Never read or print credentials.
+- The one check that proves success: `/bedrock doctor` ends with `Bedrock is ready`.
 
 ## Licence
 
 MIT.
-
-[ip-iam]: https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html

@@ -1,85 +1,155 @@
 # How it works
 
-What happens between a setting and a streamed reply: discovery, the two routes to Claude, model ids, and the spend
-record and footer. Read it when a profile is missing, a request fails, or a model shows an unexpected name.
+This page holds the words the other pages use, the rule that picks a route for each model, how models are found, and
+what runs when. Read it when a model is missing, a request fails, or a model shows an unexpected route.
 
-## When things run
+## The words
 
-Settings are read when the extension loads. The catalog is read from its cache at that point, and the session start
-refreshes it in the background unless the cache is younger than 24 hours, so Pi never waits on AWS. AWS itself is first
-touched by that refresh, by the start-up SSO check, or by a command; the Messages route's credentials are built on the
-first request.
+Every page uses these five words and no others for these things. The word "profile" is never used alone, because AWS
+uses it for two different things.
 
-## Discovery
+| Word                              | Meaning                                                                                                                                                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AWS profile**                   | A named sign-in in your AWS CLI configuration (`~/.aws/config`), such as `my-profile`. It is who you are to AWS. The `profile` setting, `/login` and `AWS_PROFILE` all name one.                                                                     |
+| **Inference profile**             | What AWS calls one entry in its list of models you can call. Each one has an ARN (an AWS address) and points at one foundation model, such as Claude Sonnet 5.5.                                                                                     |
+| **AWS-defined inference profile** | An inference profile AWS makes for everyone. It routes a request to the best region of a group, so its id starts with a geography such as `us.` or `global.`. This is the default way models are found.                                              |
+| **Application inference profile** | An inference profile your team makes in your own account. It can carry tags, which is how a team finds its own models.                                                                                                                               |
+| **Model**                         | What you pick in `/model`. One inference profile becomes one model, named by a short id such as `claude-sonnet-5-5`.                                                                                                                                 |
+| **Route**                         | How a request travels to Bedrock. There are two. **Messages** is the Anthropic Messages interface of Bedrock, which this package signs itself. **Converse** is Bedrock's general interface, which Pi's own Bedrock code uses.                        |
+| **Catalog**                       | The saved list of inference profiles found in your account: `~/.cache/jig-bedrock/catalog.json` (in `XDG_CACHE_HOME` if you set it). Your cache folder may be a link to another disk; the `jig-bedrock` folder and the file in it must not be links. |
 
-Discovery runs the AWS CLI with the configured `profile` and `regions`, and always starts with
-`aws sts get-caller-identity`, which also gives the account id. Then, by mode:
+## Which route a model gets
 
-- **System:** `aws bedrock list-inference-profiles --type-equals SYSTEM_DEFINED`, paginated per region. Only entries
-  whose ARN or name mentions Claude are kept, and each is read with `GetInferenceProfile`.
-- **Tag:** `aws resourcegroupstaggingapi get-resources --resource-type-filters bedrock:application-inference-profile`,
-  filtered by `tagKey`/`tagValue` and, only when configured, the active tag. Each match is read with
-  `GetInferenceProfile`.
-- **Explicit:** `GetInferenceProfile` for each `profiles` entry; no tag call and no system listing.
+Messages is better for one reason: when a tool is loaded in the middle of a session, the request after it still reads
+the prompt from the cache. On Converse the same step rewrites the whole prompt at the cache-write price.
+[The measured numbers](../README.md#compared-with-pis-built-in-bedrock-provider) are in the README.
 
-Only `ACTIVE` profiles are listed. The foundation model is read from the profile's model ARN; a profile that routes to
-another inference profile is followed, up to two levels, and `GetFoundationModel` is never called.
+Bedrock does not accept that on every Claude model. Pi's own list of Anthropic models records which ones do, in a flag
+named `supportsMidConvoToolChanges`.
+The route rule follows that flag. It asks these questions in order, and the first answer wins:
 
-A successful catalog is cached for 24 hours in `${XDG_CACHE_HOME:-~/.cache}/jig-bedrock/catalog.json`, written with private
-permissions and an atomic rename. Your cache folder may be a link (to another disk, say) and is followed; the package's own
-`jig-bedrock` folder and the file in it must not be links. The cache records the AWS profile, regions and discovery settings, so a changed setting discards it; a
-changed account is detected at the next discovery and the file is removed. Until a background refresh finishes, the
-cached models stay in `/model`. `/bedrock refresh` forces a new run.
+1. Is it a Claude model? If not, Converse.
+2. Is `api` set to `converse`, or is the model in `converseModels`? Then Converse.
+3. Is the model in `messagesModels`? Then Messages.
+4. Is it a known exception (today: Opus 5)? Then Converse.
+5. Does the installed Pi list the model, and does its entry say tool changes work? Then Messages. Otherwise Converse.
 
-## Routes
+A Claude model newer than the installed Pi uses Converse too, until you update Pi or
+add it to `messagesModels`. The reason for each model is one of these short phrases, and `/bedrock models` shows it:
+"Pi lists tool changes", "not on the Messages route", "your setting", "known exception", "this Pi does not know the
+model".
 
-A default install uses Converse for system-defined profiles and Messages for application inference profiles; `api` can
-force either. There are two routes to the same Claude models:
+The table is what real runs on AWS showed on 2026-11-10 (a session that loads seven tools in the middle, with thinking
+on and off, a prompt of about 14,000 tokens):
 
-- **Messages.** Pi's Anthropic Messages client calls
-  `https://bedrock-runtime.<region>.amazonaws.com/anthropic/v1/messages`. The signing fetch removes the client's
-  API-key headers (`x-api-key`, `authorization`) and signs each request with SigV4, using the credentials the AWS SDK
-  resolves for the configured profile.
-- **Converse.** Pi's own Bedrock stream uses the AWS SDK's `ConverseStream` operation at the bedrock-runtime endpoint.
+| Model                                     | Route                            | What the run showed on the Messages route                                                                                                                                            |
+| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Haiku 5.5, Sonnet 5.5, Opus 5.5, Opus 4.8 | Messages                         | Works. The request after the tool load read 14,011 to 14,015 tokens from the cache.                                                                                                  |
+| Fable models                              | Messages (Pi lists tool changes) | Not tested. AWS refused them on both routes until an account data-retention setting is changed.                                                                                      |
+| Opus 5                                    | Converse (known exception)       | Pi lists tool changes, but with thinking high the request failed with a 400 (`output_config` not permitted). With thinking off, a content filter blocked the request after the load. |
+| Sonnet 5                                  | Converse                         | A 400 as soon as a tool is loaded.                                                                                                                                                   |
+| Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 | Converse                         | A 400 as soon as a tool is loaded.                                                                                                                                                   |
+| Opus 4.5, Sonnet 4.5, Opus 4.1            | Converse                         | A 404 at once: AWS does not offer these on the Messages route.                                                                                                                       |
 
-A profile is put on Messages only when `api` is `messages` (the default), it is an **application** inference profile, and
-its foundation model is an Anthropic model. System-defined profile ids use Converse, because they are not application
-inference-profile ARNs. Every other model uses Converse, and `api: "converse"` puts every model there. Both routes
-stream.
+On Converse the same sessions finished for Opus 5 and Sonnet 4.5. Opus 4.1 with thinking on fails on Converse: AWS
+rejects the request, and Pi's built-in Bedrock provider fails the same way.
 
-On Messages the tools array stays stable, so a changed tool list does not break the prompt cache; on Converse it does.
-The footer and spend figures are the same on both.
+Both routes stream the reply. The footer and the spend record are the same on both. On Messages, the model declares
+only the 5-minute cache lifetime: the package does not send the 1-hour cache setting on that route, so
+`PI_CACHE_RETENTION=long` has no effect there. Converse models keep both lifetimes.
+
+## How models are found
+
+![The three ways models are found: AWS-defined, by tag, or listed by hand. All run the AWS CLI with your AWS profile and only read. The result is the catalog, a file kept for 24 hours, which fills Pi's model list.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/discovery.svg)
+
+_Discovery runs the AWS CLI with your AWS profile, reads three kinds of lists, and saves the result as the catalog._
+
+The settings choose one way; there is no fallback between them. Every way starts with `aws sts get-caller-identity`,
+which gives the account id. Then, by way:
+
+- **AWS-defined (default).** `aws bedrock list-inference-profiles --type-equals SYSTEM_DEFINED` for each region in
+  `regions` (more calls if a region has more than one page). The listing already carries each name, status and model, so
+  there is no read per inference profile. Only entries that mention Claude are kept.
+- **By tag.** `aws resourcegroupstaggingapi get-resources --resource-type-filters bedrock:application-inference-profile`
+  for each region, filtered by `tagKey` and `tagValue` (and the optional second tag), then
+  `aws bedrock get-inference-profile` for each match, up to four at a time.
+- **Listed by hand.** `aws bedrock get-inference-profile` for each entry of `profiles`, with no tag call and no listing.
+  An ARN in a region outside `regions` is reported, not read.
+
+Only inference profiles with the status `ACTIVE` are kept. The foundation model is read from the model address inside
+the inference profile. An inference profile that points at another one is followed, up to two levels. `GetFoundationModel`
+is never called. The package keeps at most 256 inference profiles. One AWS call may take 20 seconds, and the whole run 90 seconds.
+
+The catalog is written with private permissions and an atomic rename. It records the AWS profile, the regions and the
+discovery settings, so a changed setting discards it. A changed account is noticed at the next discovery and the file is
+removed. Until a refresh finishes, the saved models stay in `/model`.
+
+An inference profile is not listed as a model when Pi has no metadata for its foundation model (update Pi) or the model
+has no price in Pi's registry. A model with no price is still listed and marked "no price"; its replies count as
+unpriced in the spend figure. `/bedrock models` names up to three rejected inference profiles with the reason, then a count.
 
 ## Model ids
 
-Each profile is a model in `/model`. The id starts as the slug of Pi's registry name, such as `claude-sonnet-5-5`, and
-profiles whose foundation model resolves to the same name share that slug. One keeps the bare id; the others get
-a short geography suffix such as `-global` or `-eu`. A collision adds the region, and the old
-`--<region>--<profile id>` form is kept as an alias. Their menu name adds the region and the profile name.
+A model is named by a short id: the Claude name and version, such as `claude-sonnet-5-5`, from Pi's registry. One
+foundation model can have more than one inference profile (an AWS-defined `us.` one and a `global.` one, for example).
+The first AWS-defined inference profile by geography keeps the plain short id: the geography of your first region, then
+`global`, then the others in the order of `regions`. Another inference profile for the same model gets a longer id that
+says what differs, and `/bedrock models` lists every id. Two application inference profiles for one model are both
+given the longer form.
 
-The bare id goes to the first system-defined profile by geography: the prefix of the first configured region (for
-example `us.`), then `global.`, then the rest in region order. With no system-defined profile, an application profile
-keeps the bare id only when it is the model's only profile; two application profiles are both suffixed. A session saved
-under another provider still selects the model by its ARN.
+Pi records a reply as `jig-bedrock/<short id>`. The inference-profile ARN goes on the wire only, so session lists show
+no account id.
 
-A profile whose foundation model is not in Pi's registry is not listed; `/bedrock models` gives the reason after the
-usable rows. A model with no price is listed, marked **no price**, and its replies count as unpriced. Nothing about
-unusable rows is shown at startup.
+## Sign-in repair
+
+Requests use the AWS SDK's credential chain for the AWS profile. Discovery runs the AWS CLI with `--profile`, so the AWS
+profile must work in both. Only IAM Identity Center (SSO) sign-ins are repaired:
+
+1. **At session start** the package checks the SSO sign-in without calling AWS (it reads the saved token's expiry). If it
+   has expired, you get a notice to run `/bedrock login`. With `signInAtStart: true` it starts the sign-in at once; the
+   default is `false`, so a browser never opens just because Pi started.
+2. **At a request.** If a request fails on this machine before any reply because the SSO session has expired, the
+   package says "Restoring AWS SSO", runs the `ssoLoginCommand` (`aws sso login --profile <name>` by default), and sends
+   the same request once more. It never sends it a third time, and it never repeats an agent turn.
+3. **At `/bedrock login`** the same sign-in runs when you ask. One login runs at a time, however many requests wait for
+   it; a lock file in your runtime folder keeps two Pi processes apart.
+
+A browser opens for the sign-in. On WSL, with no `BROWSER` set, the package opens the Windows browser through
+`bin/windows-browser`; `browser` in `bedrock.json` names another program and wins everywhere. The package never reads or
+stores a password or token: the AWS CLI owns the sign-in, and `/login` stores only the AWS profile's name.
+
+Only SSO is repaired. Which other sign-in methods work, and which were run against real AWS, is in
+[Settings](settings.md#sign-in-methods).
+
+## What runs when
+
+| When                                 | What happens                                                                                                                                                                                                            | Calls AWS?       |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Pi starts the package                | Settings are read and the commands and the provider are registered.                                                                                                                                                     | No               |
+| A session starts                     | The AWS profile is chosen; the sign-in is checked; the catalog is read from the cache and refreshed in the background if it is older than 24 hours; the footer is set; earlier replies of this month are imported once. | Only the refresh |
+| You run `/model`                     | The saved catalog is shown.                                                                                                                                                                                             | No               |
+| A request                            | The route comes from the model; credentials are built on the first Messages request; an expired sign-in is repaired and the request sent once more.                                                                     | Yes, the request |
+| A reply ends                         | One line is added to the spend record, the footer is updated, a budget notice may appear.                                                                                                                               | No               |
+| `/bedrock refresh`, `/bedrock login` | Discovery runs again, or the sign-in runs.                                                                                                                                                                              | Yes              |
+| `/bedrock doctor`                    | Local checks, then three free AWS calls. `doctor offline` makes none.                                                                                                                                                   | Yes, free        |
+
+Nothing waits for AWS at start: a slow AWS never blocks Pi.
 
 ## Spend and the footer
 
-After every assistant reply from this provider, the extension appends one line to its monthly JSONL record under
-`${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`. The record has the time, session id, short model id, region, route,
-four token counts, Pi's computed cost and a priced flag; it has no prompt, ARN, account id or profile.
+After every reply from this provider, one line is added to this month's record under
+`${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`. The record has the time, session id, short model id, region,
+route, four token counts, the cost Pi computed and a priced flag. It has no prompt, ARN, account id or AWS profile name.
+The first time in a month with no record, replies from this agent folder's earlier sessions are imported once (at most
+2,000 files and 10 seconds), and the import is marked so it never runs twice.
 
-`ctx.ui.setStatus("jig-bedrock", …)` shows the month and this machine's priced total, for example `Nov $12.40`; with a
-`monthlyBudgetUsd` it adds `/ $200`. A trailing `+` marks a month with an unpriced reply. The status clears when another
-provider's model is selected. It is set at session start and after each reply, only when `ctx.hasUI` is true.
+The footer shows the month and this machine's total, for example `Nov $12.40`, or `Nov $12.40 / $200` with a budget. A
+`+` after the amount means some reply had no price. It turns to Pi's warning colour from 80% of the budget and its error
+colour from 100%. It is cleared when a model of another provider is selected.
 
-The budget is a display figure, not an AWS limit. The first reply over 80% and over 100% each produce one notice; the
-state file under the same spend folder keeps those notices to once per month per machine, and a session that starts over
-100% gets its own one-line reminder. Requests are never blocked.
+The budget is a figure to compare with, not an AWS limit. One notice appears when the month passes 80%, one when it
+passes 100%, and one at session start while over 100%; a small state file in the spend folder keeps the first two to
+once a month per machine. No request is ever blocked. With a `spendCommand`, the footer and budget use its figure
+instead: see [Spend command](spend-command.md).
 
-An optional `spendCommand` (argv, no shell) prints `{ "month": "2026-11", "spentUsd": 203.4 }`; it is run at most once
-every 10 minutes and at `/bedrock usage`, with the configured AWS profile and first region. While it works, the footer and
-budget use its figure; on failure the local record is used and `/bedrock doctor` names the reason.
+[Back to the README](../README.md).
