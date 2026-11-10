@@ -1,13 +1,17 @@
 #!/usr/bin/env node
-// Real Bedrock check for the Messages route with thinking on: a turn that thinks, loads a deferred tool through
-// tool_search, calls it, and answers. Prints cache read/write per model call and any 400.
+// Real Bedrock check of the route each model gets: a turn that thinks, loads a deferred tool through tool_search, calls
+// it, and answers. Prints cache read/write per model call and any 400, then one table with a row for every model and
+// thinking level.
 //
-//   node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile>
-//     [--thinking high] [--region us-east-1] [--team my-team | --profiles arn,arn]
+//   node scripts/real-check-messages.mjs <model-id[,model-id...]> <package-copy-dir> --profile <aws-profile>
+//     [--thinking high,off] [--retention short|long] [--region us-east-1] [--team my-team | --profiles arn,arn]
 //     [--pi <path>] [--timeout 240] [--keep] [--dry-run] [--fake-aws]
 //
-// It first starts Pi without a model and runs /bedrock-refresh (a fresh home has no catalog), then starts the real
-// session with jig-bedrock/<model-id>. A bare id or a provider/id id are both accepted.
+// It first starts Pi without a model and runs /bedrock-refresh (a fresh home has no catalog), then starts one real
+// session per model and thinking level with jig-bedrock/<model-id>. A bare id or a provider/id id are both accepted.
+// On the Messages route a row passes only when the first call after the tool load read the prompt from the cache; on
+// Converse that call rewrites the cache, so the row passes when the session completes. The exit code is 1 when any row
+// fails. `--retention long` sets PI_CACHE_RETENTION=long, to see what a person who asks for the 1-hour cache gets.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -17,6 +21,7 @@ const argv = process.argv.slice(2);
 const positional = [];
 const options = {
     thinking: "high",
+    retention: undefined,
     region: "us-east-1",
     timeout: 240,
     keep: false,
@@ -31,6 +36,7 @@ for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--profile") options.profile = argv[++i];
     else if (arg === "--thinking") options.thinking = argv[++i];
+    else if (arg === "--retention") options.retention = argv[++i];
     else if (arg === "--region") options.region = argv[++i];
     else if (arg === "--timeout") options.timeout = Number(argv[++i]);
     else if (arg === "--pi") options.pi = argv[++i];
@@ -44,21 +50,42 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const usage = [
-    "usage: node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile>",
-    "         [--thinking high] [--region us-east-1] [--team my-team | --profiles arn,arn]",
+    "usage: node scripts/real-check-messages.mjs <model-id[,model-id...]> <package-copy-dir> --profile <aws-profile>",
+    "         [--thinking high,off] [--retention short|long] [--region us-east-1] [--team my-team | --profiles arn,arn]",
     "         [--pi <path>] [--timeout 240] [--keep] [--dry-run] [--fake-aws]",
 ].join("\n");
 if (options.help) {
     console.log(usage);
     process.exit(0);
 }
-const [modelArg, packageDir] = positional;
-if (!modelArg || !packageDir) {
+const [modelsArg, packageDir] = positional;
+if (!modelsArg || !packageDir) {
     console.error(usage);
     process.exit(2);
 }
 if (!options.profile) {
     console.error("--profile is required: use a profile that can call Bedrock Claude.");
+    process.exit(2);
+}
+const models = modelsArg
+    .split(",")
+    .map((value) => value.trim().replace(/^(?:jig-bedrock|amazon-bedrock)\//, ""))
+    .filter(Boolean);
+const levels = options.thinking
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+if (models.length === 0 || levels.length === 0) {
+    console.error("give at least one model id and one --thinking level");
+    process.exit(2);
+}
+const badLevel = levels.find((level) => !["off", "minimal", "low", "medium", "high", "xhigh"].includes(level));
+if (badLevel !== undefined) {
+    console.error(`unknown thinking level: ${badLevel}`);
+    process.exit(2);
+}
+if (options.retention !== undefined && options.retention !== "short" && options.retention !== "long") {
+    console.error("--retention is short or long");
     process.exit(2);
 }
 if (options.team !== undefined && options.profiles !== undefined) {
@@ -83,8 +110,6 @@ if (!existsSync(realAws)) {
 }
 
 const redact = (text) => String(text).replace(/\b\d{12}\b/g, "<account>");
-const bareId = modelArg.replace(/^(?:jig-bedrock|amazon-bedrock)\//, "");
-const fullModel = `jig-bedrock/${bareId}`;
 const root = mkdtempSync(join(tmpdir(), "jig-bedrock-real-check-"));
 const home = join(root, "home");
 const agent = join(root, "agent");
@@ -152,7 +177,7 @@ writeFileSync(
         profile: options.profile,
         regions: [options.region],
         signInAtStart: false,
-        ...(options.team === undefined ? {} : { team: options.team, tagKey: "Team", tagValue: options.team }),
+        ...(options.team === undefined ? {} : { tagKey: "Team", tagValue: options.team }),
         ...(options.profiles === undefined
             ? {}
             : {
@@ -170,6 +195,7 @@ const env = {
     HOME: home,
     PI_CODING_AGENT_DIR: agent,
     BROWSER: "true",
+    ...(options.retention === undefined ? {} : { PI_CACHE_RETENTION: options.retention }),
     PATH: `${options.fakeAws ? `${fakeBin}:` : ""}${dirname(piBinary)}:${process.env.PATH ?? ""}`,
 };
 delete env.AWS_PROFILE;
@@ -204,15 +230,20 @@ const fail = (message, stderr) => {
 
 const install = spawnSync(piBinary, ["install", resolve(packageDir)], { cwd: project, env, encoding: "utf8" });
 if (install.status !== 0) fail(`pi install failed:\n${redact(`${install.stdout}\n${install.stderr}`)}`);
-console.log(`model ${fullModel}, thinking ${options.thinking}, profile ${options.profile}, package ${packageDir}`);
+console.log(
+    `models ${models.join(", ")}, thinking ${levels.join(", ")}, retention ${options.retention ?? "default"}, ` +
+        `profile ${options.profile}, package ${packageDir}`,
+);
 console.log(`isolated home: ${root}`);
 if (options.fakeAws)
     console.log("fake aws: sts, listing and get-inference-profile are answers from the recorded shapes");
 if (options.dryRun) {
     console.log(`dry run: would first start: ${piBinary} --mode rpc (refresh)`);
-    console.log(
-        `dry run: then: ${piBinary} --mode rpc --model ${fullModel} --thinking ${options.thinking} --tools +tool_search --extension ${extension}`,
-    );
+    for (const model of models)
+        for (const level of levels)
+            console.log(
+                `dry run: then: ${piBinary} --mode rpc --model jig-bedrock/${model} --thinking ${level} --tools +tool_search --extension ${extension}`,
+            );
     console.log(`dry run: discovery team=${options.team ?? "none"} profiles=${options.profiles ?? "none"}`);
     process.exit(0);
 }
@@ -290,98 +321,156 @@ if (options.fakeAws) {
     // No credentials are used here, so the request below is expected to fail; reaching it is the proof of the setup.
 }
 
-const child = start([
-    "--model",
-    fullModel,
-    "--thinking",
-    options.thinking,
-    "--tools",
-    "+tool_search",
-    "--extension",
-    extension,
-]);
-let stderr = "";
-const calls = [];
-let doneResolve;
-const done = new Promise((resolve) => (doneResolve = resolve));
-let promptSent = false;
-let agentEnded = false;
-child.stderr.on("data", (chunk) => (stderr += chunk));
-lines(child, (event) => {
-    if (event.type === "message_end" && event.message?.role === "assistant") {
-        const message = event.message;
-        const usage = message.usage ?? {};
-        const tools = (message.content ?? []).filter((part) => part.type === "toolCall").map((part) => part.name);
-        const thinking = (message.content ?? []).some((part) => part.type === "thinking");
-        calls.push({
-            api: message.api,
-            cacheRead: usage.cacheRead ?? 0,
-            cacheWrite: usage.cacheWrite ?? 0,
-            tools,
-            thinking,
-            error: message.stopReason === "error" ? String(message.errorMessage ?? "error") : "",
-        });
-        console.log(
-            `call ${calls.length} [${message.api}] ${tools.join(",") || "answer"} | thinking ${thinking ? "yes" : "no"} | ` +
-                `input ${usage.input ?? 0} | cache read ${usage.cacheRead ?? 0} | cache write ${usage.cacheWrite ?? 0} | output ${usage.output ?? 0}` +
-                (message.errorMessage ? ` | ERROR ${redact(message.errorMessage).slice(0, 400)}` : ""),
-        );
-    }
-    if (event.type === "agent_end") {
-        agentEnded = true;
-        doneResolve();
-    }
-});
-child.on("exit", (code) => {
-    if (!promptSent) fail(`Pi exited before the prompt was sent (code ${code})`, stderr);
-    if (!agentEnded && !options.fakeAws) fail(`Pi exited before the check finished (code ${code})`, stderr);
-    doneResolve();
-});
-
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-await wait(4_000);
-console.log("PROMPT SENT: think through the sheep puzzle, then load orders_api_7 with tool_search and call it");
-child.stdin.write(
-    `${JSON.stringify({
-        id: "check",
-        type: "prompt",
-        message:
-            "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Think this through carefully before you " +
-            "answer. Then use tool_search with the query orders_api_7 to load that tool, call orders_api_7 with orderId " +
-            "42, and reply with the number of sheep and the order status in one short sentence.",
-    })}\n`,
-);
-promptSent = true;
-await Promise.race([done, wait(options.timeout * 1_000)]);
-child.stdin.end();
-await wait(500);
-if (child.exitCode === null) child.kill("SIGTERM");
+const routeName = (api) =>
+    api === "anthropic-messages" ? "Messages" : api === "bedrock-converse-stream" ? "Converse" : "?";
+const cell = (value) => String(value).replaceAll("|", "/").replaceAll("\n", " ");
 
-const any400 = calls.some((call) => /400|invalid signature|thinking block|tools list differs/i.test(call.error));
-const toolSearch = calls.some((call) => call.tools.includes("tool_search"));
-const deferredCall = calls.some((call) => call.tools.some((name) => /^orders_api_/.test(name)));
-const thought = calls.some((call) => call.thinking);
-const afterToolLoad = calls.findIndex((call) => call.tools.includes("tool_search"));
-const cacheAfterLoad = afterToolLoad >= 0 && calls[afterToolLoad + 1] ? calls[afterToolLoad + 1].cacheRead : 0;
+/** One session: think, load orders_api_7 through tool_search, call it, answer. Returns the row of the table. */
+async function runSession(model, thinking) {
+    const fullModel = `jig-bedrock/${model}`;
+    console.log("");
+    console.log(`== ${fullModel}, thinking ${thinking}`);
+    const child = start([
+        "--model",
+        fullModel,
+        "--thinking",
+        thinking,
+        "--tools",
+        "+tool_search",
+        "--extension",
+        extension,
+    ]);
+    let stderr = "";
+    const calls = [];
+    let recordedAs = "-";
+    let doneResolve;
+    const done = new Promise((resolve) => (doneResolve = resolve));
+    let promptSent = false;
+    let agentEnded = false;
+    let exitProblem = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    lines(child, (event) => {
+        if (event.type === "message_end" && event.message?.role === "assistant") {
+            const message = event.message;
+            const usage = message.usage ?? {};
+            const tools = (message.content ?? []).filter((part) => part.type === "toolCall").map((part) => part.name);
+            const thinkingBlock = (message.content ?? []).some((part) => part.type === "thinking");
+            recordedAs = `${message.provider}/${message.model}`;
+            calls.push({
+                api: message.api,
+                cacheRead: usage.cacheRead ?? 0,
+                cacheWrite: usage.cacheWrite ?? 0,
+                fresh: usage.input ?? 0,
+                cost: usage.cost?.total ?? 0,
+                tools,
+                thinking: thinkingBlock,
+                error: message.stopReason === "error" ? String(message.errorMessage ?? "error") : "",
+            });
+            console.log(
+                `call ${calls.length} [${message.api}] ${tools.join(",") || "answer"} | thinking ${thinkingBlock ? "yes" : "no"} | ` +
+                    `input ${usage.input ?? 0} | cache read ${usage.cacheRead ?? 0} | cache write ${usage.cacheWrite ?? 0} | output ${usage.output ?? 0}` +
+                    (message.errorMessage ? ` | ERROR ${redact(message.errorMessage).slice(0, 400)}` : ""),
+            );
+        }
+        if (event.type === "agent_end") {
+            agentEnded = true;
+            doneResolve();
+        }
+    });
+    child.on("exit", (code) => {
+        if (!promptSent)
+            exitProblem = `Pi exited before the prompt was sent (code ${code}): ${redact(stderr).slice(0, 300)}`;
+        else if (!agentEnded && !options.fakeAws)
+            exitProblem = `Pi exited before the check finished (code ${code}): ${redact(stderr).slice(0, 300)}`;
+        doneResolve();
+    });
+
+    await wait(4_000);
+    if (!exitProblem) {
+        console.log("PROMPT SENT: think through the sheep puzzle, then load orders_api_7 with tool_search and call it");
+        child.stdin.write(
+            `${JSON.stringify({
+                id: "check",
+                type: "prompt",
+                message:
+                    "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Think this through carefully before you " +
+                    "answer. Then use tool_search with the query orders_api_7 to load that tool, call orders_api_7 with orderId " +
+                    "42, and reply with the number of sheep and the order status in one short sentence.",
+            })}\n`,
+        );
+        promptSent = true;
+        await Promise.race([done, wait(options.timeout * 1_000)]);
+    }
+    child.stdin.end();
+    await wait(500);
+    if (child.exitCode === null) child.kill("SIGTERM");
+
+    const first = calls[0];
+    const route = first === undefined ? "-" : routeName(first.api);
+    const toolSearch = calls.some((call) => call.tools.includes("tool_search"));
+    const deferredCall = calls.some((call) => call.tools.some((name) => /^orders_api_/.test(name)));
+    const afterToolLoad = calls.findIndex((call) => call.tools.includes("tool_search"));
+    const after = afterToolLoad >= 0 ? calls[afterToolLoad + 1] : undefined;
+    const errored = calls.find((call) => call.error !== "");
+    let result = "ok";
+    if (errored) result = `ERROR ${redact(errored.error).replace(/\s+/g, " ").slice(0, 160)}`;
+    else if (exitProblem) result = `ERROR ${exitProblem}`;
+    else if (calls.length === 0) result = "ERROR no reply: is the model id in the catalog (/bedrock models)?";
+    else if (!toolSearch || !deferredCall) result = "INCOMPLETE the tool was not loaded and called";
+    else if (route === "Messages" && (after?.cacheRead ?? 0) === 0) result = "NO CACHE READ after the tool load";
+    return {
+        model,
+        thinking,
+        route,
+        calls: calls.length,
+        thought: calls.some((call) => call.thinking) ? "yes" : "no",
+        toolCalled: deferredCall ? "yes" : "no",
+        afterLoad:
+            after === undefined ? "-" : `read ${after.cacheRead}, wrote ${after.cacheWrite}, fresh ${after.fresh}`,
+        cost: `$${calls.reduce((sum, call) => sum + call.cost, 0).toFixed(4)}`,
+        result,
+        recordedAs,
+    };
+}
+
+const rows = [];
+for (const model of models) {
+    for (const level of levels) {
+        rows.push(await runSession(model, level));
+    }
+}
 
 console.log("");
-console.log(`thinking used: ${thought ? "yes" : "no"}`);
-console.log(`tool_search used: ${toolSearch ? "yes" : "no"}`);
-console.log(`deferred tool called: ${deferredCall ? "yes" : "no"}`);
 console.log(
-    `first call after the tool load: cache read ${cacheAfterLoad}, cache write ${
-        afterToolLoad >= 0 && calls[afterToolLoad + 1] ? calls[afterToolLoad + 1].cacheWrite : "n/a"
-    }`,
+    "| model | thinking | route | calls | thought | tool called | call after the load | cost | result | recorded as |",
 );
-console.log(`400/thinking-binding error seen: ${any400 ? "YES" : "no"}`);
+for (const row of rows)
+    console.log(
+        `| ${[
+            row.model,
+            row.thinking,
+            row.route,
+            row.calls,
+            row.thought,
+            row.toolCalled,
+            row.afterLoad,
+            row.cost,
+            row.result,
+            row.recordedAs.slice(0, 52),
+        ]
+            .map(cell)
+            .join(" | ")} |`,
+    );
 if (options.fakeAws) {
     console.log(
         "RESULT: SETUP OK (fake aws: the prompt was sent; the request failure without credentials is expected)",
     );
     process.exit(0);
 }
-if (!any400 && cacheAfterLoad === 0)
-    console.log("note: the first call after the tool load read no cache; the check fails on this.");
-const pass = !any400 && toolSearch && deferredCall && cacheAfterLoad > 0;
-console.log(`RESULT: ${pass ? "PASS" : "FAIL"}`);
-process.exit(pass ? 0 : 1);
+const failed = rows.filter((row) => row.result !== "ok");
+console.log("");
+console.log(
+    `RESULT: ${failed.length === 0 ? "PASS" : "FAIL"} (${rows.length - failed.length} of ${rows.length} rows ok)`,
+);
+process.exit(failed.length === 0 ? 0 : 1);
