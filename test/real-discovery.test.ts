@@ -347,11 +347,14 @@ function providerHarness() {
     const hooks = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
     const notices: Array<{ text: string; type?: string }> = [];
+    const providers: Array<{ getModels?: () => Array<{ id: string }> }> = [];
     const pi = {
         on(name: string, fn: (event: unknown, ctx: unknown) => unknown) {
             hooks.set(name, [...(hooks.get(name) ?? []), fn]);
         },
-        registerProvider() {},
+        registerProvider(provider: { getModels?: () => Array<{ id: string }> }) {
+            providers.push(provider);
+        },
         registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
             commands.set(name, options);
         },
@@ -366,8 +369,88 @@ function providerHarness() {
         modelRegistry: { find: () => undefined },
         ui: { notify: (text: string, type?: string) => notices.push({ text, type }), setStatus: () => {} },
     };
-    return { hooks, commands, notices, pi, ctx };
+    return { hooks, commands, notices, providers, pi, ctx };
 }
+
+test("a cached catalog for an automatically picked AWS_PROFILE is in the provider at the factory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "real-discovery-env-profile-"));
+    try {
+        const cache = {
+            schema: 1 as const,
+            mode: "system" as const,
+            aws_profile: "dev",
+            account_id: ACCOUNT,
+            regions: [REGION],
+            fetched_at: Math.floor(Date.now() / 1000),
+            profiles: [
+                {
+                    arn: arn("global.anthropic.claude-sonnet-5-5"),
+                    profile_name: "global Sonnet",
+                    foundation_model_id: "anthropic.claude-sonnet-5-5",
+                    region: REGION,
+                    kind: "system" as const,
+                },
+            ],
+        };
+        const h = providerHarness();
+        await createBedrockProvider({
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir, AWS_PROFILE: "dev" },
+            config: { ...config, profile: undefined, agentDir: dir } as ResolvedConfig,
+            listProfiles: async () => ["dev"],
+            catalog: { load: () => cache, refresh: async () => "ok" },
+            backgroundRefresh: false,
+            usageEvents: false,
+        })(h.pi as never);
+        const provider = h.providers.find((entry) => entry.getModels !== undefined);
+        assert.ok(
+            provider?.getModels?.().some((model) => model.id === "claude-sonnet-5-5"),
+            JSON.stringify(provider),
+        );
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a cached catalog for the ambient credential chain is in the provider at the factory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "real-discovery-ambient-"));
+    try {
+        const cache = {
+            schema: 1 as const,
+            mode: "system" as const,
+            aws_profile: "",
+            account_id: ACCOUNT,
+            regions: [REGION],
+            fetched_at: Math.floor(Date.now() / 1000),
+            profiles: [
+                {
+                    arn: arn("global.anthropic.claude-haiku-5-5"),
+                    profile_name: "global Haiku",
+                    foundation_model_id: "anthropic.claude-haiku-5-5",
+                    region: REGION,
+                    kind: "system" as const,
+                },
+            ],
+        };
+        const h = providerHarness();
+        await createBedrockProvider({
+            env: {
+                HOME: dir,
+                PI_CODING_AGENT_DIR: dir,
+                AWS_ACCESS_KEY_ID: "AKIAFIXTURE",
+                AWS_SECRET_ACCESS_KEY: "fixture",
+            },
+            config: { ...config, profile: undefined, agentDir: dir } as ResolvedConfig,
+            listProfiles: async () => undefined,
+            catalog: { load: () => cache, refresh: async () => "ok" },
+            backgroundRefresh: false,
+            usageEvents: false,
+        })(h.pi as never);
+        const provider = h.providers.find((entry) => entry.getModels !== undefined);
+        assert.ok(provider?.getModels?.().some((model) => model.id === "claude-haiku-5-5"));
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
 
 test("a failed refresh shows the discovery reason once, without the raw status", async () => {
     const dir = mkdtempSync(join(tmpdir(), "real-discovery-provider-"));

@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: fixtures stand in for Pi objects */
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -136,14 +137,19 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
     assert.equal(controller!.models[0]!.id, selected.id);
     assert.notEqual(controller!.models[0]!.arn, selected.arn);
     assert.equal(hooks.get("input")![0]!({}, ctx).action, "handled");
-    assert.ok(notices.some((n) => n.includes("Choose /model")));
-    cache.errors = [{ profile: "arn:bad", message: "denied" }];
+    assert.doesNotMatch(notices.join("\n"), /catalog updated|Choose \/model/);
+    const other = builtinProviders()
+        .find((p: any) => p.id === "amazon-bedrock")
+        .getModels()[1];
+    cache.profiles = [
+        profile,
+        { ...profile, arn: profile.arn.replace("/old", "/new"), foundation_model_id: other.id, profile_name: "New" },
+    ];
     await controller!.refresh();
     assert.ok(
-        notices.some((n) => n.includes("arn:bad: denied")),
-        notices.at(-1),
+        notices.some((n) => n.includes("1 new model in /model")),
+        notices.join("\n"),
     );
-    cache.errors = [];
     cache.warnings = [
         "No application inference profiles matched CostCenter=42 in us-east-1. Check bedrock.tagKey/tagValue.",
     ];
@@ -151,6 +157,20 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
     assert.ok(
         notices.some((n) => n.includes("CostCenter=42")),
         notices.at(-1),
+    );
+    cache.warnings = [];
+    cache.errors = [{ profile: "arn:bad", message: "denied" }];
+    await controller!.refresh();
+    assert.ok(
+        notices.some((n) => n.includes("arn:bad: denied")),
+        notices.at(-1),
+    );
+    cache.errors = [];
+    cache.profiles = [];
+    await controller!.refresh();
+    assert.ok(
+        notices.some((n) => n.includes(`${selected.id} is no longer in your account`)),
+        notices.join("\n"),
     );
     for (const fn of hooks.get("session_shutdown") || []) await fn({}, ctx);
 });

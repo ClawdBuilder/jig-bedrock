@@ -293,6 +293,17 @@ export function createBedrockProvider(
             afterLogin: (profile, interaction, signal) =>
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
+        // A profile that can be known without starting a program: the setting, AWS_PROFILE, AWS_DEFAULT_PROFILE,
+        // the default section in the AWS files, or the ambient chain. This lets a cache made for that profile load at
+        // the factory, before session_start, so --model and --list-models see the models.
+        if (config.profile === undefined) {
+            const fromEnv = profileEnv.AWS_PROFILE ?? profileEnv.AWS_DEFAULT_PROFILE;
+            if (fromEnv !== undefined && fromEnv !== "") config.profile = fromEnv;
+            else {
+                const names = await createListProfiles(profileEnv)();
+                if (names?.includes("default")) config.profile = "default";
+            }
+        }
         const identity = { profile: currentProfile, auth };
         const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
         const catalog = withDebugCatalog(options.catalog ?? createAwsDiscovery(config), debug, () => ({
@@ -424,6 +435,10 @@ export function createBedrockProvider(
                 }
                 const updated = readModels().available;
                 const selected = ctx?.model;
+                const selectedGone =
+                    isOwnModel(selected) &&
+                    selected !== undefined &&
+                    !updated.some((model) => model.id === selected.id);
                 if (isOwnModel(selected)) {
                     const previous = models.find((m) => m.id === selected?.id);
                     const replacement = updated.find((m) => m.id === selected?.id);
@@ -444,17 +459,31 @@ export function createBedrockProvider(
                     !quiet &&
                     !failureNotice &&
                     ctx &&
-                    (change.added || change.removed || problems.length > 0 || warnings.length > 0)
+                    (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    const detail = [
-                        `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
-                        ...warnings,
-                        ...(problems.length > 0 ? [problemSummary(problems)] : []),
-                        "Choose /model if your selection was removed.",
-                    ]
-                        .filter((part): part is string => part !== undefined)
-                        .join(" ");
-                    ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
+                    if (selectedGone && selected !== undefined) {
+                        ctx.ui.notify(
+                            `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
+                            "warning",
+                        );
+                    } else if (change.added > 0) {
+                        ctx.ui.notify(
+                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model.`,
+                            "info",
+                        );
+                    } else if (change.removed > 0) {
+                        ctx.ui.notify(
+                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model.`,
+                            "info",
+                        );
+                    } else {
+                        ctx.ui.notify(
+                            [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
+                                .filter((part): part is string => part !== undefined)
+                                .join(" "),
+                            "warning",
+                        );
+                    }
                 }
                 if (change.changed && native) {
                     await registerBedrockProvider(
@@ -657,7 +686,7 @@ export function createBedrockProvider(
                 choice.source === "default" ||
                 choice.source === "AWS_PROFILE" ||
                 choice.source === "AWS_DEFAULT_PROFILE";
-            autoProfileFailed = autoProfile;
+            autoProfileFailed = autoProfile && models.length === 0;
             return choice;
         };
         pi.on("session_start", async (_event, context) => {
