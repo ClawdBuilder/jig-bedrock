@@ -29,6 +29,7 @@ import {
     registerBedrockSelectionGuard,
     registerTeamBedrock,
     updateModels,
+    usePiAnthropicRegistry,
     usePiRegistry,
 } from "./catalog.ts";
 import { isObject } from "./check.ts";
@@ -325,6 +326,7 @@ export function createJigBedrock(
             );
             native = recovered.provider;
             messages = recovered.messages;
+            await usePiAnthropicRegistry();
             usePiRegistry(native);
             models.push(...readModels().available);
             await registerTeamBedrock(
