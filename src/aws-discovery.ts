@@ -89,15 +89,19 @@ export function createAwsDiscovery(
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
         invalidAccount = false;
-    const mode =
+    // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and Jig's section
+    // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
+    const modeFor = (): "explicit" | "tag" | "system" =>
         config.mode ??
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
-    const activeKey = config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
-    const activeValue = config.activeTagValue ?? "true";
-    // Rebuilt per call: the profile is resolved once a session starts, after this object exists.
-    const scope = () => ({ ...config, mode, team: config.team });
+    const activeKeyFor = (): string | undefined =>
+        config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
+    const scope = () => ({ ...config, mode: modeFor(), team: config.team });
     const load = () => (invalidAccount ? undefined : readCatalog(file, scope(), now()));
     const perform = async (force = false): Promise<Status> => {
+        const mode = modeFor();
+        const activeKey = activeKeyFor();
+        const activeValue = config.activeTagValue ?? "true";
         let remaining = 8 * 1_048_576,
             pages = 0,
             deadline = now() + 90_000;

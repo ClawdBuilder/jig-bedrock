@@ -169,7 +169,9 @@ export function createJigBedrock(
         const currentApi = (): BedrockApi => config?.api ?? "messages";
         const events = options.events ?? { provider: "jig-bedrock:provider", usage: "jig-bedrock:usage" };
         const models: TeamBedrockModel[] = [];
-        const guard = registerBedrockSelectionGuard(pi, models, options.selection ?? { agentDir: config?.agentDir });
+        let discoverySlow = false;
+        let refreshInFlight: Promise<Status> | undefined;
+        let guard: ReturnType<typeof registerBedrockSelectionGuard>;
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
             const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;
@@ -338,50 +340,67 @@ export function createJigBedrock(
         } catch {
             failed = true;
         }
-        const refresh = async (force = true): Promise<Status> => {
-            const status = await catalog.refresh(force);
-            if (disposed) return status;
-            const updated = readModels().available;
-            const selected = ctx?.model;
-            if (isJigBedrock(selected)) {
-                const previous = models.find((m) => m.id === selected?.id);
-                const replacement = updated.find((m) => m.id === selected?.id);
-                if (
-                    !replacement ||
-                    (previous &&
-                        (previous.arn !== replacement.arn ||
-                            previous.foundationModelId !== replacement.foundationModelId))
-                ) {
-                    guard.blockUntilChoice();
+        let noticeFailureOnce = false;
+        const refresh = (force = true, notifyFailure = false): Promise<Status> => {
+            noticeFailureOnce ||= notifyFailure;
+            if (refreshInFlight !== undefined) return refreshInFlight;
+            refreshInFlight = (async (): Promise<Status> => {
+                const status = await catalog.refresh(force);
+                if (disposed) return status;
+                discoverySlow = status === "timeout";
+                if (status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
+                    const message =
+                        status === "timeout"
+                            ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh."
+                            : `Bedrock could not load models. ${discoveryHelp(status)}`;
+                    ctx.ui.notify(message, "warning");
                 }
-            }
-            const change = updateModels(models, updated);
-            const current = catalog.load();
-            const problems = current?.errors ?? [];
-            const warnings = current?.warnings ?? [];
-            if (ctx && (change.added || change.removed || problems.length > 0 || warnings.length > 0)) {
-                const detail = [
-                    `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
-                    ...warnings,
-                    ...problems.map((problem) => `${problem.profile}: ${problem.message}.`),
-                    "Choose /model if your selection was removed.",
-                ].join(" ");
-                ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
-            }
-            if (change.changed && native) {
-                await registerTeamBedrock(
-                    pi,
-                    config.agentDir || "",
-                    native,
-                    models,
-                    catalog.load,
-                    identity,
-                    messages,
-                    signedFetch,
-                );
-            }
-            provider();
-            return status;
+                const updated = readModels().available;
+                const selected = ctx?.model;
+                if (isJigBedrock(selected)) {
+                    const previous = models.find((m) => m.id === selected?.id);
+                    const replacement = updated.find((m) => m.id === selected?.id);
+                    if (
+                        !replacement ||
+                        (previous &&
+                            (previous.arn !== replacement.arn ||
+                                previous.foundationModelId !== replacement.foundationModelId))
+                    ) {
+                        guard.blockUntilChoice();
+                    }
+                }
+                const change = updateModels(models, updated);
+                const current = catalog.load();
+                const problems = current?.errors ?? [];
+                const warnings = current?.warnings ?? [];
+                if (ctx && (change.added || change.removed || problems.length > 0 || warnings.length > 0)) {
+                    const detail = [
+                        `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
+                        ...warnings,
+                        ...problems.map((problem) => `${problem.profile}: ${problem.message}.`),
+                        "Choose /model if your selection was removed.",
+                    ].join(" ");
+                    ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
+                }
+                if (change.changed && native) {
+                    await registerTeamBedrock(
+                        pi,
+                        config.agentDir || "",
+                        native,
+                        models,
+                        catalog.load,
+                        identity,
+                        messages,
+                        signedFetch,
+                    );
+                }
+                provider();
+                return status;
+            })().finally(() => {
+                refreshInFlight = undefined;
+                noticeFailureOnce = false;
+            });
+            return refreshInFlight;
         };
         afterProfileLogin = async (profile, interaction, signal) => {
             config.profile = profile;
@@ -440,13 +459,9 @@ export function createJigBedrock(
                         return;
                     }
                 }
-                const status = await refresh();
-                context.ui.notify(
-                    status === "ok"
-                        ? `Bedrock catalog: ${models.length} models. Choose /model.`
-                        : `Bedrock refresh ${status}. ${discoveryHelp(status)}`,
-                    status === "ok" ? "info" : "warning",
-                );
+                const status = await refresh(true, true);
+                if (status === "ok")
+                    context.ui.notify(`Bedrock catalog: ${models.length} models. Choose /model.`, "info");
             },
         });
         registerStatisticsCommands(pi, {
@@ -528,6 +543,13 @@ export function createJigBedrock(
                 timer = setInterval(tick, 10_000);
                 timer.unref();
             }
+        });
+        // Registered after the provider's session_start handler, so a refresh that is already running when the guard
+        // checks the model list can explain a missing saved model; a refresh that never starts cannot.
+        guard = registerBedrockSelectionGuard(pi, models, {
+            ...(options.selection ?? { agentDir: config?.agentDir }),
+            deferStartupWarning: () => refreshInFlight !== undefined && models.length === 0,
+            discoverySlow: () => discoverySlow,
         });
         // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share. Not
         // in a child: the parent does it, and a second window from a child would be one nobody expects. Registered after
