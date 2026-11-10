@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 /** Addresses a public commit may use without the private list. */
-const PUBLIC = [/^noreply@example\.com$/i, /^[^@\s]+@users\.noreply\.github\.com$/i, /^mrigankamondal10@gmail\.com$/i];
+const PUBLIC = [/^noreply@example\.com$/i, /^[^@\s]+@users\.noreply\.github\.com$/i];
 
 const wordFile = process.env.JIG_SCAN_WORDS || path.join(homedir(), ".config", "jig", "scan-words.txt");
 const wordText = process.env.JIG_SCAN_WORDS_TEXT;

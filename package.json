@@ -34,7 +34,6 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.6.4",
-        "@clawdbuilder/jig": "0.5.4",
         "@types/node": "26.6.6",
         "typescript": "7.0.2",
         "@earendil-works/pi-ai": "1.5.0",

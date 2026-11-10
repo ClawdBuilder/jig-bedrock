@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { Catalog, TeamBedrockModel } from "../src/catalog.ts";
+import type { BedrockModel, Catalog } from "../src/catalog.ts";
 import { bedrockStream, discoveredProfiles, usePiAnthropicRegistry, usePiRegistry } from "../src/catalog.ts";
 import { JIG_BEDROCK } from "../src/identity.ts";
 import { hostImport } from "./support/pi-host.ts";
@@ -151,6 +151,68 @@ test("Opus 5.5 has no off level; Sonnet 5.5 keeps one", async () => {
     }
 });
 
+test("Pi records this package's provider and short id while the ARN goes on the wire", async () => {
+    await registry();
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    const anthropic = builtinProviders().find((provider: { id: string }) => provider.id === "anthropic");
+    const dir = usageDir();
+    try {
+        const [model] = discoveredProfiles(catalog, dir).available;
+        assert.ok(model);
+        let body: Record<string, unknown> | undefined;
+        const sse = [
+            "event: message_start",
+            'data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"x","content":[],"stop_reason":null,"usage":{"input_tokens":12,"output_tokens":1,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}}',
+            "",
+            "event: content_block_start",
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            "",
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+            "",
+            "event: content_block_stop",
+            'data: {"type":"content_block_stop","index":0}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+            "",
+        ].join("\n");
+        const signedFetch = (async (_url: string, init: RequestInit) => {
+            body = JSON.parse(String(init.body)) as Record<string, unknown>;
+            return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof globalThis.fetch;
+        const stream = bedrockStream(
+            [model],
+            { converse: () => assert.fail("no Converse call"), messages: anthropic.stream },
+            () => catalog,
+            () => "fixture-profile",
+            signedFetch,
+        );
+        const events = [];
+        for await (const event of stream(
+            { ...model, provider: JIG_BEDROCK },
+            { messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+            { env: { AWS_PROFILE: "fixture-profile" } },
+        )) {
+            events.push(event);
+        }
+        const done = events.find((event) => event.type === "done") as { message: Record<string, unknown> };
+        assert.equal(body?.model, ARN, "the request asks Bedrock for the ARN");
+        assert.equal(done.message.provider, JIG_BEDROCK);
+        assert.equal(done.message.model, model.id);
+        assert.ok(
+            ((done.message.usage as { cost?: { total?: number } }).cost?.total ?? 0) > 0,
+            "cost comes from the recorded model",
+        );
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; the Converse wrapper does not", async () => {
     await registry();
     const dir = usageDir();
@@ -165,7 +227,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
             [messagesModel],
             {
                 converse: () => assert.fail("the Converse stream must not be used for a Messages model"),
-                messages: ((model: TeamBedrockModel, _context: unknown, options: Record<string, unknown>) => {
+                messages: ((model: BedrockModel, _context: unknown, options: Record<string, unknown>) => {
                     seen.push({ model, options });
                     return "messages" as unknown as never;
                 }) as never,
@@ -180,7 +242,8 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
             {},
         );
         assert.equal(result, "messages");
-        assert.equal(seen[0]?.model.id, ARN, "the wire model is the ARN");
+        assert.equal(seen[0]?.model.id, messagesModel.id, "the recorded model is the short id");
+        assert.equal(seen[0]?.model.provider, JIG_BEDROCK);
         assert.equal(seen[0]?.model.api, "anthropic-messages");
         assert.equal(seen[0]?.options.apiKey, "bedrock-sigv4");
         assert.equal(seen[0]?.options.fetch, signedFetch);
@@ -190,14 +253,16 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
         const onPayload = seen[0]?.options.onPayload as (payload: unknown, model: unknown) => Promise<unknown>;
         const rewritten = (await onPayload({ thinking: { type: "disabled" }, max_tokens: 10 }, {})) as {
             thinking: { type: string };
+            model: string;
         };
         assert.deepEqual(rewritten.thinking, { type: "between_tools" });
+        assert.equal(rewritten.model, ARN, "the wire model is the ARN");
         const hooked = bedrockStream(
             [messagesModel],
             {
                 converse: () => assert.fail("no Converse call"),
-                messages: ((_model: TeamBedrockModel, _context: unknown, options: Record<string, unknown>) => {
-                    seen.push({ model: { id: ARN, api: "anthropic-messages" }, options });
+                messages: ((_model: BedrockModel, _context: unknown, options: Record<string, unknown>) => {
+                    seen.push({ model: { id: messagesModel.id, api: "anthropic-messages" }, options });
                     return "messages" as unknown as never;
                 }) as never,
             },
@@ -219,12 +284,19 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
         assert.equal(chained.fromPi, true, "Pi's payload hook still runs");
         assert.deepEqual(chained.thinking, { type: "between_tools" });
 
-        const converseSeen: Array<{ id: string; api: string; apiKey: unknown }> = [];
+        const converseSeen: Array<{ id: string; api: string; apiKey: unknown; wireId?: string }> = [];
         const converse = bedrockStream(
             [converseModel],
             {
-                converse: ((model: TeamBedrockModel, _context: unknown, options: Record<string, unknown>) => {
-                    converseSeen.push({ id: model.id, api: model.api, apiKey: options.apiKey });
+                converse: (async (model: BedrockModel, _context: unknown, options: Record<string, unknown>) => {
+                    const onPayload = options.onPayload as (input: unknown, selected: unknown) => Promise<unknown>;
+                    const command = (await onPayload({ modelId: model.id }, model)) as { modelId: string };
+                    converseSeen.push({
+                        id: model.id,
+                        api: model.api,
+                        apiKey: options.apiKey,
+                        wireId: command.modelId,
+                    });
                     return "converse" as unknown as never;
                 }) as never,
             },
@@ -232,12 +304,14 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
             () => "fixture-profile",
             signedFetch,
         );
-        (converse as unknown as (m: unknown, c: unknown, o: unknown) => unknown)(
+        await (converse as unknown as (m: unknown, c: unknown, o: unknown) => unknown)(
             { ...converseModel, provider: JIG_BEDROCK },
             {},
             {},
         );
-        assert.deepEqual(converseSeen, [{ id: ARN, api: "bedrock-converse-stream", apiKey: undefined }]);
+        assert.deepEqual(converseSeen, [
+            { id: converseModel.id, api: "bedrock-converse-stream", apiKey: undefined, wireId: ARN },
+        ]);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

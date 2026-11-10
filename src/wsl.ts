@@ -85,7 +85,7 @@ export async function loginEnvironment(
 ): Promise<LoginEnvironment> {
     const env = { ...base };
     const notes: string[] = [];
-    // A program the user named wins everywhere: they wrote it in jig.json.
+    // A program the user named wins everywhere: they wrote it in bedrock.json.
     if (settings.browser) env.BROWSER = settings.browser;
     if (!deps.isWsl(base)) return { env, notes };
     const socket = base.WSL_INTEROP;

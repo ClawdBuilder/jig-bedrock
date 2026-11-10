@@ -145,10 +145,6 @@ test("an expired cache is rewritten whichever model answers, so there is nothing
     h.select(event, h.ctx(190_000, []));
     assert.equal(h.notices.length, 3, "unknown age: warn rather than guess");
 });
-test("subagent children never register the notice", () => {
-    for (const env of [{ PI_SUBAGENT_ID: "scout-1" }, { PI_SUBAGENT_CHILD: "1" }])
-        assert.equal(harness(env).hooks.size, 0);
-});
 
 test("/bedrock-profiles shows the 5-minute and 1-hour cache write rates, and says when a model has no 1-hour tier", async () => {
     const commands = new Map<string, any>(),

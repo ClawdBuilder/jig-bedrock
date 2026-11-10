@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promptCacheFor } from "../src/prompt-cache.ts";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 import { hostFile, hostImport } from "./support/pi-host.ts";
 
 test("Claude 4.5 and later declare 5-minute and 1-hour lifetimes; older Claude and Nova only 5 minutes", () => {
@@ -59,7 +59,7 @@ test("a real Pi session sees the declared lifetimes, which is what turns on its 
         modelsPath: join(dir, "models.json"),
     });
     const settingsManager = sdk.SettingsManager.inMemory({});
-    const factory = createJigBedrock({
+    const factory = createBedrockProvider({
         config: {
             team: "fixture",
             profile: "fixture",

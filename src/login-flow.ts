@@ -157,8 +157,8 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
         regions: options.regions ?? ["us-east-1"],
     };
     if (settings.mode === "tag") {
-        settings.tagKey = await requiredText(interaction, "Tag key", "Team");
-        settings.tagValue = await requiredText(interaction, "Tag value", "my-team");
+        settings.tagKey = await requiredText(interaction, "Tag key", "CostCenter");
+        settings.tagValue = await requiredText(interaction, "Tag value", "my-value");
     } else if (settings.mode === "explicit") {
         const text = await requiredText(
             interaction,
@@ -187,11 +187,6 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
     if (save === undefined) return;
     if (!save.written)
         interaction.notify({ type: "info", message: `Bedrock settings were not saved: ${save.error ?? save.file}` });
-    else if (save.shadowed.length > 0)
-        interaction.notify({
-            type: "info",
-            message: `Saved discovery to ${save.file}, but jig.json's bedrock section sets ${save.shadowed.join(", ")} and wins.`,
-        });
     else interaction.notify({ type: "info", message: `Saved discovery to ${save.file}.` });
 }
 
@@ -215,8 +210,7 @@ export async function runLoginFlow(
         note = "";
         if (method === "key") {
             // Keep the reason on screen: it becomes the next method prompt, instead of a status line a new prompt replaces.
-            note =
-                "Bedrock API keys are not supported by this package. Use Pi's own Amazon Bedrock provider, or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, or an IAM Identity Center (SSO) profile.";
+            note = "Use Pi's built-in Amazon Bedrock provider for an API key.";
             continue;
         }
         if (method === "chain") {

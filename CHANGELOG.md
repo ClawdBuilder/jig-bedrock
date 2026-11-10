@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The package stands alone: `bedrock.json` and the `JIG_BEDROCK_*` environment are the only settings sources; the Jig settings section, the optional Jig API, the custom `jig-theme`/`jig-lens` events and the Jig development dependency are gone.
+- `tagKey` and `tagValue` are the generic tag filter; a 0.2.x `team` value is still read once as `tagKey: "Team"`, `tagValue: <team>`, `activeTagKey: "Active"`, `activeTagValue: "true"`.
+- `signInAtStart` now defaults to false; a browser is not opened because Pi started.
+- This package sits beside Pi's built-in Amazon Bedrock provider instead of hiding its models. An AWS profile or SSO signs in this package; a Bedrock API key is used through Pi's built-in provider.
+- A reply is recorded as `jig-bedrock/<short model id>`, while the inference-profile ARN goes on the wire. Sessions written by 0.2.x with the built-in provider and an ARN resume on the same model; built-in sessions with a plain id are left alone.
+- A one-release migration reads a 0.2.x `jig.json` only to show one notice and copy its `bedrock` section to `bedrock.json` through `/bedrock migrate`; the copy is private and never overwrites an existing file.
+- The subagent-child environment check and the remaining internal names were removed; the scan still covers the public tree.
+
 ## [0.2.5] - 2026-11-10
 
 Faster discovery on real AWS, the same thinking settings as Pi's own Anthropic provider, and a clearer public package.

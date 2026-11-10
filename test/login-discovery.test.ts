@@ -69,7 +69,7 @@ async function build(options: {
         }) as never
     )(pi as never);
     const provider = providers.find((entry) => entry?.id === "jig-bedrock");
-    assert.ok(provider, "the jig-bedrock provider is registered");
+    assert.ok(provider, "the Bedrock provider is registered");
     return { provider, commands };
 }
 

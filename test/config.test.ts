@@ -11,10 +11,9 @@ const MESSAGE =
     "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)";
 
 describe("bedrock.signInAtStart", () => {
-    test("is on unless the file turns it off", () => {
-        assert.equal(DEFAULTS.signInAtStart, true);
-        assert.equal(loadConfig({ raw: { team: "t" }, env: {} }).config?.signInAtStart, true);
-        assert.equal(loadConfig({ raw: { team: "t", signInAtStart: false }, env: {} }).config?.signInAtStart, false);
+    test("is off unless the file turns it on", () => {
+        assert.equal(DEFAULTS.signInAtStart, false);
+        assert.equal(loadConfig({ raw: { team: "t" }, env: {} }).config?.signInAtStart, false);
         assert.equal(loadConfig({ raw: { team: "t", signInAtStart: true }, env: {} }).config?.signInAtStart, true);
     });
 
@@ -67,12 +66,11 @@ describe("bedrock.browser", () => {
 });
 
 describe("the section's messages", () => {
-    test("name keys of the bedrock section, none of the old jig.bedrock", () => {
+    test("name keys of the bedrock section", () => {
         const messages = validateBedrock({ profile: "bad profile", regions: [], monthlyBudgetUsd: 0, typo: 1 });
         assert.ok(messages.length >= 4, messages.join("\n"));
         for (const message of messages) {
             assert.match(message, /^bedrock\./);
-            assert.doesNotMatch(message, /jig\.bedrock/);
         }
         assert.deepEqual(validateBedrock("private-canary"), ["bedrock must be an object"]);
         assert.deepEqual(validateBedrock([]), ["bedrock must be an object"]);
@@ -119,32 +117,4 @@ describe("bedrock.api", () => {
             assert.equal(loadConfig({ raw: { team: "t", api: value }, env: {} }).config, undefined);
         }
     });
-});
-
-test("program settings come from bedrock.json or the environment, never the project section", async () => {
-    const { settingsFrom, agentFolder } = await import("../src/provider.ts");
-    const dir = mkdtempSync(join(tmpdir(), "bedrock-guard-"));
-    try {
-        writeFileSync(join(dir, "bedrock.json"), JSON.stringify({ bedrock: { usageDir: "/user/usage" } }));
-        const api = {
-            config: {
-                registerSection() {},
-                section: (name: string) =>
-                    name === "bedrock"
-                        ? {
-                              team: "t",
-                              usageDir: "/project/usage",
-                              ssoLoginCommand: ["sh", "-c", "evil"],
-                              browser: "/project/browser",
-                          }
-                        : undefined,
-            },
-        } as never;
-        const env = { PI_CODING_AGENT_DIR: dir };
-        assert.equal(agentFolder(env), dir);
-        assert.deepEqual(settingsFrom(api, env), { team: "t", usageDir: "/user/usage" });
-        assert.equal(settingsFrom(undefined, { ...env, JIG_BEDROCK_USAGE_DIR: "/env" })?.usageDir, "/user/usage");
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
 });

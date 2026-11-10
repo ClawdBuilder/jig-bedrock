@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createBudget, parseBudget } from "../src/budget.ts";
 import { usageLines } from "../src/commands.ts";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 import { createStatistics, parseUsage, pricedSpend } from "../src/statistics.ts";
 
 type Hook = (...args: any[]) => any;
@@ -169,42 +169,4 @@ test("the usage report shows the priced rows as a lower bound instead of an unkn
         usageLines({ report: none, observedAt: Date.now(), stale: false, refreshFailed: false }).join("\n"),
         /Estimated cost: unknown \(unpriced usage\)/,
     );
-});
-test("the usage event carries the sum and the unpriced flag for the footer", async (t) => {
-    const dir = directory(t),
-        hooks = new Map<string, Hook[]>(),
-        emitted: any[] = [];
-    const budget = {
-        monthUtc: "2026-10",
-        spentUsd: 206.76,
-        unpriced: true,
-        limitUsd: 200,
-        remainingUsd: -6.76,
-        observedAt: 1,
-        refreshFailed: false,
-    };
-    const pi: any = {
-        on: (name: string, fn: Hook) => hooks.set(name, [...(hooks.get(name) || []), fn]),
-        registerProvider() {},
-        registerCommand() {},
-        events: { emit: (channel: string, data: any) => emitted.push({ channel, data }) },
-        setModel: () => false,
-    };
-    await createJigBedrock({
-        config: { ...config, agentDir: dir, usageDir: dir },
-        catalog: { load: () => undefined, refresh: async () => "ok" },
-        ssoRecover: async () => {},
-        budget: { load: () => budget, refresh: async () => {} },
-        backgroundRefresh: false,
-    })(pi);
-    const ctx: any = {
-        mode: "rpc",
-        model: undefined,
-        sessionManager: { getBranch: () => [], getSessionId: () => "session" },
-        ui: { notify() {} },
-        modelRegistry: { find: () => undefined },
-    };
-    for (const fn of hooks.get("session_start") || []) await fn({ type: "session_start" }, ctx);
-    const usage = emitted.find((e) => e.channel === "jig-bedrock:usage");
-    assert.deepEqual(usage.data, { sessionId: "session", budget });
 });

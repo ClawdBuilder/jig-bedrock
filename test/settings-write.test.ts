@@ -97,25 +97,6 @@ test("a nested bedrock object stays nested and its siblings stay", () => {
     }
 });
 
-test("keys set by jig.json are reported as shadowing", () => {
-    const { dir, env, file } = folder();
-    try {
-        const result = saveDiscoverySettings(
-            env,
-            { mode: "system", regions: ["us-east-1"] },
-            {
-                regions: ["eu-west-1"],
-                tagKey: "Team",
-            },
-        );
-        assert.deepEqual(result.shadowed, ["regions", "tagKey"]);
-        assert.equal(result.written, true);
-        assert.deepEqual(read(file).regions, ["us-east-1"], "the file is still written for other keys and for later");
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-
 test("unreadable JSON is reported and not overwritten", () => {
     const { dir, env, file } = folder();
     try {

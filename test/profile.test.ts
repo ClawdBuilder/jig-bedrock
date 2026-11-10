@@ -48,14 +48,14 @@ test("the setting wins over the credential and the AWS environment", async () =>
 });
 
 test("JIG_BEDROCK_PROFILE is the setting, with its own source", async () => {
-    const loaded = loadConfig({ raw: { team: "t" }, env: { JIG_BEDROCK_PROFILE: "from-jig-env" } });
-    assert.equal(loaded.config?.profile, "from-jig-env");
+    const loaded = loadConfig({ raw: { team: "t" }, env: { JIG_BEDROCK_PROFILE: "from-env" } });
+    assert.equal(loaded.config?.profile, "from-env");
     assert.equal(loaded.config?.profileSource, "env");
     const { profiles } = resolver(
         { setting: loaded.config?.profile, settingSource: loaded.config?.profileSource, env: {} },
-        ["from-jig-env"],
+        ["from-env"],
     );
-    assert.deepEqual(await profiles.resolve(), { profile: "from-jig-env", source: "env", exists: true });
+    assert.deepEqual(await profiles.resolve(), { profile: "from-env", source: "env", exists: true });
 });
 
 test("/login's credential is next, then AWS_PROFILE, then AWS_DEFAULT_PROFILE", async () => {

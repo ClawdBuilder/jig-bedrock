@@ -1,7 +1,7 @@
 import type { AssistantMessage, AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { profilePattern } from "./config.ts";
-import { isJigBedrock } from "./identity.ts";
+import { isOwnModel } from "./identity.ts";
 import { NO_PROFILE } from "./profile.ts";
 
 type Stream = NonNullable<ProviderConfig["streamSimple"]>;
@@ -178,7 +178,6 @@ export function profileFor(options?: SimpleStreamOptions): string | undefined {
     if (
         (options?.apiKey && !placeholderKey) ||
         (options as SimpleStreamOptions & { bearerToken?: string })?.bearerToken ||
-        (options?.env?.AWS_BEARER_TOKEN_BEDROCK ?? process.env.AWS_BEARER_TOKEN_BEDROCK) ||
         (options?.env?.AWS_BEDROCK_SKIP_AUTH ?? process.env.AWS_BEDROCK_SKIP_AUTH) === "1"
     )
         return;
@@ -321,9 +320,7 @@ export async function registerBedrockSsoRecovery(
         description: "Restore the selected AWS SSO profile (browser sign-in may be needed)",
         handler: async (args, ctx) => {
             const auth =
-                ctx.model && isJigBedrock(ctx.model)
-                    ? await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model)
-                    : undefined;
+                ctx.model && isOwnModel(ctx.model) ? await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model) : undefined;
             const fromEnvironment = profileFor(auth?.ok ? auth : undefined);
             const profile =
                 args.trim() || defaultProfile?.() || (fromEnvironment === "default" ? undefined : fromEnvironment);

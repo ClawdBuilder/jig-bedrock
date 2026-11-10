@@ -1,4 +1,4 @@
-// The model ids this provider registers for a team's profiles. jig-jig chooses the model of each agent role as a plain string,
+// The model ids this provider registers for a team's profiles. A caller chooses the model as a plain string,
 // `jig-bedrock/claude-sonnet-5-5` and `jig-bedrock/claude-opus-5-5`, without importing anything from here. This is the half
 // of that agreement that lives in this package: the id of a profile is the slug of Pi's name for its foundation model, under the
 // provider id `jig-bedrock`, with no ARN. If it changes, jig-jig's agents defaults must change with it.

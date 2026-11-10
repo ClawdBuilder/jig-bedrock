@@ -142,13 +142,15 @@ export function createAwsDiscovery(
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
         lastFailure: string | undefined;
-    // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and Jig's section
+    // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and the settings
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
         config.mode ??
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
+    const tagKeyFor = (): string | undefined => config.tagKey ?? (config.team === undefined ? undefined : "Team");
+    const tagValueFor = (): string | undefined => config.tagValue ?? config.team;
     const activeKeyFor = (): string | undefined =>
-        config.activeTagKey ?? (config.team !== undefined ? "Active" : undefined);
+        config.activeTagKey ?? (config.team === undefined ? undefined : "Active");
     const scope = () => ({ ...config, mode: modeFor(), team: config.team });
     const load = () => (invalidAccount ? undefined : readCatalog(file, scope(), now()));
     const perform = async (force = false): Promise<Status> => {
@@ -293,7 +295,7 @@ export function createAwsDiscovery(
                                 "bedrock:application-inference-profile",
                                 "--tag-filters",
                                 JSON.stringify([
-                                    { Key: config.tagKey ?? "Team", Values: [config.tagValue ?? config.team] },
+                                    { Key: tagKeyFor(), Values: [tagValueFor()] },
                                     ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
                                 ]),
                                 "--no-paginate",
@@ -312,7 +314,7 @@ export function createAwsDiscovery(
                             )
                                 throw new Error("profile scope");
                             const wanted = [
-                                [config.tagKey ?? "Team", config.tagValue ?? config.team],
+                                [tagKeyFor(), tagValueFor()],
                                 ...(activeKey === undefined ? [] : [[activeKey, activeValue]]),
                             ] as Array<[string, string | undefined]>;
                             if (
@@ -407,7 +409,7 @@ export function createAwsDiscovery(
             if (mode === "tag" && profiles.length === 0) {
                 const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
                 warnings.push(
-                    `No application inference profiles matched ${config.tagKey ?? "Team"}=${config.tagValue}${active} in ${config.regions.join(", ")}. Check bedrock.tagKey/tagValue.`,
+                    `No application inference profiles matched ${tagKeyFor()}=${tagValueFor()}${active} in ${config.regions.join(", ")}. Check bedrock.tagKey/tagValue.`,
                 );
             }
             if (mode === "system" && profiles.length === 0)

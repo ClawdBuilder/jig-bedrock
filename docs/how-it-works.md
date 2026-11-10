@@ -49,10 +49,6 @@ stream.
 On Messages the tools array stays stable, so a changed tool list does not break the prompt cache; on Converse it does.
 The footer and usage figures are the same on both.
 
-A child agent (a Pi session with `PI_SUBAGENT_ID`, or the older `PI_SUBAGENT_CHILD=1`) skips the catalog refresh, the
-usage program and its events, and the sign-in at start. The parent does those; the child sends requests and reads the
-parent's cached catalog.
-
 ## Model ids
 
 Each profile is a model in `/model`. The id starts as the slug of Pi's registry name, such as `claude-sonnet-5-5`, and
@@ -70,9 +66,8 @@ gives the reason, and the startup notice names the first.
 
 ## The usage footer
 
-The provider runs the usage program with `--monthly` and publishes a `jig-theme:segment` event with id `bedrock-spend`;
-jig-theme draws it in the footer. Plain Pi has no listener, so there is no footer, and without a usage program there is
-nothing to show.
+The provider runs the spend command with `--monthly`; without one there is nothing to show. The budget and footer are
+part of this package's own interface, not another program's event bus.
 
 The label is `<Mon> $spend / $budget`, for example `Oct $203 / $200`. A trailing `+` on the spend means some usage had no
 price, so the figure is a lower bound. From 80% of `monthlyBudgetUsd` the part turns to a warning, and at or over the

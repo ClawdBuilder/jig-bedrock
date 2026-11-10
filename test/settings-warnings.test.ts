@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createJigBedrock } from "../src/provider.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 
 type Hook = (event: unknown, ctx: unknown) => unknown;
 
@@ -24,7 +24,7 @@ async function start(dir: string) {
         events: { emit() {} },
         setModel: () => false,
     };
-    const handle = await createJigBedrock({
+    const handle = await createBedrockProvider({
         env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
         listProfiles: async () => [],
         catalog: { load: () => undefined, refresh: async () => "ok" },

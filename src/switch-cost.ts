@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isSubagentChild } from "./child.ts";
-import { isJigBedrock } from "./identity.ts";
+import { isOwnModel } from "./identity.ts";
 import { type Cost, cacheWriteRate, type PromptCache, retentionOf } from "./prompt-cache.ts";
 
 /** Below this the rewrite is pocket change and a notice would only be noise (Pi's own cache warming uses the same line). */
@@ -40,12 +39,11 @@ interface SessionEntry {
 
 export function registerSwitchNotice(pi: Pick<ExtensionAPI, "on">, options: { env?: NodeJS.ProcessEnv } = {}): void {
     const env = options.env ?? process.env;
-    if (isSubagentChild(env)) return;
     pi.on("model_select", (event, ctx) => {
         if (
             event.source === "restore" ||
             !event.previousModel ||
-            !isJigBedrock(event.model) ||
+            !isOwnModel(event.model) ||
             ctx.mode === "print" ||
             ctx.mode === "json"
         )

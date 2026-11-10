@@ -10,14 +10,14 @@ import type {
     ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import { isObject } from "./check.ts";
-import { BEDROCK_PROVIDER_NAME, isJigBedrock, JIG_BEDROCK } from "./identity.ts";
+import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Pi's model registry and session entries, checked field by field where they are used
 type Json = any;
 
-export { isJigBedrock, JIG_BEDROCK } from "./identity.ts";
+export { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 
 let activeRegistry: Record<string, Json> = {};
 export function usePiRegistry(native: import("@earendil-works/pi-ai").Provider): void {
@@ -89,7 +89,7 @@ function verifiedPiCompat(foundationModelId: string): Record<string, boolean> {
 
 // Pi 1.2 widened ProviderModelConfig to chat, image and classifier models; inference profiles are chat models.
 type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
-export type TeamBedrockModel = ChatModelConfig & {
+export type BedrockModel = ChatModelConfig & {
     api: "anthropic-messages" | "bedrock-converse-stream";
     baseUrl: string;
     arn: string;
@@ -356,10 +356,10 @@ export function discoveredProfiles(
     catalog: Catalog | undefined,
     usageDir: string,
     api: "messages" | "converse" = "messages",
-): { available: TeamBedrockModel[]; unavailable: { profile: string; region: string; reason: string }[] } {
+): { available: BedrockModel[]; unavailable: { profile: string; region: string; reason: string }[] } {
     if (!catalog) return { available: [], unavailable: [] };
     const rates = usageRates(usageDir),
-        available: TeamBedrockModel[] = [],
+        available: BedrockModel[] = [],
         unavailable = [];
     const grouped = new Map<string, Profile[]>();
     for (const p of catalog.profiles) {
@@ -442,8 +442,8 @@ export function discoveredProfiles(
     return { available, unavailable };
 }
 export function updateModels(
-    current: TeamBedrockModel[],
-    updated: TeamBedrockModel[],
+    current: BedrockModel[],
+    updated: BedrockModel[],
 ): { changed: boolean; added: number; removed: number } {
     const before = new Set(current.map((m) => `${m.id}|${m.arn}`));
     const after = new Set(updated.map((m) => `${m.id}|${m.arn}`));
@@ -455,7 +455,7 @@ export function updateModels(
         removed: [...before].filter((x) => !after.has(x)).length,
     };
 }
-export function resolveSelection(models: readonly TeamBedrockModel[], selection: string): TeamBedrockModel | undefined {
+export function resolveSelection(models: readonly BedrockModel[], selection: string): BedrockModel | undefined {
     const id = selection.replace(/^(?:amazon-bedrock|jig-bedrock)\//, "");
     // A session saved under Pi's built-in provider names the configured profile by its ARN.
     const matches = models.filter((m) => m.id === id || m.arn === id || m.aliases.includes(id));
@@ -474,7 +474,7 @@ export interface BedrockStreams {
     messages?: Stream;
 }
 export function bedrockStream(
-    models: readonly TeamBedrockModel[],
+    models: readonly BedrockModel[],
     streams: BedrockStreams,
     load: () => Catalog | undefined,
     profile: () => string | undefined,
@@ -496,7 +496,6 @@ export function bedrockStream(
         if (
             options?.apiKey ||
             (options as Json)?.bearerToken ||
-            (options?.env?.AWS_BEARER_TOKEN_BEDROCK ?? process.env.AWS_BEARER_TOKEN_BEDROCK) !== undefined ||
             (current !== undefined &&
                 (((options as Json)?.profile && (options as Json).profile !== current) ||
                     (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== current)))
@@ -514,41 +513,50 @@ export function bedrockStream(
                 AWS_BEDROCK_SKIP_AUTH: "0",
             },
         };
-        const wire = { ...model, ...physical, id: physical.arn, provider: "amazon-bedrock" as const };
+        // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
+        // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
+        const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
             if (!messages || !signedFetch) throw new Error("The Bedrock Messages route is not available; reload Pi.");
             const previous = (options as Json)?.onPayload as
                 | ((payload: unknown, selected: unknown) => unknown)
                 | undefined;
-            return messages({ ...wire, api: "anthropic-messages" }, context, {
+            return messages({ ...logical, api: "anthropic-messages" }, context, {
                 ...scoped,
                 // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
                 // fetch removes both this and any Authorization header before signing.
                 apiKey: "bedrock-sigv4",
                 fetch: signedFetch,
-                // Sonnet 5.5 refuses Pi's thinking-off shape; every other payload is left exactly as it came, and Pi's own
-                // payload hook still runs first.
+                // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
+                // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
                 onPayload: async (payload: unknown, selected: unknown) => {
                     const next = previous === undefined ? payload : await previous(payload, selected);
-                    const value = (next ?? payload) as Record<string, unknown>;
+                    const value = { ...((next ?? payload) as Record<string, unknown>), model: physical.arn };
                     return rewriteThinkingOff(value, physical.foundationModelId);
                 },
             } as typeof options);
         }
-        return streams.converse({ ...wire, api: "bedrock-converse-stream" }, context, scoped);
+        const previous = (options as Json)?.onPayload as ((payload: unknown, selected: unknown) => unknown) | undefined;
+        return streams.converse({ ...logical, api: "bedrock-converse-stream" }, context, {
+            ...scoped,
+            onPayload: async (payload: unknown, selected: unknown) => {
+                const next = previous === undefined ? payload : await previous(payload, selected);
+                return { ...((next ?? payload) as Record<string, unknown>), modelId: physical.arn };
+            },
+        });
     };
 }
-export async function registerTeamBedrock(
+export async function registerBedrockProvider(
     pi: Pick<ExtensionAPI, "registerProvider">,
     _agentDir: string,
     native?: import("@earendil-works/pi-ai").Provider,
-    models: TeamBedrockModel[] = [],
+    models: BedrockModel[] = [],
     load: () => Catalog | undefined = () => undefined,
     identity: BedrockIdentity = { profile: () => undefined, auth: {} },
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
-): Promise<TeamBedrockModel[]> {
+): Promise<BedrockModel[]> {
     if (!native) {
         const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
         native = builtinProviders().find((provider) => provider.id === "amazon-bedrock");
@@ -585,12 +593,11 @@ export async function registerTeamBedrock(
             signedFetch,
         ),
     });
-    pi.registerProvider("amazon-bedrock", { models: [] });
     return models;
 }
 export function registerBedrockSelectionGuard(
     pi: Pick<ExtensionAPI, "on" | "setModel">,
-    models: TeamBedrockModel[],
+    models: BedrockModel[],
     options: {
         agentDir?: string;
         explicitSelection?: () => boolean;
@@ -606,10 +613,14 @@ export function registerBedrockSelectionGuard(
     const slowWarning =
         "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh.";
     const warning = () => (options.discoverySlow?.() === true ? slowWarning : unavailableWarning);
+    // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
+    // built-in model and must be left alone.
+    const oldRecorded = (model: { provider?: string; id?: string } | undefined) =>
+        model?.provider === "amazon-bedrock" && typeof model.id === "string" && model.id.startsWith("arn:");
+    const ours = (model: { provider?: string; id?: string } | undefined) => isOwnModel(model) || oldRecorded(model);
     const unsupported = (ctx: ExtensionContext) =>
         unresolvedSavedSelection ||
-        (isJigBedrock(ctx.model) &&
-            (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
+        (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext) => {
         // Pi 1.2 reports a session switch as session_start with reason new, resume or fork.
         const switched =
@@ -640,7 +651,7 @@ export function registerBedrockSelectionGuard(
                 /* No saved default. */
             }
         }
-        if ((!options.explicitSelection?.() || switched) && isJigBedrock({ provider })) {
+        if ((!options.explicitSelection?.() || switched) && ours({ provider, id: id || "" })) {
             const match = resolveSelection(models, id || ""),
                 target = match && ctx.modelRegistry.find(JIG_BEDROCK, match.id);
             if (!target) {
