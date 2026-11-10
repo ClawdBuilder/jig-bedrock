@@ -68,34 +68,57 @@ test("the notice names PI_CODING_AGENT_DIR when a project program setting is ign
     assert.match(notices.join("\n"), /ignores usageDir and browser/);
 });
 
-test("jig-core loading after the provider warns once that its section is ignored", async (t) => {
-    const dir = mkdtempSync(join(tmpdir(), "bedrock-late-"));
+test("plain Pi applies bedrock.json, and JIG_BEDROCK_PROFILE overrides it", async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-plain-settings-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const hooks = new Map<string, Array<(...args: never[]) => void>>();
-    const notices: string[] = [];
+    writeFileSync(join(dir, "bedrock.json"), JSON.stringify({ profile: "file-profile", regions: ["us-east-1"] }));
+
+    async function profileFrom(env: NodeJS.ProcessEnv): Promise<{ profile?: string; source?: string }> {
+        const { pi, hooks, providers } = harness();
+        await (
+            jigBedrock({
+                env: { HOME: dir, PI_CODING_AGENT_DIR: dir, ...env },
+                listProfiles: async () => ["file-profile", "env-profile"],
+            }) as never
+        )(pi as never);
+        for (const hook of hooks.get("session_start") ?? [])
+            await (hook as never)(
+                {},
+                {
+                    sessionManager: { getBranch: () => [], getSessionId: () => "test", getSessionDir: () => dir },
+                    ui: { notify() {} },
+                },
+            );
+        const provider = providers.find((entry: any) => entry?.id === "jig-bedrock") as any;
+        assert.ok(provider, "the provider is registered without jig-core");
+        const auth = await provider.auth.apiKey.resolve({
+            ctx: { env: async () => undefined, fileExists: async () => false },
+            signal: new AbortController().signal,
+        });
+        return { profile: auth?.env?.AWS_PROFILE, source: auth?.source };
+    }
+
+    assert.deepEqual(await profileFrom({}), { profile: "file-profile", source: "bedrock.profile" });
+    assert.deepEqual(await profileFrom({ JIG_BEDROCK_PROFILE: "env-profile" }), {
+        profile: "env-profile",
+        source: "JIG_BEDROCK_PROFILE",
+    });
+});
+
+/** The hooks, commands and providers a fake Pi records. */
+function harness() {
+    const hooks = new Map<string, Array<(...args: never[]) => unknown>>();
+    const providers: unknown[] = [];
     const pi = {
-        on(name: string, fn: (...args: never[]) => void) {
-            hooks.set(name, [...(hooks.get(name) ?? []), fn]);
+        on(name: string, hook: (...args: never[]) => unknown) {
+            hooks.set(name, [...(hooks.get(name) ?? []), hook]);
         },
-        registerProvider() {},
+        registerProvider(provider: unknown) {
+            if (typeof provider !== "string") providers.push(provider);
+        },
         registerCommand() {},
         events: { emit() {} },
         setModel: () => false,
     };
-    await (jigBedrock({ env: { JIG_BEDROCK_TEAM: "my-team", PI_CODING_AGENT_DIR: dir, HOME: dir } }) as never)(
-        pi as never,
-    );
-    const { publishJig, withdrawJig } = await import("../src/jig/client.ts");
-    const api = { config: { registerSection() {}, section: () => undefined } };
-    publishJig(api as never);
-    for (const fn of hooks.get("session_start") ?? [])
-        await (fn as never)(
-            {},
-            {
-                sessionManager: { getBranch: () => [], getSessionId: () => "test", getSessionDir: () => dir },
-                ui: { notify: (text: string) => notices.push(text) },
-            },
-        );
-    withdrawJig(api as never);
-    assert.match(notices.join("\n"), /jig-core loaded after the Bedrock provider/);
-});
+    return { pi, hooks, providers };
+}

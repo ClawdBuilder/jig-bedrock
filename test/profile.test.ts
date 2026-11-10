@@ -1,7 +1,7 @@
 // The profile chain: setting, JIG_BEDROCK_PROFILE, /login's credential, AWS_PROFILE, AWS_DEFAULT_PROFILE, the default
 // profile, then the ambient chain. The listing is cached, and /login asks for a name, never for a secret.
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,8 @@ import { loadConfig } from "../src/config.ts";
 import {
     createListProfiles,
     createProfileAuth,
+    type ListProfilesRun,
+    loginOutcomeMessage,
     loginWithProfile,
     ProfileResolver,
     type ProfileSettings,
@@ -249,18 +251,21 @@ test("/login uses its own long listing, not the short cached one", async () => {
     assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "demo-sso" } });
 });
 
-test("the profile listing has a short timeout and a long one for /login", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "bedrock-slow-aws-"));
-    try {
-        const script = join(dir, "aws");
-        writeFileSync(script, "#!/bin/sh\nsleep 1.5\nprintf 'demo-sso\\n'\n");
-        chmodSync(script, 0o755);
-        const env = { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` };
-        assert.equal(await createListProfiles(env, 400)(), undefined, "the start-up listing gives up early");
-        assert.deepEqual(await createListProfiles(env, 5_000)(), ["demo-sso"], "/login waits for the CLI");
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
+test("the start-up listing keeps its short timeout and /login its long one", async () => {
+    const calls: number[] = [];
+    const run: ListProfilesRun = async (_env, timeoutMs) => {
+        calls.push(timeoutMs);
+        return timeoutMs === 2_000 ? undefined : "demo-sso\n\nkeys\n";
+    };
+    assert.equal(await createListProfiles({}, 2_000, run)(), undefined);
+    assert.deepEqual(await createListProfiles({}, 10_000, run)(), ["demo-sso", "keys"]);
+    assert.deepEqual(calls, [2_000, 10_000], "the timeout is passed to the CLI run, not measured by this test");
+});
+
+test("the login outcome has three plain endings", () => {
+    assert.equal(loginOutcomeMessage(2, true), "Bedrock models loaded: 2. Choose one with /model.");
+    assert.match(loginOutcomeMessage(0, true), /not loaded yet; run \/aws-login/);
+    assert.match(loginOutcomeMessage(0, false), /Loading Bedrock models; \/model lists them in a moment/);
 });
 
 test("ambient credentials resolve without a profile and without a key", async () => {

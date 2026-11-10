@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { registerSignInAtStart } from "../src/start-sign-in.ts";
 
 type Hook = (event: unknown, ctx: any) => unknown;
-const pause = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Let every queued microtask and macrotask (the setImmediate in the sign-in) run, without a wall-clock wait. */
+async function settle(turns = 25): Promise<void> {
+    for (let turn = 0; turn < turns; turn++) await new Promise((resolve) => setImmediate(resolve));
+}
 
 async function scenario(signInAtStart: boolean, uiMode = "tui") {
     const hooks = new Map<string, Hook>();
@@ -37,7 +40,7 @@ async function scenario(signInAtStart: boolean, uiMode = "tui") {
         ui: { notify: (text: string) => notices.push(text) },
     };
     await hooks.get("session_start")!({ reason: "startup" }, ctx);
-    await pause();
+    await settle();
     return { checked, recovered, refreshed, notices };
 }
 
