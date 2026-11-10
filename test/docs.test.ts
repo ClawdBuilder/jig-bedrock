@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import test from "node:test";
+import { BEDROCK_SUBCOMMANDS } from "../src/commands.ts";
 import { FIELDS } from "../src/config.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -168,4 +169,17 @@ test("the diagrams are accessible, small-text SVG with marker ids of their own",
 // The names of the /bedrock sub-commands (status, doctor, models, refresh, login, usage, budget, settings, set, unset,
 // migrate, help) belong to the command branch of this release. src/commands.ts does not export the list yet, so this
 // cannot compare the pages with the code. When it does, check that every `/bedrock <word>` in the pages is on the list.
-test.todo("every /bedrock sub-command the pages name exists in src/commands.ts (waits for the command branch)");
+test("every /bedrock sub-command the pages name exists, and help names every sub-command", () => {
+    const names = new Set<string>(BEDROCK_SUBCOMMANDS);
+    for (const page of pages) {
+        for (const [, name] of withoutFences(read(page)).matchAll(/\/bedrock ([A-Za-z][A-Za-z-]*)/g)) {
+            assert.ok(names.has(name ?? ""), `${page} names /bedrock ${name}, which src/commands.ts does not have`);
+        }
+    }
+    const source = read("src/commands.ts");
+    const help =
+        /const HELP: Record<\(typeof BEDROCK_SUBCOMMANDS\)\[number\], string> = \{([\s\S]*?)^\};/m.exec(source)?.[1] ??
+        "";
+    for (const name of names)
+        assert.match(help, new RegExp(`^    ${name}:`, "m"), `the /bedrock help text does not name ${name}`);
+});

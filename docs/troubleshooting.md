@@ -2,15 +2,19 @@
 
 Find your symptom, run the command, and compare with what to expect. Every command here is a `/bedrock` command typed
 in Pi. Each one prints a title and rows. A row starts with a mark: `✓` fine, `✗` a problem, `!` needs attention, `–` not
-known yet. (With `NO_COLOR` set, or a terminal that is not UTF-8, the marks are the words ok, failure, warning and
-skipped.) The last line, `Next:`, is the one command to run now.
+known yet. (The marks are words only when `TERM=dumb` or the terminal locale is not UTF-8; `NO_COLOR` removes colour, not marks.) The last line, `Next:`, is the one command to run now.
 
 If you do not know the symptom, start with `/bedrock doctor`. It ends with `Bedrock is ready` or with a count of
 problems and one `Next:` line.
 
 ## Sign-in expired
 
-You see "Sign-in expired", or a request stops with a message about your AWS SSO session.
+You see `Bedrock: the AWS profile my-profile sign-in expired.`, or a request stops with a message about your AWS SSO session. The doctor shows:
+
+```text
+✗ Sign-in: sign-in expired
+Next: /bedrock login
+```
 
 1. Run `/bedrock login`. A browser opens; finish the sign-in there.
 2. Run `/bedrock refresh` if the model list was empty.
@@ -22,7 +26,19 @@ profile in the AWS CLI.
 
 ## Access denied
 
-A row or a failed request says access is denied.
+A row or a failed request says access is denied. A listing refusal looks like:
+
+```text
+✗ Models: access denied while listing; ask your AWS administrator for bedrock:ListInferenceProfiles
+Next: ask your AWS administrator for bedrock:ListInferenceProfiles, then /bedrock refresh
+```
+
+A single unreadable profile looks like:
+
+```text
+✗ Access denied for inference profile claude-opus-4-1: …; ask your AWS administrator for bedrock:GetInferenceProfile
+Next: ask your AWS administrator for bedrock:GetInferenceProfile, then /bedrock refresh
+```
 
 Run `/bedrock doctor`. It makes three free AWS calls and says which one was refused: who you are, listing inference
 profiles, or reading one. Give your AWS administrator the row and the permission that fits, from this table.
@@ -47,6 +63,18 @@ for the AWS-defined ones: use discovery by tag or by hand (`/bedrock settings` s
 
 `/model` shows no jig-bedrock models.
 
+```text
+✗ Models: no Claude models in eu-north-1
+Next: /bedrock settings, then check regions
+```
+
+or, in tag mode:
+
+```text
+✗ Models: no inference profiles with tag Team=payments in us-east-1
+Next: /bedrock settings, then check tagKey/tagValue
+```
+
 1. Run `/bedrock status`. If it says no AWS profile is chosen, run `/login` and choose Amazon Bedrock (jig-bedrock).
 2. Run `/bedrock refresh`, then `/bedrock models`.
 
@@ -64,7 +92,12 @@ assumed-role AWS profile assumes the role again on each call. List fewer regions
 A model you used yesterday is gone from `/model`, or a new Claude model never appears.
 
 Run `/bedrock models`. After the models it lists the rejected inference profiles, up to three, then a count, each with a
-reason. The usual reason is that Pi has no metadata for the model, because Pi's own model list is older than the model. Update Pi, then run `/bedrock refresh`. A model with no price is still listed, marked "no price".
+reason:
+
+```text
+– This Pi does not know the model: arn:aws:bedrock:us-east-1:…:inference-profile/orders-api, us-east-1
+```
+The usual reason is that Pi has no metadata for the model, because Pi's own model list is older than the model. Update Pi, then run `/bedrock refresh`. A model with no price is still listed, marked "no price".
 
 A model that is missing because it is in your account but not in your `regions` needs the region added to `regions`.
 

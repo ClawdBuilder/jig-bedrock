@@ -37,7 +37,7 @@
   <text x="680" y="156" font-size="12" fill="#3A4440" text-anchor="middle">models</text>
   <rect x="720" y="262" width="230" height="64" rx="6" fill="#5D4B7C"/>
   <text x="835" y="290.0" font-size="13" fill="#FFFFFF" font-weight="700" text-anchor="middle">/model in Pi</text>
-  <text x="835" y="307.0" font-size="12" fill="#FFFFFF" text-anchor="middle">jig-bedrock/claude-sonnet-5-5, …</text>
+  <text x="835" y="307.0" font-size="12" fill="#FFFFFF" text-anchor="middle">claude-sonnet-5-5, …</text>
   <path d="M835 224 V262" fill="none" stroke="#5C9CAB" stroke-width="2.4" marker-end="url(#discovery-head-5c9cab-11)"/>
   <text x="851" y="248" font-size="12" fill="#3A4440">fills the list</text>
   <!-- when a refresh runs -->

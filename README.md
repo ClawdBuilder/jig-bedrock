@@ -8,7 +8,7 @@ It also finds the models your account can use, renews an expired SSO sign-in, an
 
 _A request: jig-bedrock picks the route for the model, signs with your AWS profile, and records the cost of the reply._
 
-## Set up in five steps
+## Set up in four steps
 
 You need Node 22.19 or later, Pi 1.5 or later (1.5.0 is the oldest; CI runs the tests on it), the AWS CLI v2, and an AWS profile (a named sign-in in `~/.aws/config`) that can call Bedrock.
 
@@ -19,52 +19,81 @@ pi install npm:@clawdbuilder/jig-bedrock
 ```
 
 ```text
-<!-- real output: Claude -->
+Installing npm:@clawdbuilder/jig-bedrock...
+Installed npm:@clawdbuilder/jig-bedrock
 ```
 
-Done when: `pi list` shows `npm:@clawdbuilder/jig-bedrock`.
+npm prints its own progress lines between those two lines; they are left out here.
 
-**2. Sign in.** In Pi, run `/login` and choose Amazon Bedrock (jig-bedrock). Pi lists it under "Sign in with an API key", but it asks for no key: it asks which AWS profile to use, and may open a browser.
+Done when: `pi list` shows it:
 
 ```text
-<!-- real output: Claude -->
+User packages:
+  npm:@clawdbuilder/jig-bedrock
+    ~/.pi/agent/npm/node_modules/@clawdbuilder/jig-bedrock
 ```
 
-Done when: Pi says `Bedrock models loaded:` with a number above 0.
-
-**3. Load the models.**
+**2. Sign in.** Run `/login` and choose **Sign in with an API key**, then **Amazon Bedrock (jig-bedrock)**. That menu entry asks for no key: the next screens choose an AWS profile and what Bedrock should list.
 
 ```text
-/bedrock refresh
+Select authentication method:
+→ Sign in with an API key
+Select provider to configure:
+→ Amazon Bedrock (jig-bedrock)
+How do you sign in to AWS?
+→ An AWS profile that already works
+  Create an IAM Identity Center (SSO) profile
+  Create an IAM role profile
+  Use the AWS credential chain (no profile)
+  Use a Bedrock API key with Pi's own provider
+Which AWS profile should Bedrock use?
+→ my-profile
+Which inference profiles should Bedrock list?
+→ All AWS-defined Claude inference profiles
+AWS regions for discovery (comma separated)
+> us-east-1
 ```
+
+then:
 
 ```text
-<!-- real output: Claude -->
+Bedrock models loaded: 31. Choose one with /model.
 ```
 
-Done when: the output has no row marked `✗` and `/bedrock models` lists at least one model.
+Pi also prints "no default model is configured" in red after sign-in. That is Pi's wording for any provider an extension adds; step 3 is the fix. There is no supported extension hook to name a default model (Pi keeps `defaultModelPerProvider` for its own providers).
 
-**4. Choose a model.** Run `/model` and pick one that starts with `jig-bedrock/`, such as `jig-bedrock/claude-sonnet-5-5`.
+Done when: the last line is `Bedrock models loaded:` with a number above 0.
+
+**3. Choose a model.** Run `/model` and type `sonnet-5-5` to filter:
 
 ```text
-<!-- real output: Claude -->
+> sonnet-5-5
+→ claude-sonnet-5-5 (Claude Sonnet 5.5) [jig-bedrock]
+  claude-sonnet-5-5-global (Claude Sonnet 5.5 · global) [jig-bedrock]
 ```
 
-Done when: the footer of Pi shows that model's name.
+Done when: Pi's footer shows `claude-sonnet-5-5`, and the month's spend under it (`Nov $0.00`).
 
-**5. Check everything.**
+**4. Check everything.**
 
 ```text
 /bedrock doctor
 ```
 
 ```text
-<!-- real output: Claude -->
+Bedrock doctor
+✓ Node 26.13.0
+✓ AWS CLI 2.34.46
+✓ Settings: ~/.pi/agent/bedrock.json
+✓ AWS profile: my-profile (from /login)
+✓ Sign-in: AWS answered
+✓ Models: 31 found in us-east-1 (AWS-defined)
+✓ Selected model: claude-sonnet-5-5 · Messages route
+– Spend command: not set
+Bedrock is ready.
 ```
 
-Done when: the last row says `Bedrock is ready`.
-
-You are set up when `/bedrock doctor` ends with `Bedrock is ready`.
+Done when: the last line is `Bedrock is ready.`
 
 ## Budget
 
@@ -155,7 +184,7 @@ Pi's own `auth.json` keeps the AWS profile's name until you run `/logout`. Sessi
 
 ## For an agent setting this up
 
-- Do the five steps above in order. Each one has a "Done when" line: check it before the next.
+- Do the four steps above in order. Each one has a "Done when" line: check it before the next.
 - Step 2 opens a browser: ask the user to finish the sign-in. Never read or print credentials.
 - The one check that proves success: `/bedrock doctor` ends with `Bedrock is ready`.
 

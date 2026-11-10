@@ -95,16 +95,16 @@ replaces the AWS profile, and Pi's built-in provider still sees it.
 
 ## Other variables the package reads
 
-| Variable                             | Used for                                                                                                                                             |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PI_CODING_AGENT_DIR`                | Moves Pi's agent folder, and with it `bedrock.json`.                                                                                                 |
-| `XDG_STATE_HOME`                     | Moves the state folder (default `~/.local/state`) that holds the spend record and the debug log.                                                     |
-| `XDG_CACHE_HOME`                     | Moves the cache folder (default `~/.cache`) that holds the catalog.                                                                                  |
-| `AWS_CONFIG_FILE`                    | The AWS config file `/login` adds a new AWS profile to (default `~/.aws/config`).                                                                    |
-| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE` | An AWS profile when `profile` is unset (see above).                                                                                                  |
-| `BROWSER`                            | The program that opens the sign-in address, when `browser` is unset.                                                                                 |
-| `PI_CACHE_RETENTION`                 | Pi's own cache lifetime. The package does not change it. It has no effect on the Messages route, which sends only the 5-minute lifetime.             |
-| `NO_COLOR`, `TERM`, `LANG`, `LC_ALL` | With `NO_COLOR` set, `TERM=dumb` or a locale that is not UTF-8, command output uses the words ok, warning, failure and skipped instead of the marks. |
+| Variable                             | Used for                                                                                                                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PI_CODING_AGENT_DIR`                | Moves Pi's agent folder, and with it `bedrock.json`.                                                                                                                 |
+| `XDG_STATE_HOME`                     | Moves the state folder (default `~/.local/state`) that holds the spend record and the debug log.                                                                     |
+| `XDG_CACHE_HOME`                     | Moves the cache folder (default `~/.cache`) that holds the catalog.                                                                                                  |
+| `AWS_CONFIG_FILE`                    | The AWS config file `/login` adds a new AWS profile to (default `~/.aws/config`).                                                                                    |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE` | An AWS profile when `profile` is unset (see above).                                                                                                                  |
+| `BROWSER`                            | The program that opens the sign-in address, when `browser` is unset.                                                                                                 |
+| `PI_CACHE_RETENTION`                 | Pi's own cache lifetime. The package does not change it. It has no effect on the Messages route, which sends only the 5-minute lifetime.                             |
+| `NO_COLOR`, `TERM`, `LANG`, `LC_ALL` | With `TERM=dumb` or a locale that is not UTF-8, command output uses the words ok, warning, failure and skipped instead of the marks; `NO_COLOR` only removes colour. |
 
 [Back to the README](../README.md).
 
