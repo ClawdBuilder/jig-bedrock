@@ -30,6 +30,7 @@ top level or inside a `bedrock` object.
 | `api`              | `messages`                                      | `messages` (the Anthropic Messages route) or `converse` |
 | `converseModels`   | none                                            | Short model ids (`claude-opus-5`) that stay on Converse |
 | `messagesModels`   | none                                            | Short model ids to put on Messages, for a newer model   |
+| `debug`            | `false`                                         | Write the request log described under Debug log         |
 
 The package never handles a password or token: `ssoLoginCommand` starts the owning tool's login, and `/login` stores
 only the profile name (in Pi's `auth.json`, as `env.AWS_PROFILE`).
@@ -43,10 +44,10 @@ When `profile` is unset, the provider takes the first of these that exists:
    for this provider;
 3. `AWS_PROFILE`;
 4. `AWS_DEFAULT_PROFILE`;
-5. the `default` profile, when `aws configure list-profiles` names it;
+5. the `default` profile, when your AWS config or credentials file has one;
 6. with none of those, the AWS credential chain (environment, container or instance role).
 
-A configured profile that `aws configure list-profiles` does not name resolves to no models: the start-up notice and
+A configured profile that is in neither your AWS config nor your credentials file (`[profile NAME]` or `[NAME]`; `aws configure list-profiles` prints the same names) resolves to no models: the start-up notice and
 `/bedrock-doctor` say which profile is missing and point to `/login`.
 
 `signInAtStart: true` refreshes an expired session when Pi starts; the default leaves sign-in to a failing request or `/aws-login`. The start-up check still runs read-only, and
@@ -70,7 +71,7 @@ Only `ACTIVE` profiles are listed. The calls each mode makes are in [How it work
 ## Environment
 
 These variables override the same setting: `JIG_BEDROCK_TEAM`, `JIG_BEDROCK_TAG_KEY`, `JIG_BEDROCK_TAG_VALUE`,
-`JIG_BEDROCK_PROFILE` and `JIG_BEDROCK_REGIONS` (comma separated).
+`JIG_BEDROCK_PROFILE` and `JIG_BEDROCK_REGIONS` (comma separated). `JIG_BEDROCK_DEBUG=1` turns the debug log on.
 
 `PI_CACHE_RETENTION` sets Pi's own cache retention;
 the provider does not change it. `PI_CODING_AGENT_DIR` moves the agent folder, and with it `bedrock.json`.
@@ -112,6 +113,23 @@ the settings' AWS profile and first region in its environment. It prints one JSO
 `{ "month": "2026-11", "spentUsd": 203.4 }`. When it works, the footer and budget use its figure; when it fails, they fall
 back to this machine's record and `/bedrock doctor` says why. The contract and a ten-line example:
 [Spend command](spend-command.md).
+
+## Debug log
+
+Off by default. With `JIG_BEDROCK_DEBUG=1` in the environment or `"debug": true` in `bedrock.json`, this package appends one
+JSON line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/debug.log` when each request ends, when each model discovery
+run ends and when each sign-in repair ends. With it off nothing is written and no file or folder is made.
+
+A request line has `time`, `event: "request"`, `model` (the short id), `region`, `route` (`messages` or `converse`), `status` and
+`requestId` when AWS answered, `ms`, the token counts `input`, `output`, `cacheRead` and `cacheWrite` when known, and for a
+failure `error` (the AWS error name) and `message` (its first 300 characters). `attempts` appears when the client had to
+try more than once. A discovery line has `event: "discovery"`, `mode`, `regions`, `models`, `ms`, `status`, and `cached: true`
+when a fresh catalog cache answered without asking AWS; a sign-in line has `event: "sign-in"`, `source`, `outcome` and `ms`.
+
+A prompt, a reply, a tool argument, a credential, a signature and an authorization header are never read or written. In a
+message an AWS account id becomes `<account>` and a full ARN becomes its last path segment. The file is private (mode 0600, in a
+0700 folder). When it passes 5 MB it is renamed to `debug.log.1`, replacing an older one, and a new file starts. A log that
+cannot be written is dropped; it never fails a request.
 
 ## Platforms
 

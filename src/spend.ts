@@ -63,9 +63,13 @@ export interface SpendCommandResult {
     spentUsd: number;
 }
 
-export function spendFolder(env: NodeJS.ProcessEnv = process.env): string {
+/** This package's folder under the user's state folder (`XDG_STATE_HOME`, else `~/.local/state`). */
+export function stateFolder(env: NodeJS.ProcessEnv = process.env): string {
     const root = env.XDG_STATE_HOME || join(env.HOME ?? homedir(), ".local", "state");
-    return join(root, "jig-bedrock", "spend");
+    return join(root, "jig-bedrock");
+}
+export function spendFolder(env: NodeJS.ProcessEnv = process.env): string {
+    return join(stateFolder(env), "spend");
 }
 function monthFile(env: NodeJS.ProcessEnv, month: string): string {
     return join(spendFolder(env), `${month}.jsonl`);

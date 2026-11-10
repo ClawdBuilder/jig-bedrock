@@ -11,6 +11,8 @@
 - `routeOf` in `src/catalog.ts` answers which route a model uses and why, in a few words ("Pi lists tool changes", "not on the Messages route", "your setting", "this Pi does not know the model", "known exception"); the model list uses it, so there is one rule.
 - `scripts/real-check-messages.mjs` takes a comma-separated list of models and a `--thinking high,off` list, runs one session per pair and prints one table (route, calls, thinking, tool call, the call after the tool load, cost, result). `--retention long` sets `PI_CACHE_RETENTION`.
 
+- A debug log, off by default: `JIG_BEDROCK_DEBUG=1` or `"debug": true` in `bedrock.json` writes one JSON line per request, discovery run and sign-in repair to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/debug.log` (model, region, route, HTTP status, AWS request id, duration, token counts, and for a failure the AWS error name and the first 300 characters of its message). It never holds a prompt, a reply, a credential or an authorization header; an account id in a message becomes `<account>` and an ARN its last segment. The file is private and is moved to `debug.log.1` at 5 MB.
+
 ### Changed
 
 - The usage program, its cache and its Bash/jq requirements are gone; `usageDir`/`JIG_BEDROCK_USAGE_DIR` are not settings, and an old `usageDir` key gets the unknown-key warning.
@@ -37,9 +39,14 @@
 - Application profiles of Sonnet 5, Sonnet 4.6, Sonnet 4.5, Opus 4.7, Opus 4.6, Opus 4.5, Opus 4.1 and Haiku 4.5 (0.2.4 and 0.2.5 sent every application profile to Messages) no longer fail with a 400 or 404 once a tool is loaded mid-session; they use Converse.
 - `scripts/real-check-messages.mjs --team` wrote `team` together with `tagKey` and `tagValue`, which the settings reject; it writes the tag pair only.
 
+- Starting Pi with this package is much faster. It ran `aws configure list-profiles` several times at once at every start (each run takes over a second), and Pi waited for them. The profile names are now read from the AWS config and credentials files (`[default]`, `[profile NAME]`, `[NAME]`), so no program starts at Pi's start-up, in `/login` or in `/bedrock-doctor` for the profile list. Model discovery still starts the AWS CLI in the background when no fresh catalog is cached.
+
+- The catalog cache now works when your cache folder is a link (`~/.cache` on another disk, or the temporary folder under `/var` on macOS). Before, any link in the path made the package ignore its cache, so discovery ran again at every start. The folder you name (`XDG_CACHE_HOME`, else `~/.cache`) is followed; the package's own `jig-bedrock` folder and the file in it must still not be links. The cache now follows `XDG_CACHE_HOME`, which it ignored before. The SSO sign-in's runtime folder follows a link at your home, `~/.local` or `~/.local/state` the same way.
+
 ### Development
 
 - CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.
+- The tests no longer leave a `jig-bedrock-isolated-*` folder (and whatever a test forgot to remove) in the system temporary folder: each test process makes its own and removes it when it exits.
 - The tests use the real path of the system temporary folder, so they pass where it is a link (macOS), and read Pi's prompt-cache lifetime function from `pi-ai` when Pi 1.5.2 or later exports it there.
 
 ## [0.2.5] - 2026-11-10

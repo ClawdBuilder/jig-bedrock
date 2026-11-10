@@ -1,8 +1,7 @@
 import { execFile } from "node:child_process";
 import { rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { atomicCache } from "./cache.ts";
+import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 
@@ -136,8 +135,9 @@ async function eachLimit<T>(items: T[], limit: number, worker: (item: T) => Prom
 export function createAwsDiscovery(
     config: ResolvedConfig,
     runner: Runner = runFile,
-    file = join(homedir(), ".cache/jig-bedrock/catalog.json"),
+    file?: string,
     now = Date.now,
+    env: NodeJS.ProcessEnv = process.env,
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
@@ -152,7 +152,9 @@ export function createAwsDiscovery(
     const activeKeyFor = (): string | undefined =>
         config.activeTagKey ?? (config.team === undefined ? undefined : "Active");
     const scope = () => ({ ...config, mode: modeFor(), team: config.team });
-    const load = () => (invalidAccount ? undefined : readCatalog(file, scope(), now()));
+    // Without a file of its own the cache is in the user's cache root, whose links are followed (src/cache-root.ts).
+    const readFrom = () => file ?? catalogFile(env);
+    const load = () => (invalidAccount ? undefined : readCatalog(readFrom(), scope(), now()));
     const perform = async (force = false): Promise<Status> => {
         const mode = modeFor();
         const activeKey = activeKeyFor();
@@ -188,15 +190,15 @@ export function createAwsDiscovery(
         };
         try {
             if (!force && !invalidAccount) {
-                const cached = readCatalog(file, scope(), now());
+                const cached = readCatalog(readFrom(), scope(), now());
                 if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
             const account = (await step("check the AWS account", () => aws(["sts", "get-caller-identity"]))).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
-            const old = readCatalog(file, scope(), now());
+            const old = readCatalog(readFrom(), scope(), now());
             if (old && old.account_id !== account) {
                 invalidAccount = true;
-                rmSync(file, { force: true });
+                rmSync(readFrom(), { force: true });
             } else invalidAccount = false;
             const profiles: Profile[] = [],
                 seen = new Set<string>(),
@@ -431,7 +433,7 @@ export function createAwsDiscovery(
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             };
-            atomicCache(file, catalog);
+            atomicCache(file ?? catalogFile(env, true), catalog);
             invalidAccount = false;
             lastFailure = undefined;
             return "ok";

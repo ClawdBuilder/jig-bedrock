@@ -34,6 +34,7 @@ import { type BedrockCommand, registerBedrockCommands } from "./commands.ts";
 import type { ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
+import { createDebugLog, debugEnabled, withDebugCatalog, withDebugLog, withDebugRecover } from "./debug-log.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
@@ -258,13 +259,13 @@ export function createBedrockProvider(
                   signal: AbortSignal,
               ) => Promise<void>)
             | undefined;
-        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv, 10_000));
+        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
         // /login's guided choice: the AWS CLI is the only place a secret is entered, and the profile is verified before
         // the credential is stored. A fresh listing is used after the access-key/role guidance.
         const guided = (interaction: ProviderAuthInteraction) =>
             runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,
-                refreshProfiles: () => createListProfiles(profileEnv, 10_000)(),
+                refreshProfiles: () => createListProfiles(profileEnv)(),
                 isSso: (profile) => isSsoProfile(profile, profileEnv),
                 verify: (profile, signal) =>
                     options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
@@ -281,7 +282,11 @@ export function createBedrockProvider(
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
         });
         const identity = { profile: currentProfile, auth };
-        const catalog = options.catalog ?? createAwsDiscovery(config);
+        const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
+        const catalog = withDebugCatalog(options.catalog ?? createAwsDiscovery(config), debug, () => ({
+            mode: config.mode,
+            regions: config.regions,
+        }));
         const spend = options.spend ?? new SpendTracker(config, options.env ?? process.env);
         registerSwitchNotice(pi, { env: options.env });
         const lifetime = new AbortController();
@@ -300,7 +305,10 @@ export function createBedrockProvider(
         const say = (line: string): void => {
             if (ctx) noticeFor(ctx)(line, "info");
         };
-        const recovery = options.ssoRecover ?? createRecovery(config, { ...options.login, say });
+        const recovery = withDebugRecover(
+            options.ssoRecover ?? createRecovery(config, { ...options.login, say }),
+            debug,
+        );
         // The same preflight guards both the command and the automatic repair: the profile must exist (when a person is
         // waiting) and be an SSO profile, or no `aws sso login` child starts.
         const recoveryForLogin =
@@ -339,8 +347,9 @@ export function createBedrockProvider(
                 currentProfile,
                 (profile, signal) => profileProblem(profile, { list: loginListProfiles, env: profileEnv, signal }),
             );
-            native = recovered.provider;
-            messages = recovered.messages;
+            const logged = withDebugLog(recovered, debug);
+            native = logged.provider;
+            messages = logged.messages;
             await usePiAnthropicRegistry();
             usePiRegistry(native);
             models.push(...readModels().available);
