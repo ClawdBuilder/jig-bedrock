@@ -768,7 +768,7 @@ test("an explicit access-denied entry is named, the others still load, and ids a
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2, JSON.stringify(source.load()));
     assert.equal(source.load()?.errors?.[0]?.profile, "denied");
-    assert.equal(source.load()?.errors?.[0]?.message, "denied");
+    assert.equal(source.load()?.errors?.[0]?.message, "AWS denied access");
 });
 
 test("changing the tag filter invalidates the cache, and a 0.1.2 cache is accepted as legacy tag mode", async (t) => {

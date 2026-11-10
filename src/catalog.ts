@@ -156,17 +156,19 @@ export function validArn(
     kind: "application" | "system" | "any" = "application",
 ): boolean {
     const p = arn.split(":");
-    const app = (p[5] ?? "").startsWith("application-inference-profile/");
-    const system = (p[5] ?? "").startsWith("inference-profile/");
+    // A profile id can contain a version colon (`...-v1:0`), so the resource is everything after the fifth colon.
+    const resource = p.slice(5).join(":");
+    const app = resource.startsWith("application-inference-profile/");
+    const system = resource.startsWith("inference-profile/");
     return (
-        p.length === 6 &&
+        p.length >= 6 &&
         p[0] === "arn" &&
         ["aws", "aws-cn", "aws-us-gov"].includes(p[1] ?? "") &&
         p[2] === "bedrock" &&
         p[3] === region &&
         (system ? p[4] === "" || p[4] === "aws" || p[4] === account : p[4] === account) &&
         (kind === "any" ? app || system : kind === "application" ? app : system) &&
-        /^(?:application-inference-profile|inference-profile)\/[A-Za-z0-9.-]{1,256}$/.test(p[5] ?? "")
+        /^(?:application-inference-profile|inference-profile)\/[A-Za-z0-9.:-]{1,300}$/.test(resource)
     );
 }
 /** The discovery filter, hashed into the catalog so a changed tag or list is never reused. */
