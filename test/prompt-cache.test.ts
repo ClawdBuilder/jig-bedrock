@@ -29,6 +29,12 @@ test("Claude 4.5 and later declare 5-minute and 1-hour lifetimes; older Claude a
     for (const id of ["amazon.nova-2-lite-v1:0", "amazon.nova-pro-v1:0", "us.amazon.nova-micro-v1:0"])
         assert.deepEqual(promptCacheFor(id), { short: 300 }, id);
 });
+test("on the Messages route no model declares a 1-hour lifetime, because that route does not send the 1-hour checkpoint", () => {
+    for (const id of ["anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5", "anthropic.claude-sonnet-4-6"])
+        assert.deepEqual(promptCacheFor(id, "messages"), { short: 300 }, id);
+    assert.deepEqual(promptCacheFor("anthropic.claude-opus-5-5", "converse"), { short: 300, long: 3600 });
+    assert.equal(promptCacheFor("openai.gpt-6-luna", "messages"), undefined);
+});
 test("models Bedrock does not list for caching stay undeclared, so Pi never warms them", () => {
     for (const id of ["openai.gpt-6-luna", "amazon.nova-premier-v1:0", "meta.llama4", "fixture.model", ""])
         assert.equal(promptCacheFor(id), undefined, id);
@@ -52,7 +58,7 @@ test("a real Pi session sees the declared lifetimes, which is what turns on its 
         account_id: "123456789012",
         regions: [region],
         fetched_at: Math.floor(Date.now() / 1000),
-        profiles: ["anthropic.claude-sonnet-5-5", "amazon.nova-pro-v1:0"].map((id, n) => ({
+        profiles: ["anthropic.claude-sonnet-5-5", "amazon.nova-pro-v1:0", "anthropic.claude-sonnet-5"].map((id, n) => ({
             arn: arn(n),
             profile_name: `Fixture ${n}`,
             foundation_model_id: id,
@@ -101,9 +107,15 @@ test("a real Pi session sees the declared lifetimes, which is what turns on its 
     t.after(() => session.dispose());
     await session.bindExtensions({ mode: "print" });
     const sonnet = modelRuntime.getModels("jig-bedrock").find((m: any) => m.id === "claude-sonnet-5-5"),
-        nova = modelRuntime.getModels("jig-bedrock").find((m: any) => m.id === "nova-pro");
+        nova = modelRuntime.getModels("jig-bedrock").find((m: any) => m.id === "nova-pro"),
+        converseSonnet = modelRuntime.getModels("jig-bedrock").find((m: { id: string }) => m.id === "claude-sonnet-5");
+    assert.equal(converseSonnet.api, "bedrock-converse-stream");
+    assert.equal(getPromptCacheTtlMs(converseSonnet, {}), 300_000);
+    assert.equal(getPromptCacheTtlMs(converseSonnet, { env: { PI_CACHE_RETENTION: "long" } }), 3_600_000);
+    // Sonnet 5.5 is on the Messages route, which sends 5-minute checkpoints only: no 1-hour lifetime is declared for it.
+    assert.equal(sonnet.api, "anthropic-messages");
     assert.equal(getPromptCacheTtlMs(sonnet, {}), 300_000);
-    assert.equal(getPromptCacheTtlMs(sonnet, { env: { PI_CACHE_RETENTION: "long" } }), 3_600_000);
+    assert.equal(getPromptCacheTtlMs(sonnet, { env: { PI_CACHE_RETENTION: "long" } }), undefined);
     assert.equal(getPromptCacheTtlMs(nova, {}), 300_000);
     assert.equal(
         getPromptCacheTtlMs(nova, { env: { PI_CACHE_RETENTION: "long" } }),

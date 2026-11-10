@@ -317,7 +317,7 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
     }
 });
 
-test("an older Claude keeps the old compat: no mid-conversation effort is copied", async () => {
+test("an older Claude forced onto Messages gets no mid-conversation claims, because Pi's entry makes none", async () => {
     await registry();
     const dir = tempDir();
     const old: Catalog = {
@@ -332,12 +332,15 @@ test("an older Claude keeps the old compat: no mid-conversation effort is copied
         ],
     };
     try {
-        const [model] = discoveredProfiles(old, dir).available;
+        const [unforced] = discoveredProfiles(old, dir).available;
+        assert.equal(unforced?.api, "bedrock-converse-stream", "Pi lists no tool changes for it, so it uses Converse");
+        const [model] = discoveredProfiles(old, dir, { messagesModels: ["claude-sonnet-4-5"] }).available;
         assert.ok(model);
+        assert.equal(model.api, "anthropic-messages");
         const compat = (model.compat ?? {}) as Record<string, unknown>;
         assert.equal(compat.supportsMidConvoEffort, undefined, "no effort flag on an older model");
-        assert.equal(compat.supportsMidConvoSystemMessages, true, "the existing Bedrock-tested base is unchanged");
-        assert.equal(compat.supportsMidConvoToolChanges, true);
+        assert.equal(compat.supportsMidConvoSystemMessages, undefined, "no claim beyond Pi's entry");
+        assert.equal(compat.supportsMidConvoToolChanges, undefined);
         assert.equal(compat.forceAdaptiveThinking, undefined);
     } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -387,6 +390,8 @@ test("temperature follows Pi's Anthropic entry for each Claude family", async ()
                     profiles: [{ arn: ARN, profile_name: "Fixture", foundation_model_id: foundation, region: REGION }],
                 },
                 dir,
+                // The two older models are on Converse by default; the compat in question is the Messages route's.
+                { messagesModels: ["claude-sonnet-4-6", "claude-sonnet-4-5"] },
             ).available[0];
             assert.ok(model, foundation);
             assert.equal(
@@ -400,14 +405,17 @@ test("temperature follows Pi's Anthropic entry for each Claude family", async ()
     }
 });
 
-test("a Pi without the Anthropic registry path falls back to the name pattern", async () => {
+test("a Pi without the Anthropic registry path keeps every model on Converse; a forced model uses the name pattern", async () => {
     await usePiAnthropicRegistry(async () => {
         throw new Error("the path is not there");
     });
     const dir = tempDir();
     try {
-        const [model] = discoveredProfiles(catalog, dir).available;
+        const [unforced] = discoveredProfiles(catalog, dir).available;
+        assert.equal(unforced?.api, "bedrock-converse-stream", "a model this Pi cannot vouch for uses Converse");
+        const [model] = discoveredProfiles(catalog, dir, { messagesModels: ["claude-sonnet-5-5"] }).available;
         assert.ok(model, "the provider still builds its model");
+        assert.equal(model.api, "anthropic-messages");
         const compat = (model.compat ?? {}) as Record<string, unknown>;
         assert.equal(compat.forceAdaptiveThinking, true, "the 5.5 fallback still marks adaptive thinking");
         assert.equal(compat.supportsMidConvoEffort, undefined, "no registry entry to copy");

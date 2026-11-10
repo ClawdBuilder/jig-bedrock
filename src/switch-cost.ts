@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isOwnModel } from "./identity.ts";
-import { type Cost, cacheWriteRate, type PromptCache, retentionOf } from "./prompt-cache.ts";
+import { type Cost, cacheWriteRate, type PromptCache, retentionFor } from "./prompt-cache.ts";
 
 /** Below this the rewrite is pocket change and a notice would only be noise (Pi's own cache warming uses the same line). */
 export const NOTICE_FLOOR_USD = 0.05;
@@ -51,11 +51,13 @@ export function registerSwitchNotice(pi: Pick<ExtensionAPI, "on">, options: { en
         if (event.previousModel.provider === event.model.provider && event.previousModel.id === event.model.id) return;
         const tokens = ctx.getContextUsage?.()?.tokens;
         if (typeof tokens !== "number" || !event.model.cost) return;
-        const retention = retentionOf(env);
+        // Each side has its own route's retention: the old cache was written the way the old model's route writes it, the
+        // new one is written the way the new model's route does. The Messages route sends 5-minute checkpoints only.
         // `promptCache` is a field this package adds to the models it registers (see catalog.ts).
         const promptCache = (event.previousModel as { promptCache?: PromptCache }).promptCache;
-        if (cacheExpired(ctx.sessionManager.getBranch() as readonly SessionEntry[], promptCache, retention)) return;
-        const notice = switchNotice(tokens, event.model.cost, retention);
+        const previous = retentionFor(event.previousModel, env);
+        if (cacheExpired(ctx.sessionManager.getBranch() as readonly SessionEntry[], promptCache, previous)) return;
+        const notice = switchNotice(tokens, event.model.cost, retentionFor(event.model, env));
         if (notice) ctx.ui.notify(notice.text, "info");
     });
 }

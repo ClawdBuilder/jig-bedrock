@@ -10,6 +10,7 @@ import type {
     ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import { isObject } from "./check.ts";
+import type { BedrockApi } from "./config.ts";
 import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
@@ -87,6 +88,52 @@ function verifiedPiCompat(foundationModelId: string): Record<string, boolean> {
     return compat;
 }
 
+/**
+ * Models whose Pi entry lists tool changes and whose real run on the Messages route still failed. Opus 5, run on AWS on
+ * 2026-11-10: with thinking high the first request got `400 messages.1.output_config: Extra inputs are not permitted`, and
+ * with thinking off the first request after a tool load was blocked by a content filter. The person can still put it on
+ * Messages with `messagesModels`.
+ */
+const MESSAGES_EXCEPTIONS: ReadonlySet<string> = new Set(["claude-opus-5"]);
+
+/** The settings that choose a route; a resolved configuration has all three. */
+export interface RouteSettings {
+    api?: BedrockApi;
+    /** Short model ids (`claude-opus-5`) that stay on Converse. */
+    converseModels?: readonly string[];
+    /** Short model ids that go on Messages whatever Pi's entry says. */
+    messagesModels?: readonly string[];
+}
+export interface Route {
+    route: "messages" | "converse";
+    /** Three or four plain words for `/bedrock models`. */
+    reason: string;
+}
+
+/**
+ * The one place that decides the route of a Claude model, for AWS-defined and application profiles alike. Messages keeps the
+ * prompt cache when a tool is loaded in the middle of a session, and Bedrock accepts that only on the models whose Pi entry
+ * says `supportsMidConvoToolChanges` (the real runs of 2026-11-10 matched Pi's flag for every model but Opus 5). A model
+ * Pi does not list, and every model that is not Claude, goes the older way.
+ */
+export function routeOf(
+    model: { foundation_model_id: string } | { foundationModelId: string },
+    settings: RouteSettings = {},
+): Route {
+    const foundation = "foundation_model_id" in model ? model.foundation_model_id : model.foundationModelId;
+    if (!isAnthropicModel(foundation)) return { route: "converse", reason: "not a Claude model" };
+    const id = piModelId(foundation);
+    if (settings.api === "converse" || settings.converseModels?.includes(id))
+        return { route: "converse", reason: "your setting" };
+    if (settings.messagesModels?.includes(id)) return { route: "messages", reason: "your setting" };
+    if (MESSAGES_EXCEPTIONS.has(id)) return { route: "converse", reason: "known exception" };
+    const entry = anthropicRegistry[id] as { compat?: Record<string, unknown> } | undefined;
+    if (entry === undefined) return { route: "converse", reason: "this Pi does not know the model" };
+    return entry.compat?.supportsMidConvoToolChanges === true
+        ? { route: "messages", reason: "Pi lists tool changes" }
+        : { route: "converse", reason: "not on the Messages route" };
+}
+
 // Pi 1.2 widened ProviderModelConfig to chat, image and classifier models; inference profiles are chat models.
 type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
 export type BedrockModel = ChatModelConfig & {
@@ -99,10 +146,11 @@ export type BedrockModel = ChatModelConfig & {
 };
 
 /**
- * What Pi's Anthropic Messages client is told about Bedrock's route, from Pi's own `getAnthropicCompat` names. The probe on the
- * test account showed native tool changes (the inline-tools beta and the deferred placeholder) working, so those stay on; long
- * cache retention and strict tool schemas are off because the route has not shown them, and the rest is the Anthropic API's
- * default, which the route mirrors. See the report for what was not tested.
+ * What Pi's Anthropic Messages client is told about Bedrock's route, from Pi's own `getAnthropicCompat` names. Native tool
+ * changes (the inline-tools beta and the deferred placeholder) are not here: they come from Pi's entry for the model, and
+ * only where Pi says so (`verifiedPiCompat`). Long cache retention is off because the route has not shown the 1-hour
+ * checkpoint (the models say so through `promptCache`), strict tool schemas because the route has not shown them, and the
+ * rest is the Anthropic API's default, which the route mirrors.
  */
 const MESSAGES_COMPAT = {
     supportsEagerToolInputStreaming: true,
@@ -112,8 +160,6 @@ const MESSAGES_COMPAT = {
     supportsTemperature: true,
     sendSessionAffinityHeaders: false,
     allowEmptySignature: false,
-    supportsMidConvoSystemMessages: true,
-    supportsMidConvoToolChanges: true,
 } as const;
 export type Profile = {
     arn: string;
@@ -328,9 +374,10 @@ function orderedApplication(rows: Profile[]): Profile[] {
 export function discoveredProfiles(
     catalog: Catalog | undefined,
     _pricingDirectory = "",
-    api: "messages" | "converse" = "messages",
+    routing: BedrockApi | RouteSettings = "messages",
 ): { available: BedrockModel[]; unavailable: { profile: string; region: string; reason: string }[] } {
     if (!catalog) return { available: [], unavailable: [] };
+    const settings: RouteSettings = typeof routing === "string" ? { api: routing } : routing;
     const available: BedrockModel[] = [],
         unavailable = [];
     const grouped = new Map<string, Profile[]>();
@@ -369,9 +416,9 @@ export function discoveredProfiles(
                     : undefined;
             const priced =
                 fallback !== undefined && ["input", "output", "cacheRead", "cacheWrite"].some((k) => fallback[k] > 0);
-            const promptCache = promptCacheFor(p.foundation_model_id);
-            // Only Claude profiles go on the Anthropic route; gpt, nova and the rest keep their own route.
-            const messages = api === "messages" && p.kind !== "system" && isAnthropicModel(p.foundation_model_id);
+            // Where a Claude model goes is routeOf's call; gpt, nova and the rest keep their own route.
+            const messages = routeOf(p, settings).route === "messages";
+            const promptCache = promptCacheFor(p.foundation_model_id, messages ? "messages" : "converse");
             available.push({
                 id,
                 arn: p.arn,
