@@ -604,10 +604,18 @@ test("system mode lists system-defined Claude profiles, paginates and drops non-
                     {
                         inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-4-5`,
                         inferenceProfileName: "Claude Sonnet 4.5",
+                        status: "ACTIVE",
+                        type: "SYSTEM_DEFINED",
+                        models: [
+                            { modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5" },
+                        ],
                     },
                     {
                         inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.amazon.nova-pro`,
                         inferenceProfileName: "Nova Pro",
+                        status: "ACTIVE",
+                        type: "SYSTEM_DEFINED",
+                        models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0" }],
                     },
                 ],
                 nextToken: "next",
@@ -627,6 +635,7 @@ test("system mode lists system-defined Claude profiles, paginates and drops non-
     assert.equal(source.load()?.profiles.length, 1);
     assert.equal(source.load()?.profiles[0]?.kind, "system");
     assert.ok(calls.filter((a) => a.includes("list-inference-profiles")).length >= 2);
+    assert.equal(calls.filter((a) => a.includes("get-inference-profile")).length, 0, "the listing row is enough");
     assert.equal(createAwsDiscovery({ ...system, mode: "tag", team: "fixture-team" }, runner, file).load(), undefined);
 });
 
@@ -715,6 +724,11 @@ test("system mode lists once per configured region and keeps profiles from both"
                     {
                         inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/us.anthropic.claude-sonnet-4-5`,
                         inferenceProfileName: "Claude Sonnet 4.5",
+                        status: "ACTIVE",
+                        type: "SYSTEM_DEFINED",
+                        models: [
+                            { modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5" },
+                        ],
                     },
                 ],
             });
@@ -768,7 +782,7 @@ test("an explicit access-denied entry is named, the others still load, and ids a
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 2, JSON.stringify(source.load()));
     assert.equal(source.load()?.errors?.[0]?.profile, "denied");
-    assert.equal(source.load()?.errors?.[0]?.message, "denied");
+    assert.equal(source.load()?.errors?.[0]?.message, "AWS denied access");
 });
 
 test("changing the tag filter invalidates the cache, and a 0.1.2 cache is accepted as legacy tag mode", async (t) => {
@@ -830,6 +844,9 @@ test("a nested model profile in another account is refused", async (t) => {
                     {
                         inferenceProfileArn: `arn:aws:bedrock:us-east-1::inference-profile/jp.anthropic.claude-sonnet-4-5`,
                         inferenceProfileName: "JP Claude",
+                        status: "ACTIVE",
+                        type: "SYSTEM_DEFINED",
+                        models: [{ modelArn: "arn:aws:bedrock:us-east-1:999999999999:inference-profile/other" }],
                     },
                 ],
             });
@@ -854,6 +871,9 @@ test("jp and au system profiles pass the loose prefix and are decided by the fou
                 inferenceProfileSummaries: ["jp", "au"].map((geo) => ({
                     inferenceProfileArn: `arn:aws:bedrock:${region}::inference-profile/${geo}.anthropic.claude-sonnet-4-5`,
                     inferenceProfileName: `${geo} Claude`,
+                    status: "ACTIVE",
+                    type: "SYSTEM_DEFINED",
+                    models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5" }],
                 })),
             });
         return JSON.stringify({
@@ -883,6 +903,9 @@ test("a system profile whose name says Claude but foundation is Llama is dropped
                         inferenceProfileArn:
                             "arn:aws:bedrock:us-east-1::inference-profile/us.anthropic.claude-lookalike",
                         inferenceProfileName: "anthropic.claude lookalike",
+                        status: "ACTIVE",
+                        type: "SYSTEM_DEFINED",
+                        models: [{ modelArn: "arn:aws:bedrock:us-east-1::foundation-model/meta.llama-4" }],
                     },
                 ],
             });
@@ -895,8 +918,8 @@ test("a system profile whose name says Claude but foundation is Llama is dropped
     };
     const file = join(directory(t), "catalog.json");
     const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
-    assert.equal(await source.refresh(), "unavailable");
-    assert.equal(existsSync(file), false);
+    assert.equal(await source.refresh(), "ok");
+    assert.equal(source.load()?.profiles.length, 0);
 });
 
 test("a timeout mid-system-listing writes no cache and is not ok", async (t) => {

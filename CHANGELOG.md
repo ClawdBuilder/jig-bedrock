@@ -9,6 +9,14 @@
 - On the Messages route, Sonnet 5.5 and the other adaptive models now send the same thinking and mid-conversation settings Pi's own Anthropic provider sends for the same model, including `thinking.block_binding.prefix_mismatch_behavior = "drop_block"` (the setting Anthropic's error names for a changed tool list) and the deferred tool placeholder that keeps the tools-list prefix stable.
 - When Jig's `bedrock` settings arrive after jig-bedrock loads, a catalog cache that matches the new profile and tag is used first, with no AWS call and no wait even when the AWS CLI is slow. A slow discovery now says so instead of reporting the saved model as unavailable.
 - A failed model refresh gives one plain notice, whether it came from `/bedrock-refresh`, the start-up refresh or `/login`: a timeout says AWS is slow, an unreachable AWS says to check network access, and a saved model that is really gone is reported at session start.
+- Discovery accepts a global profile whose foundation-model address has no region, and profile ids with a version suffix such as `-v1:0`.
+- One profile that cannot be read is recorded for that profile and the other profiles still load. A failed refresh names the step and a plain reason, without an AWS account id.
+- The result notice names at most three profiles by their short id, then points to `/bedrock-profiles` for the rest, instead of listing every rejected address.
+
+### Changed
+
+- AWS-defined discovery builds the catalog from the `list-inference-profiles` rows themselves: one identity call and one listing call per region, instead of one `get-inference-profile` per profile. The real 33-profile run took 47 seconds; the same account should now take under 10 seconds per region. Tag and explicit discovery still read at most four profiles at once.
+- A listing larger than the 1 MiB per-call limit (8 MiB in total) shows “Could not list inference profiles: the listing is larger than the 1 MiB limit.” and leaves the previous catalog in place.
 
 ## [0.2.4] - 2026-11-10
 

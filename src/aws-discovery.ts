@@ -19,6 +19,8 @@ export type Status =
 export interface CatalogSource {
     load(): Catalog | undefined;
     refresh(force?: boolean): Promise<Status>;
+    /** Why the last refresh failed, in plain words; undefined after a success. */
+    failure?(): string | undefined;
 }
 export type Runner = (
     program: string,
@@ -65,20 +67,70 @@ export function discoveryHelp(status: Status): string {
             return "Check AWS access and the configuration in README.md, then /bedrock-refresh.";
     }
 }
-const PROFILE_ERROR =
-    /profile scope|model scope|model ID|ambiguous model|models|profile name|profile mismatch|profile tags/;
-
-function profileError(error: unknown): boolean {
-    return PROFILE_ERROR.test(String(error));
+class StepError extends Error {
+    readonly step: string;
+    readonly cause: unknown;
+    constructor(step: string, cause: unknown) {
+        super(step);
+        this.step = step;
+        this.cause = cause;
+    }
 }
 
-function entryMessage(error: unknown): string {
+/** A short, plain reason for one profile that could not be read. Never includes an account id. */
+export function profileFailureMessage(error: unknown): string {
     const text = String(error);
-    if (/profile scope/.test(text)) return text.replace(/^Error:\s*/, "");
-    if (/model scope/.test(text)) return "model scope";
-    if (category(error) === "permission_denied") return "denied";
-    if (category(error) === "configuration") return "not found";
-    return category(error);
+    if (/model ARN/.test(text)) return "its model address has an unexpected form";
+    if (/model ID/.test(text)) return "its model id is empty or invalid";
+    if (/ambiguous model/.test(text)) return "its models point at more than one foundation model";
+    if (/model scope/.test(text)) return "one of its models is outside this account or region";
+    if (/profile mismatch/.test(text)) return "AWS returned a different profile";
+    if (/profile name/.test(text)) return "its name is empty or invalid";
+    if (/profile tags/.test(text)) return "its tags do not match the configured team";
+    if (/profile ARN/.test(text)) return "AWS returned no profile address";
+    if (/profile scope/.test(text)) return "its address is outside the configured account, region or kind";
+    const status = category(error);
+    if (status === "permission_denied") return "AWS denied access";
+    if (status === "configuration") return "its AWS configuration is missing or wrong";
+    if (status === "network") return "AWS could not be reached";
+    if (status === "timeout") return "AWS timed out";
+    return "AWS returned an unexpected answer";
+}
+
+/** At most three short profile ids and a pointer to the full list; the notice stays one line. */
+export function problemSummary(errors: Array<{ profile: string; message: string }>, limit = 3): string | undefined {
+    if (errors.length === 0) return undefined;
+    const short = (profile: string) => profile.slice(profile.lastIndexOf("/") + 1) || profile;
+    const shown = errors.slice(0, limit).map((entry) => `${short(entry.profile)}: ${entry.message}`);
+    const rest = errors.length > limit ? `; and ${errors.length - limit} more: /bedrock-profiles lists them` : "";
+    return `Could not read ${shown.join("; ")}${rest}.`;
+}
+
+function reasonOf(error: unknown): string {
+    if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
+    const status = category(error);
+    if (status === "permission_denied") return "AWS denied access";
+    if (status === "configuration") return "the AWS configuration is missing or wrong";
+    if (status === "network") return "AWS could not be reached";
+    if (status === "timeout") return "AWS timed out";
+    return "AWS returned an unexpected answer";
+}
+
+function failureText(error: unknown): string {
+    if (error instanceof StepError) return `Could not ${error.step}: ${reasonOf(error.cause)}.`;
+    return `Could not load the Bedrock profiles: ${reasonOf(error)}.`;
+}
+
+async function eachLimit<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        for (;;) {
+            const index = next++;
+            if (index >= items.length) return;
+            await worker(items[index] as T);
+        }
+    });
+    await Promise.all(workers);
 }
 
 export function createAwsDiscovery(
@@ -88,7 +140,8 @@ export function createAwsDiscovery(
     now = Date.now,
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
-        invalidAccount = false;
+        invalidAccount = false,
+        lastFailure: string | undefined;
     // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and Jig's section
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
@@ -124,12 +177,19 @@ export function createAwsDiscovery(
             if (now() > deadline) throw new Error("timeout");
             return JSON.parse(output);
         };
+        const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+            try {
+                return await run();
+            } catch (error) {
+                throw new StepError(name, error);
+            }
+        };
         try {
             if (!force && !invalidAccount) {
                 const cached = readCatalog(file, scope(), now());
                 if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
-            const account = (await aws(["sts", "get-caller-identity"])).Account;
+            const account = (await step("check the AWS account", () => aws(["sts", "get-caller-identity"]))).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
             const old = readCatalog(file, scope(), now());
             if (old && old.account_id !== account) {
@@ -149,7 +209,7 @@ export function createAwsDiscovery(
                 for (const row of value.models) {
                     const match =
                         typeof row.modelArn === "string" &&
-                        row.modelArn.match(/^arn:(aws|aws-cn|aws-us-gov):bedrock:([^:]+):([^:]*):(.+)$/);
+                        row.modelArn.match(/^arn:(aws|aws-cn|aws-us-gov):bedrock:([^:]*):([^:]*):(.+)$/);
                     if (!match) throw new Error("model ARN");
                     const resource = match[4];
                     if (resource.startsWith("foundation-model/")) {
@@ -158,7 +218,8 @@ export function createAwsDiscovery(
                         if (!id || id.length > 256 || /[\x00-\x1f]/.test(id)) throw new Error("model ID");
                         ids.add(id);
                     } else if (resource.startsWith("inference-profile/") && depth < 2) {
-                        if (match[3] && match[3] !== account && match[3] !== "aws") throw new Error("model scope");
+                        if (!match[2] || (match[3] && match[3] !== account && match[3] !== "aws"))
+                            throw new Error("model scope");
                         ids.add(await foundation(await info(row.modelArn, match[2]), depth + 1));
                     } else throw new Error("model scope");
                 }
@@ -190,6 +251,13 @@ export function createAwsDiscovery(
                     kind,
                 });
             };
+            const candidates: Array<{
+                profile: string;
+                region: string;
+                kind: "application" | "system";
+                arn?: string;
+                row?: Json;
+            }> = [];
             if (mode === "explicit") {
                 for (const entry of config.profiles ?? []) {
                     const match = entry.match(
@@ -200,22 +268,14 @@ export function createAwsDiscovery(
                         | "system";
                     const region = match?.[2] ?? config.regions[0];
                     if (!region) throw new Error("profile scope");
-                    try {
-                        if (match && !config.regions.includes(region))
-                            throw new Error(
-                                `profile scope: ${entry} is in ${region}; add ${region} to bedrock.regions`,
-                            );
-                        if (match) await add(entry, region, kind);
-                        else {
-                            const found = await info(entry, region);
-                            const foundArn = found.inferenceProfileArn;
-                            if (typeof foundArn !== "string") throw new Error("profile ARN");
-                            await add(foundArn, region, found.type === "SYSTEM_DEFINED" ? "system" : "application");
-                        }
-                    } catch (error) {
-                        if (!profileError(error) && !/AccessDenied/i.test(String(error))) throw error;
-                        explicitErrors.push({ profile: entry, message: entryMessage(error) });
+                    if (match && !config.regions.includes(region)) {
+                        explicitErrors.push({
+                            profile: entry,
+                            message: `it is in ${region}; add ${region} to bedrock.regions`,
+                        });
+                        continue;
                     }
+                    candidates.push({ profile: entry, region, kind, ...(match ? { arn: entry } : {}) });
                 }
             } else if (mode === "tag") {
                 for (const region of config.regions) {
@@ -223,21 +283,23 @@ export function createAwsDiscovery(
                     const tokens = new Set<string>();
                     for (let page = 0; page < 32; page++) {
                         if (++pages > 64) throw new Error("pagination");
-                        const result = await aws([
-                            "resourcegroupstaggingapi",
-                            "get-resources",
-                            "--region",
-                            region,
-                            "--resource-type-filters",
-                            "bedrock:application-inference-profile",
-                            "--tag-filters",
-                            JSON.stringify([
-                                { Key: config.tagKey ?? "Team", Values: [config.tagValue ?? config.team] },
-                                ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
+                        const result = await step("list tagged inference profiles", () =>
+                            aws([
+                                "resourcegroupstaggingapi",
+                                "get-resources",
+                                "--region",
+                                region,
+                                "--resource-type-filters",
+                                "bedrock:application-inference-profile",
+                                "--tag-filters",
+                                JSON.stringify([
+                                    { Key: config.tagKey ?? "Team", Values: [config.tagValue ?? config.team] },
+                                    ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
+                                ]),
+                                "--no-paginate",
+                                ...(token ? ["--pagination-token", token] : []),
                             ]),
-                            "--no-paginate",
-                            ...(token ? ["--pagination-token", token] : []),
-                        ]);
+                        );
                         if (!Array.isArray(result.ResourceTagMappingList) || result.ResourceTagMappingList.length > 256)
                             throw new Error("resources");
                         for (const row of result.ResourceTagMappingList) {
@@ -262,7 +324,7 @@ export function createAwsDiscovery(
                                 )
                             )
                                 throw new Error("profile tags");
-                            await add(arn, region, "application");
+                            candidates.push({ profile: arn, region, kind: "application", arn });
                         }
                         token = result.PaginationToken ?? "";
                         if (!token) break;
@@ -277,27 +339,24 @@ export function createAwsDiscovery(
                     const tokens = new Set<string>();
                     for (let page = 0; page < 32; page++) {
                         if (++pages > 64) throw new Error("pagination");
-                        const result = await aws([
-                            "bedrock",
-                            "list-inference-profiles",
-                            "--type-equals",
-                            "SYSTEM_DEFINED",
-                            "--region",
-                            region,
-                            ...(token ? ["--next-token", token] : []),
-                        ]);
+                        const result = await step("list inference profiles", () =>
+                            aws([
+                                "bedrock",
+                                "list-inference-profiles",
+                                "--type-equals",
+                                "SYSTEM_DEFINED",
+                                "--region",
+                                region,
+                                ...(token ? ["--next-token", token] : []),
+                            ]),
+                        );
                         const rows = result.inferenceProfileSummaries;
                         if (!Array.isArray(rows) || rows.length > 256) throw new Error("profiles");
                         for (const row of rows) {
                             const arn = row?.inferenceProfileArn;
                             if (typeof arn !== "string") throw new Error("profile scope");
                             if (!/anthropic\.claude/i.test(`${arn} ${row.inferenceProfileName ?? ""}`)) continue;
-                            try {
-                                await add(arn, region, "system");
-                            } catch (error) {
-                                if (!profileError(error)) throw error;
-                                explicitErrors.push({ profile: arn, message: entryMessage(error) });
-                            }
+                            candidates.push({ profile: arn, region, kind: "system", arn, row });
                         }
                         token = result.nextToken ?? "";
                         if (!token) break;
@@ -307,9 +366,44 @@ export function createAwsDiscovery(
                     }
                 }
             }
+            await eachLimit(candidates, 4, async (candidate) => {
+                try {
+                    if (candidate.row !== undefined) {
+                        // The SYSTEM_DEFINED listing already carries the name, status and model ARNs; one call per
+                        // region is enough, instead of one GetInferenceProfile per row.
+                        const row = candidate.row;
+                        if (row.status !== "ACTIVE") return;
+                        if (row.inferenceProfileArn !== undefined && row.inferenceProfileArn !== candidate.profile)
+                            throw new Error("profile mismatch");
+                        const foundationModelId = await foundation(row);
+                        if (!foundationModelId.startsWith("anthropic.claude")) return;
+                        if (seen.has(candidate.profile) || seen.size >= 256) throw new Error("profile scope");
+                        seen.add(candidate.profile);
+                        profiles.push({
+                            arn: candidate.profile,
+                            profile_name: nameOf(row),
+                            foundation_model_id: foundationModelId,
+                            region: candidate.region,
+                            kind: "system",
+                        });
+                    } else if (candidate.arn) {
+                        await add(candidate.arn, candidate.region, candidate.kind);
+                    } else {
+                        const found = await info(candidate.profile, candidate.region);
+                        const foundArn = found.inferenceProfileArn;
+                        if (typeof foundArn !== "string") throw new Error("profile ARN");
+                        await add(
+                            foundArn,
+                            candidate.region,
+                            found.type === "SYSTEM_DEFINED" ? "system" : "application",
+                        );
+                    }
+                } catch (error) {
+                    explicitErrors.push({ profile: candidate.profile, message: profileFailureMessage(error) });
+                }
+            });
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
-            const failed =
-                (mode === "explicit" || mode === "system") && profiles.length === 0 && explicitErrors.length > 0;
+            const failed = profiles.length === 0 && explicitErrors.length > 0;
             if (mode === "tag" && profiles.length === 0) {
                 const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
                 warnings.push(
@@ -318,7 +412,10 @@ export function createAwsDiscovery(
             }
             if (mode === "system" && profiles.length === 0)
                 warnings.push(`No AWS-defined Claude inference profiles in ${config.regions.join(", ")}.`);
-            if (failed) return "unavailable";
+            if (failed) {
+                lastFailure = problemSummary(explicitErrors) ?? "Could not read any Bedrock profile.";
+                return "unavailable";
+            }
             const catalog: Catalog = {
                 schema: 1,
                 mode,
@@ -334,9 +431,11 @@ export function createAwsDiscovery(
             };
             atomicCache(file, catalog);
             invalidAccount = false;
-            return failed ? "unavailable" : "ok";
+            lastFailure = undefined;
+            return "ok";
         } catch (e) {
-            return category(e);
+            lastFailure = failureText(e);
+            return category(e instanceof StepError ? e.cause : e);
         }
     };
     return {
@@ -345,5 +444,6 @@ export function createAwsDiscovery(
             (flight ??= perform(force).finally(() => {
                 flight = undefined;
             })),
+        failure: () => lastFailure,
     };
 }

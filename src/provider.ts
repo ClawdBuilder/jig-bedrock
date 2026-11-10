@@ -11,7 +11,7 @@ import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { createAwsDiscovery, discoveryHelp } from "./aws-discovery.ts";
+import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -350,11 +350,14 @@ export function createJigBedrock(
                 const status = await catalog.refresh(force);
                 if (disposed) return status;
                 discoverySlow = status === "timeout";
+                let failureNotice = false;
                 if (status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
+                    failureNotice = true;
+                    const reason = catalog.failure?.();
                     const message =
                         status === "timeout"
                             ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock-refresh."
-                            : `Bedrock could not load models. ${discoveryHelp(status)}`;
+                            : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
                     ctx.ui.notify(message, "warning");
                 }
                 const updated = readModels().available;
@@ -375,13 +378,19 @@ export function createJigBedrock(
                 const current = catalog.load();
                 const problems = current?.errors ?? [];
                 const warnings = current?.warnings ?? [];
-                if (ctx && (change.added || change.removed || problems.length > 0 || warnings.length > 0)) {
+                if (
+                    !failureNotice &&
+                    ctx &&
+                    (change.added || change.removed || problems.length > 0 || warnings.length > 0)
+                ) {
                     const detail = [
                         `Bedrock catalog updated: ${change.added} added, ${change.removed} removed.`,
                         ...warnings,
-                        ...problems.map((problem) => `${problem.profile}: ${problem.message}.`),
+                        ...(problems.length > 0 ? [problemSummary(problems)] : []),
                         "Choose /model if your selection was removed.",
-                    ].join(" ");
+                    ]
+                        .filter((part): part is string => part !== undefined)
+                        .join(" ");
                     ctx.ui.notify(detail, problems.length > 0 || warnings.length > 0 ? "warning" : "info");
                 }
                 if (change.changed && native) {
