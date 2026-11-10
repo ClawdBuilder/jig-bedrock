@@ -1,5 +1,5 @@
 // Tests resolve Pi's host packages from the Pi installed as a development dependency (test/support/pi-host-dir.mjs), as Pi maps them for extensions at runtime.
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +12,10 @@ registerHooks({ resolve: hostHooks.resolveSync });
 // file does: the password store, AWS, gpg, Pi's agent folder, the home folder (where the SSO token cache and the catalog
 // cache live) and the Windows side of WSL. A program that would reach a real system fails, first on the PATH; a test that
 // needs one puts its own fake before it.
+// Every temporary folder a test makes is under the real path of the system's: on macOS TMPDIR is /var/folders/..., and /var is a
+// link to /private/var. The catalog refuses a cache whose path has a link in it (src/catalog.ts), so with the linked path every
+// test that reads a cache would find none. Setting TMPDIR here changes what os.tmpdir() answers for the whole test process.
+process.env.TMPDIR = realpathSync(tmpdir());
 const dir = mkdtempSync(path.join(tmpdir(), "jig-bedrock-isolated-"));
 const bin = path.join(dir, "bin");
 mkdirSync(bin);
