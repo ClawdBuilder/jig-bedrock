@@ -1,5 +1,5 @@
 // Tests resolve Pi's host packages from the Pi installed as a development dependency (test/support/pi-host-dir.mjs), as Pi maps them for extensions at runtime.
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,10 +13,20 @@ registerHooks({ resolve: hostHooks.resolveSync });
 // cache live) and the Windows side of WSL. A program that would reach a real system fails, first on the PATH; a test that
 // needs one puts its own fake before it.
 // Every temporary folder a test makes is under the real path of the system's: on macOS TMPDIR is /var/folders/..., and /var is a
-// link to /private/var. The catalog refuses a cache whose path has a link in it (src/catalog.ts), so with the linked path every
-// test that reads a cache would find none. Setting TMPDIR here changes what os.tmpdir() answers for the whole test process.
-process.env.TMPDIR = realpathSync(tmpdir());
-const dir = mkdtempSync(path.join(tmpdir(), "jig-bedrock-isolated-"));
+// link to /private/var. The catalog and its cache refuse a path with a link in it from this package's own folder down (src/cache.ts,
+// src/catalog.ts), and the tests give them explicit paths under the temporary folder, so with the linked path every test that reads
+// a cache would find none. Setting TMPDIR here changes what os.tmpdir() answers for the whole test process.
+// The folder this process makes is also the temporary folder of its tests: whatever a test creates in os.tmpdir() lives inside it
+// and is removed with it when the process exits, so a test that forgets its own cleanup leaves nothing behind.
+const dir = mkdtempSync(path.join(realpathSync(tmpdir()), "jig-bedrock-isolated-"));
+process.on("exit", () => {
+    try {
+        rmSync(dir, { recursive: true, force: true });
+    } catch {}
+});
+const temporary = path.join(dir, "tmp");
+mkdirSync(temporary);
+process.env.TMPDIR = temporary;
 const bin = path.join(dir, "bin");
 mkdirSync(bin);
 for (const program of ["aws"]) {

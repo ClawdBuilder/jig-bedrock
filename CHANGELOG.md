@@ -44,6 +44,7 @@
 ### Development
 
 - CI now runs the tests against the oldest supported Pi (1.5.0) and the newest published one, installs the packed tarball into a stock Pi with its own `pi install npm:` and checks in rpc mode that the extension loads (`npm run check:packed`), and runs the type, style and unit checks on macOS. `ci-ok` waits for all of them.
+- The tests no longer leave a `jig-bedrock-isolated-*` folder (and whatever a test forgot to remove) in the system temporary folder: each test process makes its own and removes it when it exits.
 - The tests use the real path of the system temporary folder, so they pass where it is a link (macOS), and read Pi's prompt-cache lifetime function from `pi-ai` when Pi 1.5.2 or later exports it there.
 
 ## [0.2.5] - 2026-11-10
