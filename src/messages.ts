@@ -3,7 +3,6 @@
 // `between_tools` instead; older Claude models still take budget thinking. Nothing here guesses beyond the generation the real
 // run covered: a model only gets a rewrite when its family is listed below.
 const ANTHROPIC = /^(?:[a-z0-9-]+\.)?anthropic\./;
-const CLAUDE_55 = /^(?:[a-z0-9-]+\.)?anthropic\.claude-(?:sonnet|opus|haiku)-5-5$/;
 // The models Pi's own Converse code and Anthropic registry mark adaptive: Opus 4.6-4.8 and 5.x, Sonnet 4.6 and 5.x,
 // Haiku 5.5, and Fable 5. Kept as a fallback when Pi's registry has no entry; the registry wins when it does.
 const ADAPTIVE =

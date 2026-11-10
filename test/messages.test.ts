@@ -294,3 +294,34 @@ test("Opus 4.8 takes adaptive thinking from Pi's registry, like Pi's own Convers
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("temperature follows Pi's Anthropic entry for each Claude family", async () => {
+    await registry();
+    const dir = usageDir();
+    const table: Array<[string, boolean]> = [
+        ["anthropic.claude-sonnet-5-5", false],
+        ["anthropic.claude-haiku-5-5", false],
+        ["anthropic.claude-opus-4-8", false],
+        ["anthropic.claude-sonnet-4-6", true],
+        ["anthropic.claude-sonnet-4-5-20250929-v1:0", true],
+    ];
+    try {
+        for (const [foundation, temperature] of table) {
+            const model = discoveredProfiles(
+                {
+                    ...catalog,
+                    profiles: [{ arn: ARN, profile_name: "Fixture", foundation_model_id: foundation, region: REGION }],
+                },
+                dir,
+            ).available[0];
+            assert.ok(model, foundation);
+            assert.equal(
+                (model.compat as Record<string, unknown>).supportsTemperature,
+                temperature,
+                `${foundation} temperature`,
+            );
+        }
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});

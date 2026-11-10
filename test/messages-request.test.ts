@@ -48,18 +48,23 @@ function transcript() {
     };
 }
 
-async function requestBody(model: TeamBedrockModel, context: unknown): Promise<Record<string, any>> {
+async function requestBody(
+    model: TeamBedrockModel,
+    context: unknown,
+    options: { reasoning?: string; temperature?: number } = {},
+): Promise<Record<string, unknown>> {
     const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
     const anthropic = builtinProviders().find((provider: { id: string }) => provider.id === "anthropic");
     const controller = new AbortController();
-    return await new Promise<Record<string, any>>((resolve, reject) => {
+    return await new Promise<Record<string, unknown>>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("the client did not build a request")), 5_000);
         anthropic.streamSimple(model, context, {
             apiKey: "test",
-            reasoning: "high",
+            ...(options.reasoning === "off" ? {} : { reasoning: options.reasoning ?? "high" }),
+            ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
             signal: controller.signal,
             // Pi calls onPayload after building the request and before the SDK turns `betas` into a header.
-            onPayload: (payload: Record<string, any>) => {
+            onPayload: (payload: Record<string, unknown>) => {
                 clearTimeout(timer);
                 resolve(structuredClone(payload));
                 controller.abort();
@@ -114,6 +119,20 @@ test("without the mid-conversation flags nothing changes: no binding beta and th
             ["bash", "read"],
             "without native tool changes the current tools are sent",
         );
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a model whose Pi entry disables temperature sends none", async () => {
+    await registries();
+    const dir = mkdtempSync(path.join(tmpdir(), "jig-bedrock-temperature-"));
+    try {
+        const [model] = discoveredProfiles(catalog("anthropic.claude-opus-4-8"), dir).available;
+        assert.ok(model);
+        const body = await requestBody(model, transcript(), { temperature: 0.5 });
+        assert.equal(body.temperature, undefined);
+        assert.equal((model.compat as Record<string, unknown>).supportsTemperature, false);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

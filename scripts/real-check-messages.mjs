@@ -4,24 +4,36 @@
 // never runs in CI and is not shipped in the package.
 //
 //   node scripts/real-check-messages.mjs <model-id> <package-copy-dir> --profile <aws-profile> [--thinking high]
-//     [--region us-east-1] [--timeout 240] [--keep]
+//     [--region us-east-1] [--team my-team | --profiles arn,arn] [--pi <path>] [--timeout 240] [--keep] [--dry-run]
 //
 // <model-id> is a model in Pi's /model for jig-bedrock whose profile points at Claude Sonnet 5.5 (the Messages route).
 // <package-copy-dir> is an extracted package tarball (or this checkout) to install into a temporary Pi home.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 const argv = process.argv.slice(2);
 const positional = [];
-const options = { thinking: "high", region: "us-east-1", timeout: 240, keep: false, dryRun: false };
+const options = {
+    thinking: "high",
+    region: "us-east-1",
+    timeout: 240,
+    keep: false,
+    dryRun: false,
+    pi: undefined,
+    team: undefined,
+    profiles: undefined,
+};
 for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--profile") options.profile = argv[++i];
     else if (arg === "--thinking") options.thinking = argv[++i];
     else if (arg === "--region") options.region = argv[++i];
     else if (arg === "--timeout") options.timeout = Number(argv[++i]);
+    else if (arg === "--pi") options.pi = argv[++i];
+    else if (arg === "--team") options.team = argv[++i];
+    else if (arg === "--profiles") options.profiles = argv[++i];
     else if (arg === "--keep") options.keep = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else positional.push(arg);
@@ -38,6 +50,22 @@ if (!options.profile) {
     process.exit(2);
 }
 
+const defaultPi = "/home/hp/.nvm/versions/node/v26.13.0/bin/pi";
+const piBinary = options.pi ?? (existsSync(defaultPi) ? defaultPi : undefined);
+if (!piBinary) {
+    console.error(`--pi <path> is required: this machine has no Pi at ${defaultPi}`);
+    process.exit(2);
+}
+if (!existsSync(piBinary)) {
+    console.error(`no Pi binary at ${piBinary}`);
+    process.exit(2);
+}
+const realHome = process.env.HOME ?? homedir();
+const realAws = join(realHome, ".aws");
+if (!existsSync(realAws)) {
+    console.error(`no ${realAws}; the check needs the real AWS profile and SSO cache`);
+    process.exit(2);
+}
 const redact = (text) => String(text).replace(/\b\d{12}\b/g, "<account>");
 const root = mkdtempSync(join(tmpdir(), "jig-bedrock-real-check-"));
 const home = join(root, "home");
@@ -45,11 +73,26 @@ const agent = join(root, "agent");
 const project = join(root, "project");
 const extension = join(agent, "extensions", "deferred-check.ts");
 for (const dir of [home, agent, project, join(agent, "extensions")]) mkdirSync(dir, { recursive: true });
+// The AWS CLI and SDK read the real profile and SSO cache through this link; they are never copied.
+symlinkSync(realAws, join(home, ".aws"), "dir");
 
 // A profile in settings (not AWS_PROFILE) keeps the check's "AWS_PROFILE unset" habit while using the real account.
 writeFileSync(
     join(agent, "bedrock.json"),
-    JSON.stringify({ profile: options.profile, regions: [options.region], signInAtStart: false }),
+    JSON.stringify({
+        profile: options.profile,
+        regions: [options.region],
+        signInAtStart: false,
+        ...(options.team === undefined ? {} : { team: options.team, tagKey: "Team", tagValue: options.team }),
+        ...(options.profiles === undefined
+            ? {}
+            : {
+                  profiles: options.profiles
+                      .split(",")
+                      .map((value) => value.trim())
+                      .filter(Boolean),
+              }),
+    }),
     { mode: 0o600 },
 );
 const deferredTool = (name, index) => `
@@ -75,25 +118,43 @@ ${Array.from({ length: 7 }, (_, i) => deferredTool(`orders_api_${i + 1}`, i + 1)
 `,
 );
 
-const env = { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agent, BROWSER: "true" };
+const env = {
+    ...process.env,
+    HOME: home,
+    PI_CODING_AGENT_DIR: agent,
+    BROWSER: "true",
+    PATH: `${dirname(piBinary)}:${process.env.PATH ?? ""}`,
+};
 delete env.AWS_PROFILE;
 delete env.AWS_DEFAULT_PROFILE;
 delete env.JIG_BEDROCK_PROFILE;
 
-const install = spawnSync("pi", ["install", resolve(packageDir)], { cwd: project, env, encoding: "utf8" });
+const install = spawnSync(piBinary, ["install", resolve(packageDir)], { cwd: project, env, encoding: "utf8" });
 if (install.status !== 0) {
     console.error(`pi install failed:\n${redact(`${install.stdout}\n${install.stderr}`)}`);
     process.exit(1);
 }
 
-const piArgs = ["--mode", "rpc", "--model", modelId, "--thinking", options.thinking, "--extension", extension];
+const piArgs = [
+    "--mode",
+    "rpc",
+    "--model",
+    modelId,
+    "--thinking",
+    options.thinking,
+    "--tools",
+    "+tool_search",
+    "--extension",
+    extension,
+];
 if (options.dryRun) {
-    console.log(`dry run: would start: pi ${piArgs.join(" ")}`);
+    console.log(`dry run: would start: ${piBinary} ${piArgs.join(" ")}`);
+    console.log(`dry run: discovery team=${options.team ?? "none"} profiles=${options.profiles ?? "none"}`);
     console.log(`dry run: extension ${extension}`);
     if (!options.keep) rmSync(root, { recursive: true, force: true });
     process.exit(0);
 }
-const pi = spawn("pi", piArgs, { cwd: project, env, stdio: ["pipe", "pipe", "pipe"] });
+const pi = spawn(piBinary, piArgs, { cwd: project, env, stdio: ["pipe", "pipe", "pipe"] });
 console.log(`model ${modelId}, thinking ${options.thinking}, profile ${options.profile}, package ${packageDir}`);
 console.log(`isolated home: ${root}`);
 
@@ -157,8 +218,9 @@ for (let waited = 0; waited < 90_000 && !notices.some((text) => /Catalog: loaded
 if (!notices.some((text) => /Catalog: loaded/.test(text)))
     console.log("warning: the catalog did not report loaded; trying the model anyway");
 send(
-    "Think through this task before answering. Use tool_search with the query orders_api_7 to load that tool, " +
-        "then call orders_api_7 with orderId 42, then reply with the order status in one short sentence.",
+    "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Think this through carefully before you " +
+        "answer. Then use tool_search with the query orders_api_7 to load that tool, call orders_api_7 with orderId " +
+        "42, and reply with the number of sheep and the order status in one short sentence.",
 );
 await Promise.race([done, wait(options.timeout * 1_000)]);
 pi.stdin.end();

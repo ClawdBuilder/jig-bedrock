@@ -56,10 +56,16 @@ function piModelId(foundationModelId: string): string {
         .replace(/-\d{8}$/, "");
 }
 
-/** Flags from Pi's Anthropic entry, limited to the verified list and only when Pi says true. */
-function verifiedPiCompat(foundationModelId: string): Record<string, true> {
+/**
+ * Flags from Pi's Anthropic entry: copy a false value for any flag this package sets (temperature is the one that
+ * matters today), and copy the verified flags only when Pi says true.
+ */
+function verifiedPiCompat(foundationModelId: string): Record<string, boolean> {
     const entry = anthropicRegistry[piModelId(foundationModelId)] as { compat?: Record<string, unknown> } | undefined;
-    const compat: Record<string, true> = {};
+    const compat: Record<string, boolean> = {};
+    for (const key of Object.keys(MESSAGES_COMPAT)) {
+        if (entry?.compat?.[key] === false) compat[key] = false;
+    }
     for (const key of VERIFIED_ANTHROPIC_COMPAT) {
         if (entry?.compat?.[key] === true) compat[key] = true;
     }
