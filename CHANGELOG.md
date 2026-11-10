@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Adaptive thinking on the Messages route now follows Pi's own model list, not only the 5.5 family: Opus 4.6 to 4.8 and 5.x, Sonnet 4.6 and 5.x, Haiku 5.5 and Fable 5 get their flags from Pi's Anthropic entries.
+- On the Messages route, Sonnet 5.5 and the other adaptive models now send the same thinking and mid-conversation settings Pi's own Anthropic provider sends for the same model, including `thinking.block_binding.prefix_mismatch_behavior = "drop_block"` (the setting Anthropic's error names for a changed tool list) and the deferred tool placeholder that keeps the tools-list prefix stable.
 - When Jig's `bedrock` settings arrive after jig-bedrock loads, a catalog cache that matches the new profile and tag is used first, with no AWS call and no wait even when the AWS CLI is slow. A slow discovery now says so instead of reporting the saved model as unavailable.
 - A failed model refresh gives one plain notice, whether it came from `/bedrock-refresh`, the start-up refresh or `/login`: a timeout says AWS is slow, an unreachable AWS says to check network access, and a saved model that is really gone is reported at session start.
 

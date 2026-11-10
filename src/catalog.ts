@@ -28,6 +28,44 @@ export function usePiRegistry(native: import("@earendil-works/pi-ai").Provider):
     );
 }
 
+// Pi's own Anthropic registry entries for the same foundation model, so this package copies the mid-conversation
+// compatibility facts Pi has already verified instead of guessing them again.
+let anthropicRegistry: Record<string, Json> = {};
+export async function usePiAnthropicRegistry(): Promise<void> {
+    const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
+    const anthropic = builtinProviders().find((provider) => provider.id === "anthropic");
+    const models = anthropic?.getModels() ?? [];
+    anthropicRegistry = Object.fromEntries(
+        models.filter((m: Json) => typeof m.id === "string").map((m: Json) => [m.id, m]),
+    );
+}
+
+/** The Anthropic-route flags this package has verified on Bedrock; Pi's entry may carry more. */
+const VERIFIED_ANTHROPIC_COMPAT = [
+    "forceAdaptiveThinking",
+    "supportsMidConvoEffort",
+    "supportsMidConvoSystemMessages",
+    "supportsMidConvoToolChanges",
+] as const;
+
+/** `anthropic.claude-sonnet-5-5` and `global.anthropic.claude-sonnet-5-5-v1:0` both name Pi's `claude-sonnet-5-5`. */
+function piModelId(foundationModelId: string): string {
+    return foundationModelId
+        .replace(/^(?:[a-z0-9-]+\.)?anthropic\./, "")
+        .replace(/-v\d+(?::\d+)?$/, "")
+        .replace(/-\d{8}$/, "");
+}
+
+/** Flags from Pi's Anthropic entry, limited to the verified list and only when Pi says true. */
+function verifiedPiCompat(foundationModelId: string): Record<string, true> {
+    const entry = anthropicRegistry[piModelId(foundationModelId)] as { compat?: Record<string, unknown> } | undefined;
+    const compat: Record<string, true> = {};
+    for (const key of VERIFIED_ANTHROPIC_COMPAT) {
+        if (entry?.compat?.[key] === true) compat[key] = true;
+    }
+    return compat;
+}
+
 // Pi 1.2 widened ProviderModelConfig to chat, image and classifier models; inference profiles are chat models.
 type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
 export type TeamBedrockModel = ChatModelConfig & {
@@ -360,6 +398,8 @@ export function discoveredProfiles(
                     ? {
                           compat: {
                               ...MESSAGES_COMPAT,
+                              // The mid-conversation binding/effort/tool facts come from Pi's own Anthropic entry.
+                              ...verifiedPiCompat(p.foundation_model_id),
                               // Claude 5.5 refuses budget thinking; older Claude models still need it.
                               ...(usesAdaptiveThinking(p.foundation_model_id) ? { forceAdaptiveThinking: true } : {}),
                           },

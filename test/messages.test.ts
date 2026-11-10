@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { Catalog, TeamBedrockModel } from "../src/catalog.ts";
-import { bedrockStream, discoveredProfiles, usePiRegistry } from "../src/catalog.ts";
+import { bedrockStream, discoveredProfiles, usePiAnthropicRegistry, usePiRegistry } from "../src/catalog.ts";
 import { JIG_BEDROCK } from "../src/identity.ts";
 import { hostImport } from "./support/pi-host.ts";
 
@@ -16,6 +16,7 @@ const FOUNDATION = "anthropic.claude-sonnet-5-5";
 
 async function registry(): Promise<void> {
     const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    await usePiAnthropicRegistry();
     usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
 }
 
@@ -48,12 +49,21 @@ test("models use Pi's anthropic-messages API on Bedrock's /anthropic route, and 
             {
                 midConvo: compat.supportsMidConvoSystemMessages,
                 tools: compat.supportsMidConvoToolChanges,
+                effort: compat.supportsMidConvoEffort,
                 longCache: compat.supportsLongCacheRetention,
                 strict: compat.supportsStrictTools,
                 sessions: compat.sendSessionAffinityHeaders,
                 adaptive: compat.forceAdaptiveThinking,
             },
-            { midConvo: true, tools: true, longCache: false, strict: false, sessions: false, adaptive: true },
+            {
+                midConvo: true,
+                tools: true,
+                effort: true,
+                longCache: false,
+                strict: false,
+                sessions: false,
+                adaptive: true,
+            },
         );
 
         const [converse] = discoveredProfiles(catalog, dir, "converse").available;
@@ -228,6 +238,58 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
             {},
         );
         assert.deepEqual(converseSeen, [{ id: ARN, api: "bedrock-converse-stream", apiKey: undefined }]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("an older Claude keeps the old compat: no mid-conversation effort is copied", async () => {
+    await registry();
+    const dir = usageDir();
+    const old: Catalog = {
+        ...catalog,
+        profiles: [
+            {
+                arn: ARN,
+                profile_name: "Sonnet 4.5",
+                foundation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                region: REGION,
+            },
+        ],
+    };
+    try {
+        const [model] = discoveredProfiles(old, dir).available;
+        assert.ok(model);
+        const compat = (model.compat ?? {}) as Record<string, unknown>;
+        assert.equal(compat.supportsMidConvoEffort, undefined, "no effort flag on an older model");
+        assert.equal(compat.supportsMidConvoSystemMessages, true, "the existing Bedrock-tested base is unchanged");
+        assert.equal(compat.supportsMidConvoToolChanges, true);
+        assert.equal(compat.forceAdaptiveThinking, undefined);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("Opus 4.8 takes adaptive thinking from Pi's registry, like Pi's own Converse route", async () => {
+    await registry();
+    const dir = usageDir();
+    const adaptive: Catalog = {
+        ...catalog,
+        profiles: [
+            {
+                arn: ARN,
+                profile_name: "Opus 4.8",
+                foundation_model_id: "anthropic.claude-opus-4-8",
+                region: REGION,
+            },
+        ],
+    };
+    try {
+        const [model] = discoveredProfiles(adaptive, dir).available;
+        assert.ok(model);
+        const compat = (model.compat ?? {}) as Record<string, unknown>;
+        assert.equal(compat.forceAdaptiveThinking, true);
+        assert.equal(compat.supportsMidConvoEffort, undefined, "Opus 4.8 has no mid-conversation effort in Pi's entry");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

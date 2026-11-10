@@ -22,12 +22,20 @@ test("only Claude profiles are on the Anthropic Messages route", () => {
         assert.equal(isAnthropicModel(id), false, id);
 });
 
-test("Claude 5.5 is adaptive; older Claude keeps budget thinking", () => {
-    for (const id of ["anthropic.claude-sonnet-5-5", "us.anthropic.claude-opus-5-5", "eu.anthropic.claude-haiku-5-5"])
+test("adaptive thinking follows Pi's own model list; older Claude keeps budget thinking", () => {
+    for (const id of [
+        "anthropic.claude-sonnet-5-5",
+        "us.anthropic.claude-opus-5-5",
+        "eu.anthropic.claude-haiku-5-5",
+        "us.anthropic.claude-opus-4-8",
+        "anthropic.claude-opus-4-6",
+        "anthropic.claude-sonnet-4-6",
+        "anthropic.claude-sonnet-5",
+        "global.anthropic.claude-fable-5-2",
+    ])
         assert.equal(usesAdaptiveThinking(id), true, id);
     for (const id of [
         "anthropic.claude-sonnet-4-5-20250929-v1:0",
-        "us.anthropic.claude-opus-4-8",
         "anthropic.claude-haiku-4-5",
         "amazon.nova-pro-v1:0",
     ])
