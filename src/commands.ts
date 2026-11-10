@@ -718,12 +718,14 @@ export function registerBrokenCommands(
         switch (command) {
             case "":
             case "status":
-                emit(ctx, "Bedrock · status: 1 problem", errorRows);
+                emit(ctx, "Bedrock · 1 problem", errorRows);
                 return;
             case "doctor":
-                emit(ctx, "Bedrock · health: 1 problem", [
-                    ...errorRows,
-                    `${m.skip} AWS checks: skipped while the settings are broken`,
+                emit(ctx, "Bedrock doctor", [
+                    `${m.fail} ${options.error}`,
+                    `${m.skip} AWS not checked: broken settings`,
+                    "1 problem.",
+                    "Next: /bedrock set <key> <value>",
                 ]);
                 return;
             case "settings": {

@@ -126,7 +126,7 @@ test("broken settings still register /bedrock and repair through set", async (t)
         env: h.settings,
     });
     await handler("status", h.ctx as never);
-    assert.match(h.notices[0]!, /^Bedrock · status: 1 problem/);
+    assert.match(h.notices[0]!, /^Bedrock · 1 problem/);
     await handler("set regions us-east-1", h.ctx as never);
     assert.match(readFileSync(file, "utf8"), /"regions": \[/);
     assert.match(h.notices.at(-1) ?? "", /Run \/reload/);
@@ -157,7 +157,7 @@ test("a broken settings file still registers /bedrock and its old names", async 
         mode: "rpc",
         ui: { notify: (text: string) => notices.push(text) },
     } as never);
-    assert.match(notices[0]!, /^Bedrock · status: 1 problem/);
+    assert.match(notices[0]!, /^Bedrock · 1 problem/);
     assert.match(notices[0]!, /regions/);
 });
 
