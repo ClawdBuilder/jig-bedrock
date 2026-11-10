@@ -30,7 +30,9 @@
         "check": "tsc -p tsconfig.json && biome ci .",
         "test": "node --import ./test/support/host.mjs --test \"test/*.test.ts\"",
         "scan": "node scripts/scan-company-strings.mjs",
-        "check:emails": "node scripts/check-commit-emails.mjs"
+        "check:emails": "node scripts/check-commit-emails.mjs",
+        "check:packed": "node scripts/packed-install-check.mjs",
+        "pi:install": "node scripts/install-pi.mjs"
     },
     "dependencies": {
         "@aws-sdk/credential-provider-node": "3.972.95"

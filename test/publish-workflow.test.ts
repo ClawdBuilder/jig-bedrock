@@ -94,3 +94,71 @@ test("the oldest tags, which have no changelog, use the default branch's copy", 
     assert.match(release, /its release page uses the default branch's changelog/);
     assert.match(release, /echo "NOTES_ROOT=\$\{root\}" >> "\$\{GITHUB_ENV\}"/);
 });
+
+// The CI workflow. `ci-ok` is the one check the publish workflow reads, so a job it does not wait for is a job a release
+// can ignore.
+const ci = readFileSync(path.join(import.meta.dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+const manifest = JSON.parse(readFileSync(path.join(import.meta.dirname, "..", "package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+};
+
+/** One job's block of ci.yml: from its key to the next job key. */
+function ciJob(name: string): string {
+    const start = ci.search(new RegExp(`^ {4}${name}:$`, "m"));
+    assert.ok(start !== -1, `ci.yml has a ${name} job`);
+    const next = ci.slice(start + 1).search(/\n {4}[a-z][a-z0-9-]*:/);
+    return ci.slice(start, next === -1 ? undefined : start + 1 + next);
+}
+
+test("ci-ok waits for every other job in ci.yml, whatever it is called", () => {
+    const keys = [...ci.matchAll(/^ {4}([a-z][a-z0-9-]*):$/gm)].map((match) => match[1] ?? "");
+    const jobs = keys.slice(keys.indexOf("checks")).filter((key) => key !== "ci-ok");
+    for (const required of ["checks", "pi-versions", "packed-install", "macos"])
+        assert.ok(jobs.includes(required), `ci.yml has the ${required} job`);
+    const needs =
+        /^ {8}needs: \[([^\]]*)\]$/m
+            .exec(ciJob("ci-ok"))?.[1]
+            ?.split(",")
+            .map((name) => name.trim()) ?? [];
+    assert.deepEqual([...needs].sort(), [...jobs].sort(), "ci-ok needs exactly the other jobs");
+    assert.match(ciJob("ci-ok"), /if: \$\{\{ always\(\) \}\}/);
+    assert.match(ciJob("ci-ok"), /all\(\.value\.result == "success"\)/);
+});
+
+test("no CI job is allowed to fail quietly", () => {
+    assert.doesNotMatch(ci, /continue-on-error/);
+});
+
+test("the Pi version job runs the tests on the oldest supported Pi and the newest one on npm", () => {
+    const block = ciJob("pi-versions");
+    assert.match(block, /pi: \["1\.5\.0", "latest"\]/);
+    assert.match(block, /run: node scripts\/install-pi\.mjs "\$\{\{ matrix\.pi \}\}"/);
+    assert.match(block, /run: npm test/);
+    // The README names the oldest Pi; the matrix must test that one.
+    const readme = readFileSync(path.join(import.meta.dirname, "..", "README.md"), "utf8");
+    const oldest = /Pi (\d+\.\d+) or later/.exec(readme)?.[1];
+    assert.ok(oldest, "the README names the oldest Pi");
+    assert.match(block, new RegExp(`pi: \\["${oldest.replace(".", "\\.")}\\.0"`));
+});
+
+test("the packed-install job runs the check script on both Pi versions", () => {
+    const block = ciJob("packed-install");
+    assert.match(block, /pi: \["1\.5\.0", "latest"\]/);
+    assert.match(block, /run: node scripts\/install-pi\.mjs "\$\{\{ matrix\.pi \}\}"/);
+    assert.match(block, /run: npm run check:packed/);
+    assert.equal(manifest.scripts["check:packed"], "node scripts/packed-install-check.mjs");
+    assert.equal(manifest.scripts["pi:install"], "node scripts/install-pi.mjs");
+});
+
+test("the macOS job runs the type and style checks and the tests", () => {
+    const block = ciJob("macos");
+    assert.match(block, /runs-on: macos-latest/);
+    assert.match(block, /run: npm run check$/m);
+    assert.match(block, /run: npm test$/m);
+});
+
+test("every action in ci.yml is pinned by commit hash", () => {
+    const uses = [...ci.matchAll(/^\s*uses: (\S+)/gm)].map((match) => match[1] ?? "");
+    assert.ok(uses.length > 0);
+    for (const use of uses) assert.match(use, /^[\w./-]+@[0-9a-f]{40}$/, `${use} is pinned by hash`);
+});
