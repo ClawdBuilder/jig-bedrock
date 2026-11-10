@@ -657,6 +657,7 @@ export function createBedrockProvider(
                 choice.source === "default" ||
                 choice.source === "AWS_PROFILE" ||
                 choice.source === "AWS_DEFAULT_PROFILE";
+            autoProfileFailed = autoProfile;
             return choice;
         };
         pi.on("session_start", async (_event, context) => {
