@@ -54,16 +54,17 @@ The footer and spend figures are the same on both.
 
 Each profile is a model in `/model`. The id starts as the slug of Pi's registry name, such as `claude-sonnet-5-5`, and
 profiles whose foundation model resolves to the same name share that slug. One keeps the bare id; the others get
-`--<region>--<profile id>`, such as `claude-sonnet-5-5--us-east-1--abc123de`. Their menu name adds the region and the
-profile name.
+a short geography suffix such as `-global` or `-eu`. A collision adds the region, and the old
+`--<region>--<profile id>` form is kept as an alias. Their menu name adds the region and the profile name.
 
 The bare id goes to the first system-defined profile by geography: the prefix of the first configured region (for
 example `us.`), then `global.`, then the rest in region order. With no system-defined profile, an application profile
 keeps the bare id only when it is the model's only profile; two application profiles are both suffixed. A session saved
 under another provider still selects the model by its ARN.
 
-A profile whose foundation model is not in Pi's registry, or whose model has no price, is not listed. `/bedrock-profiles`
-gives the reason, and the startup notice names the first.
+A profile whose foundation model is not in Pi's registry is not listed; `/bedrock models` gives the reason after the
+usable rows. A model with no price is listed, marked **no price**, and its replies count as unpriced. Nothing about
+unusable rows is shown at startup.
 
 ## Spend and the footer
 

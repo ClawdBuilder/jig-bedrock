@@ -105,7 +105,11 @@ price. The folder is private to the user. Nothing from a prompt, an ARN, an acco
 The footer shows `Nov $12.40` (or `Nov $12.40 / $200` with a budget); a trailing `+` means some reply had no price. It
 is display only: it is not AWS spend and it never blocks a request.
 
-`monthlyBudgetUsd` sets the display budget. One notice appears when the month passes 80%, one when it passes 100%, and
+`/bedrock settings` shows every key and whether it comes from the default, `bedrock.json` or the environment.
+`/bedrock set <key> <value>` and `/bedrock unset <key>` validate, write atomically with mode 0600, and apply without
+`/reload` when the file is valid. Lists are comma separated.
+
+`monthlyBudgetUsd` sets the display budget; the minimum is $1. One notice appears when the month passes 80%, one when it passes 100%, and
 one at session start while over 100%. The state file remembers the first two for the month, across Pi processes.
 
 `spendCommand` is optional: an argv array, run without a shell at most once every 10 minutes and at `/bedrock usage`, with

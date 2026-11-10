@@ -4,6 +4,21 @@
 
 ### Added
 
+- `/bedrock` with `status`, `doctor [offline|call]`, `models`, `refresh`, `login`, `usage`, `budget`, `settings`, `set`, `unset`, `migrate`, `help`, argument completions and closest-name help. The old command names still work and name their replacement.
+- The doctor now has a verdict, plain named failures and one `Next:`; it can skip AWS or send one tiny call.
+- The first session in an agent folder with no profile shows one `/login` notice, once.
+- The spend table is per model with tokens and cache share, at most eight rows; the import also reads 0.2.x `amazon-bedrock` + ARN replies and maps them through the catalog.
+
+### Changed
+
+- AWS-defined models now have short second ids (`claude-haiku-4-5-global`), with the old long id kept as an alias when two profiles would otherwise collide.
+- `/bedrock` exists with broken settings; `status`, `doctor`, `settings`, `set` and `unset` can repair it.
+- Spend amounts under one cent print `<$0.01`, budgets start at $1, and a `Next:` line appears only when there is an action.
+- Settings writes validate first, use mode 0600 and apply at once where possible.
+- The startup warning about unusable profiles is gone; those rows are in `/bedrock models` and counted by `/bedrock status`.
+
+### Added
+
 - A local spend record: one private JSONL line per Bedrock reply under the user's state folder, with the month, session, short model id, region, route, token counts, Pi's cost and a priced flag. Earlier replies in this agent's session files are imported once, bounded and marked.
 - `/bedrock usage [day|week|month]` and `/bedrock budget [amount|off]`; `/bedrock-usage` and `/bedrock-stats` call the same code. The footer shows the month's local spend and budget, with warning/error colours; the budget notices are once per threshold per month per machine.
 - `spendCommand` can supply this month's spend from a command the user names; it runs without a shell, at most every ten minutes, and its JSON contract is documented with an example.

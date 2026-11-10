@@ -140,12 +140,39 @@ test("earlier sessions are imported once and never counted twice", async (t) => 
                     usage: { input: 4, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } },
                 },
             }),
+            JSON.stringify({
+                type: "message",
+                id: "m2",
+                parentId: "m",
+                timestamp: "2026-11-15T09:02:00.000Z",
+                message: {
+                    role: "assistant",
+                    provider: "amazon-bedrock",
+                    model: "arn:aws:bedrock:us-east-1:123456789012:inference-profile/orders",
+                    api: "bedrock-converse-stream",
+                    timestamp: Date.UTC(2026, 10, 15, 9, 2),
+                    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.25 } },
+                },
+            }),
         ].join("\n"),
     );
-    assert.equal((await importEarlier(env, agent, "2026-11", now)).imported, 1);
-    assert.equal(readMonth(env, "2026-11").length, 1);
+    assert.equal(
+        (
+            await importEarlier(env, agent, "2026-11", now, undefined, (arn) =>
+                arn.endsWith("/orders") ? "claude-haiku-5-5" : undefined,
+            )
+        ).imported,
+        2,
+    );
+    assert.deepEqual(
+        readMonth(env, "2026-11").map((entry) => [entry.model, entry.costUsd]),
+        [
+            ["claude-sonnet-5-5", 0.5],
+            ["claude-haiku-5-5", 0.25],
+        ],
+    );
     assert.equal((await importEarlier(env, agent, "2026-11", now)).imported, 0);
-    assert.equal(readMonth(env, "2026-11").length, 1, "the import marker stops a second run");
+    assert.equal(readMonth(env, "2026-11").length, 2, "the import marker stops a second run");
 });
 
 test("the footer is the month and total, with the budget and a plus for unpriced replies", (t) => {
@@ -185,11 +212,11 @@ test("each budget threshold is announced once per month, and session start repea
     const above = ctx();
     other.notice(above.value);
     assert.equal(above.notices.length, 1);
-    assert.match(above.notices[0]!, /over the \$100\.00/);
+    assert.match(above.notices[0]!, /over the \$100/);
     const start = ctx();
     other.notice(start.value, true);
     assert.equal(start.notices.length, 1, "the threshold is claimed, but the start line remains");
-    assert.match(start.notices[0]!, /over the \$100\.00/);
+    assert.match(start.notices[0]!, /over the \$100/);
 });
 
 test("the optional spend command supplies the figure, and a failure falls back to the local record", async (t) => {
@@ -214,7 +241,7 @@ test("the optional spend command supplies the figure, and a failure falls back t
     const failed = new SpendTracker({ ...config, spendCommand: [process.execPath, bad] }, env, () => now);
     const fallback = await failed.refresh(true);
     assert.equal(fallback.spentUsd, 0);
-    assert.match(fallback.commandError ?? "", /failed/);
+    assert.match(fallback.commandError ?? "", /exit code 3/);
     await assert.rejects(runSpendCommand({ ...config, spendCommand: [process.execPath, bad] }, () => now, { env }));
 });
 
@@ -258,10 +285,10 @@ test("commands print one block, set and clear the budget, and write the setting"
             text.split("\n").every((line) => line.length <= 100),
             text,
         );
-        assert.equal(text.match(/^Next:/gm)?.length, 1, text);
+        assert.ok((text.match(/^Next:/gm)?.length ?? 0) <= 1, text);
         assert.match(text, /^Bedrock /);
     }
-    assert.match(notices[3]!, /Budget set to \$200\.00/);
+    assert.match(notices[3]!, /Budget set to \$200/);
     assert.match(notices[4]!, /Budget removed/);
     assert.equal(existsSync(join(root, "bedrock.json")), true);
     assert.equal(JSON.parse(readFileSync(join(root, "bedrock.json"), "utf8")).monthlyBudgetUsd, undefined);
@@ -308,7 +335,7 @@ test("a model with no price is recorded as unpriced and shown with a plus", asyn
         signal: new AbortController().signal,
         ui: { notify: (text: string) => notices.push(text) },
     } as never);
-    assert.match(notices[0]!, /This machine's Pi sessions: \$0\.00 \+ unpriced usage/);
+    assert.match(notices[0]!, /this machine's Pi sessions\nfree-model.*\$0\.00/);
 });
 
 test("a command without a UI writes the same block to standard output", async (t) => {
@@ -338,7 +365,7 @@ test("a command without a UI writes the same block to standard output", async (t
     } finally {
         process.stdout.write = original;
     }
-    assert.match(chunks.join(""), /^Bedrock spend · Nov 2026\n✓ This machine's Pi sessions: \$0\.00/);
+    assert.match(chunks.join(""), /^Bedrock spend · Nov 2026 · this machine's Pi sessions\nNo replies recorded/);
 });
 
 test("the doctor names why the spend command failed", async (t) => {
@@ -367,7 +394,7 @@ test("the doctor names why the spend command failed", async (t) => {
         signal: new AbortController().signal,
         ui: { notify: (text: string) => notices.push(text) },
     } as never);
-    assert.match(notices[0]!, /Spend command: the spend command failed/);
+    assert.match(notices.at(-1)!, /Spend command: exit code 2/);
 });
 
 test("the provider records a reply and updates the footer", async (t) => {
@@ -425,8 +452,40 @@ test("the provider records a reply and updates the footer", async (t) => {
         },
         context,
     );
-    assert.equal(statuses.at(-1), "Nov $12.40", "no model pricing entry, so the cost is recorded as priced");
+    assert.equal(statuses.at(-1), "Nov $12", "no model pricing entry, so the cost is recorded as priced");
     const file = join(spendFolder(env), "2026-11.jsonl");
     assert.match(readFileSync(file, "utf8"), /"costUsd":12\.4/);
     assert.equal(notices.length, 0);
+});
+
+test("sub-cent money and eight-decimal cost are stored and printed as the rules ask", async (t) => {
+    const { formatMoney } = await import("../src/spend.ts");
+    assert.equal(formatMoney(0.00003), "<$0.01");
+    assert.equal(formatMoney(9.99), "$9.99");
+    assert.equal(formatMoney(10), "$10");
+    const root = folder(t);
+    const env = { XDG_STATE_HOME: root };
+    const tracker = new SpendTracker(config, env, () => now);
+    tracker.record(
+        {
+            role: "assistant",
+            provider: "jig-bedrock",
+            api: "anthropic-messages",
+            model: "claude-sonnet-5-5",
+            stopReason: "stop",
+            usage: {
+                input: 1,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                cost: { total: Number("0.000030000000000000003") },
+            },
+        },
+        "s",
+        model as never,
+    );
+    const stored = JSON.parse(readFileSync(join(spendFolder(env), "2026-11.jsonl"), "utf8").trim()) as {
+        costUsd: number;
+    };
+    assert.equal(stored.costUsd, 0.00003);
 });

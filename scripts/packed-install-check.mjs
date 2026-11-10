@@ -51,6 +51,10 @@ export function cleanEnvironment(base, home, agentDir, registry) {
         if (/^npm_(config|package|lifecycle|command|node|execpath)/i.test(name)) continue;
         env[name] = value;
     }
+    delete env.NO_COLOR;
+    env.TERM = "xterm-256color";
+    env.LANG = "C.UTF-8";
+    env.LC_ALL = "C.UTF-8";
     return {
         ...env,
         HOME: home,
@@ -354,6 +358,8 @@ async function main() {
         const result = await rpc(pi, env, project, [
             { id: "commands", type: "get_commands" },
             { id: "bedrock", type: "prompt", message: "/bedrock" },
+            { id: "doctor", type: "prompt", message: "/bedrock doctor offline" },
+            { id: "settings", type: "prompt", message: "/bedrock settings" },
         ]);
         const response = result.lines.find((m) => m.type === "response" && m.id === "commands");
         const commands = response?.data?.commands ?? [];
@@ -383,6 +389,56 @@ async function main() {
         check(
             reply?.success === true && reply?.data?.disposition === "handled",
             `Pi says an extension command handled /bedrock (${JSON.stringify(reply)})`,
+        );
+        const normalize = (text) =>
+            text
+                .replaceAll(agentDir, "<agent>")
+                .replace(/Node \d+\.\d+\.\d+/g, "Node <node>")
+                .replace(/AWS CLI \d+\.\d+\.\d+/g, "AWS CLI <aws>");
+        const screens = notices.map((notice) => normalize(String(notice.message ?? "")));
+        const doctorScreen = screens.find((text) => text.startsWith("Bedrock doctor"));
+        console.log(`doctor screen:\n${doctorScreen ?? "MISSING"}`);
+        check(
+            doctorScreen ===
+                [
+                    "Bedrock doctor",
+                    "✓ Node <node>",
+                    "✓ AWS CLI <aws>",
+                    "✓ Settings: <agent>/bedrock.json",
+                    "✗ AWS profile: none chosen; run /login",
+                    "– AWS not checked: offline",
+                    "– Models: not checked",
+                    "– Selected model: none chosen",
+                    "– Spend command: not set",
+                    "1 problem.",
+                    "Next: /login, choose Amazon Bedrock (jig-bedrock)",
+                ].join("\n"),
+            "the whole /bedrock doctor offline screen",
+        );
+        const settingsScreen = screens.find((text) => text.startsWith("Bedrock settings"));
+        console.log(`settings screen:\n${settingsScreen ?? "MISSING"}`);
+        check(
+            settingsScreen ===
+                [
+                    "Bedrock settings · <agent>/bedrock.json",
+                    "– regions: us-east-1 (default)",
+                    "– ssoLoginCommand: aws sso login --profile {profile} (default)",
+                    "– signInAtStart: false (default)",
+                    "– api: messages (default)",
+                    "– debug: false (default)",
+                    "– tagKey: not set",
+                    "– tagValue: not set",
+                    "– activeTagKey: not set",
+                    "– activeTagValue: not set",
+                    "– profiles: not set",
+                    "– profile: not set",
+                    "– spendCommand: not set",
+                    "– monthlyBudgetUsd: not set",
+                    "– browser: not set",
+                    "– converseModels: not set",
+                    "– messagesModels: not set",
+                ].join("\n"),
+            "the whole /bedrock settings screen",
         );
         check(result.code === 0, `Pi exits 0 when its input closes (exit ${result.code})`);
         console.log(`Pi stderr: ${JSON.stringify(result.stderr.trim())}`);

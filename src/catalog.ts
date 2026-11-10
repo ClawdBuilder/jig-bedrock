@@ -128,7 +128,7 @@ export function routeOf(
     if (settings.messagesModels?.includes(id)) return { route: "messages", reason: "your setting" };
     if (MESSAGES_EXCEPTIONS.has(id)) return { route: "converse", reason: "known exception" };
     const entry = anthropicRegistry[id] as { compat?: Record<string, unknown> } | undefined;
-    if (entry === undefined) return { route: "converse", reason: "this Pi does not know the model" };
+    if (entry === undefined) return { route: "converse", reason: "Pi has no Messages entry" };
     return entry.compat?.supportsMidConvoToolChanges === true
         ? { route: "messages", reason: "Pi lists tool changes" }
         : { route: "converse", reason: "not on the Messages route" };
@@ -404,9 +404,27 @@ export function discoveredProfiles(
     for (const [key, rows] of grouped) {
         const system = orderedSystem(rows, catalog);
         const preferred = system[0] ?? (rows.length === 1 ? rows[0] : undefined);
+        const systemIds = new Map<string, { id: string; alias?: string }>();
+        const shortIds = new Map<string, string[]>();
+        for (const p of system) {
+            if (p === preferred) continue;
+            const geography = p.arn.slice(p.arn.lastIndexOf("/") + 1).split(".")[0] ?? "profile";
+            const base = `${key}-${geography}`;
+            shortIds.set(base, [...(shortIds.get(base) ?? []), p.arn]);
+        }
+        for (const p of system) {
+            if (p === preferred) continue;
+            const geography = p.arn.slice(p.arn.lastIndexOf("/") + 1).split(".")[0] ?? "profile";
+            const base = `${key}-${geography}`;
+            const old = `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const id = (shortIds.get(base)?.length ?? 0) === 1 ? base : `${base}-${p.region}`;
+            systemIds.set(p.arn, { id, ...(id === old ? {} : { alias: old }) });
+        }
         for (const p of orderedApplication(rows)) {
             const r = registryEntry(p.foundation_model_id);
-            const id = p === preferred ? key : `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const chosen = p === preferred ? { id: key } : systemIds.get(p.arn);
+            const oldId = `${key}--${p.region}--${p.arn.slice(p.arn.lastIndexOf("/") + 1)}`;
+            const id = chosen?.id ?? (p === preferred ? key : oldId);
             const fallback =
                 r.cost &&
                 ["input", "output", "cacheRead", "cacheWrite"].every(
@@ -423,7 +441,7 @@ export function discoveredProfiles(
                 id,
                 arn: p.arn,
                 foundationModelId: p.foundation_model_id,
-                aliases: [],
+                aliases: chosen?.alias === undefined ? [] : [chosen.alias],
                 name: registryName(r.name) + (p === preferred ? "" : ` (${p.region}, ${p.profile_name})`),
                 api: messages ? "anthropic-messages" : "bedrock-converse-stream",
                 baseUrl: messages

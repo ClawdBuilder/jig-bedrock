@@ -110,3 +110,37 @@ export function saveBudgetSetting(
         return { ok: false, file, error: `${file} could not be written; check its folder permissions.` };
     }
 }
+
+export interface SettingsDocument {
+    file: string;
+    document: Record<string, unknown>;
+    target: Record<string, unknown>;
+}
+export function readSettingsDocument(env: NodeJS.ProcessEnv): SettingsDocument | { file: string; error: string } {
+    const file = bedrockFile(env);
+    let document: Record<string, unknown> = {};
+    try {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+        if (!isObject(parsed)) return { file, error: `${file} does not hold a JSON object.` };
+        document = parsed;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+            return { file, error: `${file} is not valid JSON; fix it, then try again.` };
+    }
+    return { file, document, target: isObject(document.bedrock) ? document.bedrock : document };
+}
+export function writeSettingsDocument(
+    env: NodeJS.ProcessEnv,
+    document: Record<string, unknown>,
+): { ok: boolean; file: string; error?: string } {
+    const file = bedrockFile(env);
+    try {
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+        const temporary = `${file}.${process.pid}.tmp`;
+        writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+        renameSync(temporary, file);
+        return { ok: true, file };
+    } catch {
+        return { ok: false, file, error: `${file} could not be written; check its folder permissions.` };
+    }
+}

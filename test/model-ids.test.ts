@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The model ids this provider registers for a team's profiles. A caller chooses the model as a plain string,
 // `jig-bedrock/claude-sonnet-5-5` and `jig-bedrock/claude-opus-5-5`, without importing anything from here. This is the half
 // of that agreement that lives in this package: the id of a profile is the slug of Pi's name for its foundation model, under the
@@ -195,6 +196,41 @@ test("Seoul is apac and Melbourne is au for the bare system slug", async () => {
             folder,
         );
         assert.equal(melbourne.available.find((m) => m.id === "claude-sonnet-5-5")?.arn.includes("au."), true);
+    } finally {
+        rmSync(folder, { recursive: true, force: true });
+    }
+});
+
+test("the second AWS-defined profile gets a short geography id and keeps its old long id as an alias", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const folder = mkdtempSync(path.join(tmpdir(), "jig-bedrock-usage-"));
+    try {
+        const catalog = {
+            schema: 1 as const,
+            mode: "system" as const,
+            account_id: "123456789012",
+            regions: ["us-east-1"],
+            fetched_at: 1,
+            profiles: [
+                ["us", "us-east-1"],
+                ["global", "us-east-1"],
+                ["eu", "eu-west-1"],
+            ].map(([geo, region]) => ({
+                arn: `arn:aws:bedrock:${region}::inference-profile/${geo}.anthropic.claude-sonnet-5-5`,
+                profile_name: geo,
+                foundation_model_id: "anthropic.claude-sonnet-5-5",
+                region,
+                kind: "system" as const,
+            })),
+        };
+        const models = discoveredProfiles(catalog, "").available;
+        assert.deepEqual(
+            models.map((model) => model.id),
+            ["claude-sonnet-5-5", "claude-sonnet-5-5-global", "claude-sonnet-5-5-eu"],
+        );
+        const global = models[1]!;
+        assert.deepEqual(global.aliases, ["claude-sonnet-5-5--us-east-1--global.anthropic.claude-sonnet-5-5"]);
     } finally {
         rmSync(folder, { recursive: true, force: true });
     }
