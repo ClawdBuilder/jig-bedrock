@@ -47,7 +47,6 @@ import {
     loginOutcomeMessage,
     memoizedList,
     missingProfileNotice,
-    NO_PROFILE,
     ProfileResolver,
 } from "./profile.ts";
 import { saveDiscoverySettings } from "./settings-write.ts";
@@ -392,7 +391,7 @@ export function createBedrockProvider(
             failed = true;
         }
         let noticeFailureOnce = false;
-        const refresh = (force = true, notifyFailure = false): Promise<Status> => {
+        const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> => {
             noticeFailureOnce ||= notifyFailure;
             if (refreshInFlight !== undefined) return refreshInFlight;
             refreshInFlight = (async (): Promise<Status> => {
@@ -400,7 +399,7 @@ export function createBedrockProvider(
                 if (disposed) return status;
                 discoverySlow = status === "timeout";
                 let failureNotice = false;
-                if (status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
+                if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
                     failureNotice = true;
                     const reason = catalog.failure?.();
                     const message =
@@ -428,6 +427,7 @@ export function createBedrockProvider(
                 const problems = current?.errors ?? [];
                 const warnings = current?.warnings ?? [];
                 if (
+                    !quiet &&
                     !failureNotice &&
                     ctx &&
                     (change.added || change.removed || problems.length > 0 || warnings.length > 0)
@@ -510,7 +510,8 @@ export function createBedrockProvider(
             listProfiles: loginListProfiles,
             env: profileEnv,
             migrate: migration,
-            refresh: () => refresh(true, true),
+            refresh: () => refresh(true, true, true),
+            failure: () => catalog.failure?.(),
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
@@ -536,7 +537,7 @@ export function createBedrockProvider(
             doctorAws: async (signal) => {
                 const choice = lastChoice.profile ?? config.profile;
                 const rows: Array<{ ok: boolean; text: string }> = [];
-                if (!choice) return [{ ok: false, text: "AWS identity: no profile chosen" }];
+                if (!choice) return [{ ok: false, text: "Sign-in: no profile chosen" }];
                 const problem =
                     (isSsoProfile(choice, profileEnv) ?? false)
                         ? await profileProblem(choice, { list: loginListProfiles, env: profileEnv, signal })
@@ -552,13 +553,13 @@ export function createBedrockProvider(
                         rows.push({
                             ok: check.ok,
                             text: check.ok
-                                ? "AWS identity: reachable"
+                                ? "Sign-in: AWS answered"
                                 : expired
-                                  ? "AWS identity: sign-in expired"
-                                  : (check.message ?? "AWS identity: did not answer"),
+                                  ? "Sign-in: sign-in expired"
+                                  : (check.message ?? "Sign-in: did not answer"),
                         });
                     } catch {
-                        rows.push({ ok: false, text: "AWS identity: did not answer" });
+                        rows.push({ ok: false, text: "Sign-in: did not answer" });
                     }
                 }
                 const status = await catalog.refresh(true);
@@ -569,14 +570,21 @@ export function createBedrockProvider(
                         status === "ok"
                             ? models.length === 0
                                 ? config.mode === "tag"
-                                    ? `Inference profiles: none matched ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
-                                    : `Inference profiles: no Claude profiles in ${config.regions.join(", ")}`
-                                : `Inference profiles: ${models.length} models`
-                            : `Inference profiles: ${reason ?? "could not list"}`,
+                                    ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
+                                    : `Models: no Claude models in ${config.regions.join(", ")}`
+                                : `Models: ${models.length} found in ${config.regions.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`
+                            : `Models: ${reason ?? "could not list"}; ask your AWS administrator for bedrock:ListInferenceProfiles`,
                 });
                 const errors = catalog.load()?.errors ?? [];
-                if (errors.length > 0)
-                    rows.push({ ok: false, text: `One profile: ${errors[0]?.message ?? "could not read"}` });
+                if (errors.length > 0) {
+                    const first = errors[0];
+                    if (first === undefined) return rows;
+                    const model = models.find((entry) => entry.arn === first.profile || entry.id === first.profile);
+                    rows.push({
+                        ok: false,
+                        text: `One inference profile (${model?.id ?? first.profile}) — ${first.message ?? "could not read"}; ask your AWS administrator for bedrock:GetInferenceProfile`,
+                    });
+                }
                 return rows;
             },
             doctorCall: async (signal) => {
@@ -601,7 +609,9 @@ export function createBedrockProvider(
                     { signal },
                 )) {
                     if (event.type === "done") usage = event.message.usage;
+                    if (event.type === "error") failure = event.error?.errorMessage ?? "the tiny call failed";
                 }
+                if (failure !== undefined) throw new Error(failure);
                 return {
                     route: routeOf(selected),
                     ms: Math.round(performance.now() - started),
@@ -634,7 +644,6 @@ export function createBedrockProvider(
             disposed = false;
             ctx = context;
             const choice = await resolveProfile(context);
-            const unavailable = readModels().unavailable;
             if (options.preserveNativeAuth) {
                 // The native provider's own credentials decide; nothing here is reported.
             } else if (choice.ambient === true) {

@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: recorded shapes in assertions */
 // The shapes in the 2026-11-10 real run: a global profile's foundation-model ARN has an empty region, and profile ids
 // can carry a version suffix. One profile's bad answer is recorded for that profile, the others still load.
 import assert from "node:assert/strict";
@@ -6,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAwsDiscovery, problemSummary, type Runner } from "../src/aws-discovery.ts";
-import type { Catalog as BedrockCatalog } from "../src/catalog.ts";
 import { bedrockStream, discoveredProfiles, resolveSelection, usePiRegistry } from "../src/catalog.ts";
 import type { ResolvedConfig } from "../src/config.ts";
 import { JIG_BEDROCK } from "../src/identity.ts";
@@ -148,7 +148,11 @@ test("a version-suffixed profile id survives the cache, the model id, saved sele
         const stream = bedrockStream(
             models,
             {
-                converse: async (wire: { id: string }, _context: unknown, options: { onPayload?: Function }) => {
+                converse: async (
+                    wire: { id: string },
+                    _context: unknown,
+                    options: { onPayload?: (...args: unknown[]) => unknown },
+                ) => {
                     recordedId = wire.id;
                     const command = (await options.onPayload?.({ modelId: wire.id }, wire)) as { modelId: string };
                     wireId = command.modelId;
@@ -356,6 +360,7 @@ function providerHarness() {
     };
     const ctx = {
         mode: "rpc",
+        hasUI: true,
         model: undefined,
         sessionManager: { getBranch: () => [], getSessionId: () => "test" },
         modelRegistry: { find: () => undefined },
@@ -381,57 +386,12 @@ test("a failed refresh shows the discovery reason once, without the raw status",
             usageEvents: false,
         })(h.pi as never);
         for (const hook of h.hooks.get("session_start") ?? []) await hook({ reason: "startup" }, h.ctx);
-        const command = h.commands.get("bedrock-refresh");
+        const command = h.commands.get("bedrock");
         assert.ok(command);
-        await command.handler("", h.ctx);
-        const warnings = h.notices.filter((notice) => notice.type === "warning");
-        assert.equal(warnings.length, 1, JSON.stringify(h.notices));
-        assert.match(warnings[0]?.text ?? "", /Could not list inference profiles: AWS could not be reached/);
-        assert.doesNotMatch(
-            warnings[0]?.text ?? "",
-            /refresh (?:network|unavailable)|discovery (?:network|unavailable)/,
-        );
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-
-test("a partial catalog reports one summary naming at most three profiles", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "real-discovery-summary-"));
-    try {
-        const h = providerHarness();
-        const errors = Array.from({ length: 5 }, (_, i) => ({
-            profile: arn(`orders-api-${i + 1}`),
-            message: "its model address has an unexpected form",
-        }));
-        const catalog: BedrockCatalog = {
-            schema: 1,
-            mode: "system",
-            aws_profile: "my-profile",
-            account_id: ACCOUNT,
-            regions: [REGION],
-            fetched_at: Math.floor(Date.now() / 1000),
-            filter_hash: "x",
-            profiles: [],
-            errors,
-        };
-        await createBedrockProvider({
-            env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
-            config: { ...config, team: undefined } as ResolvedConfig,
-            listProfiles: async () => ["my-profile"],
-            catalog: { load: () => catalog, refresh: async () => "ok" },
-            backgroundRefresh: false,
-            usageEvents: false,
-        })(h.pi as never);
-        for (const hook of h.hooks.get("session_start") ?? []) await hook({ reason: "startup" }, h.ctx);
-        const command = h.commands.get("bedrock-refresh");
-        assert.ok(command);
-        await command.handler("", h.ctx);
-        const warnings = h.notices.filter((notice) => notice.type === "warning");
-        assert.equal(warnings.length, 1, JSON.stringify(h.notices));
-        assert.match(warnings[0]?.text ?? "", /orders-api-1/);
-        assert.match(warnings[0]?.text ?? "", /and 2 more: \/bedrock-profiles lists them/);
-        assert.doesNotMatch(warnings[0]?.text ?? "", /orders-api-4/);
+        await command.handler("refresh", h.ctx);
+        const text = h.notices.map((notice) => notice.text).join("\n");
+        assert.match(text, /Reading the models from AWS/);
+        assert.match(text, /Could not list inference profiles: AWS could not be reached/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

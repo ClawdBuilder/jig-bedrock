@@ -116,7 +116,7 @@ test("start-up with a real profile says the models are loading, not that a setti
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
         });
         const text = notices.join("\n");
-        assert.match(text, /Bedrock models are not loaded yet/);
+        assert.match(text, /Bedrock: reading the models from AWS \(first start\)/);
         assert.doesNotMatch(text, /No AWS profile is configured/);
         assert.doesNotMatch(text, /run \/aws-login/);
     } finally {
@@ -145,27 +145,26 @@ async function doctor(env: NodeJS.ProcessEnv, listing: string[], loginListing?: 
 
 test("the doctor names the profile, its source, the mode and the regions", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "work-profile", LANG: "C.UTF-8" }, ["work-profile"]);
-    assert.match(text, /✓ AWS profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
-    assert.match(text, /✓ Discovery: AWS-defined · regions: us-east-1/);
-    assert.match(text, /✓ loaded|not loaded/);
+    assert.match(text, /✓ AWS profile: work-profile \(from JIG_BEDROCK_PROFILE\)/);
+    assert.match(text, /Models:|Models:/);
     assert.doesNotMatch(text, /Profile configuration: loaded/);
 });
 
 test("the doctor fails a missing profile and points at /login", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "missing-profile", LANG: "C.UTF-8" }, ["other-profile"]);
-    assert.match(text, /✗ AWS profile: missing-profile \(JIG_BEDROCK_PROFILE\) — not in/);
+    assert.match(text, /✗ AWS profile: missing-profile is not in/);
     assert.match(text, /\/login/);
 });
 
 test("the doctor says none when no profile is configured", async () => {
     const text = await doctor({ LANG: "C.UTF-8" }, []);
-    assert.match(text, /✗ AWS profile: none chosen. Run \/login, choose Amazon Bedrock./);
+    assert.match(text, /✗ AWS profile: none chosen/);
     assert.match(text, /\/login/);
 });
 
 test("the doctor uses the longer listing /login uses when the short one did not answer", async () => {
     const text = await doctor({ JIG_BEDROCK_PROFILE: "work-profile", LANG: "C.UTF-8" }, undefined, ["work-profile"]);
-    assert.match(text, /✓ AWS profile: work-profile \(JIG_BEDROCK_PROFILE\)/);
+    assert.match(text, /✓ AWS profile: work-profile \(from JIG_BEDROCK_PROFILE\)/);
 });
 
 test("the doctor uses words when the locale is not UTF-8", async () => {

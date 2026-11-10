@@ -22,12 +22,11 @@ import type { ResolvedConfig } from "./config.ts";
 import { isOwnModel } from "./identity.ts";
 
 type Json = Record<string, unknown>;
-const tokens = (value: number): string =>
-    value >= 1_000_000
-        ? `${(value / 1_000_000).toFixed(1)}M`
-        : value >= 1_000
-          ? `${(value / 1_000).toFixed(1)}k`
-          : String(value);
+const tokens = (value: number): string => {
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+    return String(value);
+};
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const number = (value: unknown): number =>
     typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;

@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The one command: every sub-command, the completions, the old names and the always-present broken settings path.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -21,13 +22,14 @@ const model = {
     api: "anthropic-messages",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic",
     arn: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/p",
+    foundationModelId: "anthropic.claude-sonnet-5-5",
     rateSource: "Pi registry",
     cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 };
 function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-command-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
-    const settings = { HOME: root, PI_CODING_AGENT_DIR: root, ...env };
+    const settings = { HOME: root, PI_CODING_AGENT_DIR: root, LANG: "C.UTF-8", TERM: "xterm-256color", ...env };
     const notices: string[] = [];
     const commands = new Map<
         string,
@@ -86,7 +88,7 @@ test("every sub-command prints a titled block and usage has no stale Next", asyn
     assert.match(h.notices.find((text) => text.startsWith("Bedrock spend")) ?? "", /· this machine's Pi sessions/);
     assert.match(
         h.notices.find((text) => text.startsWith("Bedrock models")) ?? "",
-        /claude-sonnet-5-5 · us-east-1 · Messages ·/,
+        /claude-sonnet-5-5 .*us-east-1 .*Converse/,
     );
 });
 
@@ -157,4 +159,19 @@ test("a broken settings file still registers /bedrock and its old names", async 
     } as never);
     assert.match(notices[0]!, /^Bedrock · status: 1 problem/);
     assert.match(notices[0]!, /regions/);
+});
+
+test("the status screen is one whole block with no spend-command row", async (t) => {
+    const h = harness(t, {});
+    await h.result.bedrock("status", h.ctx as never);
+    assert.equal(
+        h.notices.at(-1),
+        [
+            "Bedrock · ready",
+            "✓ AWS profile: fixture · signed in",
+            "✓ Models: 1 loaded",
+            "– Selected model: none chosen",
+            "✓ Spend: Nov $0.00 of $100",
+        ].join("\n"),
+    );
 });

@@ -1,23 +1,17 @@
 // User-facing Bedrock commands. Part B adds `/bedrock usage` and `/bedrock budget`; /bedrock-usage and /bedrock-stats
 // call the same code. Every block is a title, marker rows, at most one Next, and plain words; without a UI the same text
 // goes to standard output.
+import { writeSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import type { BedrockModel, Catalog } from "./catalog.ts";
+import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
 import { DEFAULTS, FIELDS, loadConfig, type ResolvedConfig } from "./config.ts";
 import { debugEnabled, debugLogPath } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
 import { type Markers, markers } from "./markers.ts";
-import {
-    type ListProfiles,
-    LOGIN_PATH,
-    NO_PROFILE,
-    type ProfileChoice,
-    type ProfileResolver,
-    sourceLabel,
-} from "./profile.ts";
+import type { ListProfiles, ProfileChoice, ProfileResolver } from "./profile.ts";
 import { readSettingsDocument, saveBudgetSetting, writeSettingsDocument } from "./settings-write.ts";
 import { formatMoney, monthLabel, type SpendTracker } from "./spend.ts";
 
@@ -49,7 +43,6 @@ const HELP: Record<(typeof BEDROCK_SUBCOMMANDS)[number], string> = {
     migrate: "copy a 0.2.x jig.json section once",
     help: "this list",
 };
-type Json = Record<string, unknown>;
 const clean = (value: unknown, max = 100): string =>
     String(value ?? "")
         // biome-ignore lint/suspicious/noControlCharactersInRegex: strip terminal and bidi controls from a line
@@ -67,34 +60,20 @@ const usageText = (args: string): "day" | "week" | "month" | undefined => {
     if (value === "week" || value === "weekly") return "week";
     return undefined;
 };
+function toStdout(ctx: ExtensionCommandContext): boolean {
+    return !ctx.hasUI || ctx.mode === "print" || ctx.mode === "json";
+}
 function noticeLine(ctx: ExtensionCommandContext, text: string): void {
-    if (ctx.hasUI) ctx.ui.notify(text, "info");
-    else process.stdout.write(`${text}\n`);
+    if (ctx.mode === "print") writeSync(1, `${text}\n`);
+    else if (toStdout(ctx)) process.stdout.write(`${text}\n`);
+    else ctx.ui.notify(text, "info");
 }
 function emit(ctx: ExtensionCommandContext, title: string, rows: readonly string[]): void {
     const text = [title, ...rows].map((line) => clean(line)).join("\n");
-    if (ctx.hasUI) ctx.ui.notify(text, "info");
-    else process.stdout.write(`${text}\n`);
+    if (ctx.mode === "print") writeSync(1, `${text}\n`);
+    else if (toStdout(ctx)) process.stdout.write(`${text}\n`);
+    else ctx.ui.notify(text, "info");
 }
-function profileLine(choice: ProfileChoice, m: Markers): string {
-    if (choice.ambient === true) return `${m.warn} AWS profile: none chosen; using the environment credential chain`;
-    if (choice.profile === undefined) return `${m.fail} AWS profile: none chosen. Run /login, choose Amazon Bedrock.`;
-    const source = sourceLabel(choice.source);
-    if (choice.problem !== undefined) return `${m.fail} AWS profile: ${choice.profile} (${source}) — ${choice.problem}`;
-    if (choice.exists === false)
-        return `${m.fail} AWS profile: ${choice.profile} (${source}) — not in ~/.aws/config; /login`;
-    return `${m.ok} AWS profile: ${choice.profile} (${source})`;
-}
-function discoveryLine(config: ResolvedConfig, m: Markers): string {
-    const mode =
-        config.mode === "explicit"
-            ? `explicit list${config.profiles?.length ? ` (${config.profiles.length})` : ""}`
-            : config.mode === "tag"
-              ? `tag ${config.tagKey}=${config.tagValue}`
-              : "AWS-defined";
-    return `${m.ok} Discovery: ${mode} · regions: ${config.regions.join(", ")}`;
-}
-
 export interface BedrockCommandSources {
     config: ResolvedConfig;
     spend: SpendTracker;
@@ -107,6 +86,7 @@ export interface BedrockCommandSources {
     env?: NodeJS.ProcessEnv;
     migrate?: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
     refresh?: () => Promise<Status>;
+    failure?: () => string | undefined;
     login?: () => Promise<void>;
     unavailable?: () => Array<{ profile: string; region: string; reason: string }>;
     apply?: () => void;
@@ -181,7 +161,7 @@ export function registerBedrockCommands(
             );
         }
         if (sources.loading?.()) rows.push(`${m.skip} Models: loading from AWS…`);
-        else if (list.length === 0) rows.push(`${m.warn} Models: not loaded`);
+        else if (list.length === 0) rows.push(`${m.skip} Models: not loaded`);
         else rows.push(`${m.ok} Models: ${list.length} loaded`);
         const selected = ctx.model;
         if (selected?.provider === "jig-bedrock") {
@@ -196,7 +176,7 @@ export function registerBedrockCommands(
         } else {
             rows.push(`${m.skip} Selected model: not a jig-bedrock model`);
         }
-        const spendText = `${monthLabel?.(view.month) ?? view.month} ${money(view.spentUsd)}${limit === undefined ? "" : ` of ${money(limit)}`}`;
+        const spendText = `${(monthLabel?.(view.month) ?? view.month).split(" ")[0]} ${money(view.spentUsd)}${limit === undefined ? "" : ` of ${money(limit)}`}`;
         rows.push(`${m.ok} Spend: ${spendText}`);
         if (last.profile === undefined)
             rows.push("Next: /login, choose Amazon Bedrock (jig-bedrock), then /bedrock refresh");
@@ -283,15 +263,26 @@ export function registerBedrockCommands(
                     ? `${m.skip} ${key}: not set`
                     : `${source === "default" ? m.skip : m.ok} ${key}: ${clean(show(key, value ?? defaults[key]), 72)} (${source})`,
             );
-        emit(ctx, "Bedrock settings", [`${m.skip} File: ${shownPath}`, ...rows]);
+        const title = `Bedrock settings · ${shownPath}`;
+        emit(
+            ctx,
+            title.length <= 100 ? title : "Bedrock settings",
+            title.length <= 100 ? rows : [`${m.skip} File: ${shownPath}`, ...rows],
+        );
     };
     const parseSetting = (key: string, value: string): unknown => {
-        if (key === "regions" || key === "profiles" || key === "spendCommand")
+        if (
+            key === "regions" ||
+            key === "profiles" ||
+            key === "spendCommand" ||
+            key === "converseModels" ||
+            key === "messagesModels"
+        )
             return value
                 .split(",")
                 .map((part) => part.trim())
                 .filter((part) => part !== "");
-        if (key === "signInAtStart") return value === "true";
+        if (key === "signInAtStart" || key === "debug") return value === "true";
         if (key === "monthlyBudgetUsd") return Number(value);
         return value;
     };
@@ -319,21 +310,34 @@ export function registerBedrockCommands(
         }
         doc.target[key] = parsed;
         const candidate = loadConfig({ raw: doc.target, env });
+        if (!candidate.config) {
+            emit(ctx, "Bedrock settings", [`✗ ${candidate.error}`, "Next: /bedrock settings"]);
+            return;
+        }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
             emit(ctx, "Bedrock settings", [`✗ ${saved.error}`]);
             return;
         }
-        if (candidate.config) {
-            Object.assign(config, candidate.config);
-            sources.apply?.();
-            emit(ctx, "Bedrock settings", [`✓ ${key} set.`]);
-        } else {
-            emit(ctx, "Bedrock settings", [
-                `! ${key} written, but the settings still have a problem: ${candidate.error}`,
-                "Next: /bedrock settings",
-            ]);
-        }
+        Object.assign(config, candidate.config);
+        sources.apply?.();
+        const shown = Array.isArray(parsed) ? parsed.join(", ") : String(parsed);
+        const needsRefresh = [
+            "profile",
+            "regions",
+            "tagKey",
+            "tagValue",
+            "activeTagKey",
+            "activeTagValue",
+            "profiles",
+            "api",
+            "converseModels",
+            "messagesModels",
+        ].includes(key);
+        emit(ctx, "Bedrock settings", [
+            `✓ ${key}: ${clean(shown, 72)} (saved to bedrock.json)`,
+            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+        ]);
     };
     const unset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const key = args.trim();
@@ -350,21 +354,33 @@ export function registerBedrockCommands(
         }
         delete doc.target[key];
         const candidate = loadConfig({ raw: doc.target, env });
+        if (!candidate.config) {
+            emit(ctx, "Bedrock settings", [`✗ ${candidate.error}`, "Next: /bedrock settings"]);
+            return;
+        }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
             emit(ctx, "Bedrock settings", [`✗ ${saved.error}`]);
             return;
         }
-        if (candidate.config) {
-            Object.assign(config, candidate.config);
-            sources.apply?.();
-            emit(ctx, "Bedrock settings", [`✓ ${key} unset.`]);
-        } else {
-            emit(ctx, "Bedrock settings", [
-                `! ${key} removed, but the settings still have a problem: ${candidate.error}`,
-                "Next: /bedrock settings",
-            ]);
-        }
+        Object.assign(config, candidate.config);
+        sources.apply?.();
+        const needsRefresh = [
+            "profile",
+            "regions",
+            "tagKey",
+            "tagValue",
+            "activeTagKey",
+            "activeTagValue",
+            "profiles",
+            "api",
+            "converseModels",
+            "messagesModels",
+        ].includes(key);
+        emit(ctx, "Bedrock settings", [
+            `✓ ${key}: unset (saved to bedrock.json)`,
+            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+        ]);
     };
     const refresh = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (!sources.refresh) {
@@ -379,7 +395,10 @@ export function registerBedrockCommands(
         const added = after.filter((model) => !before.has(model.id)).length;
         const removed = [...before].filter((id) => !after.some((model) => model.id === id)).length;
         if (status !== "ok") {
-            emit(ctx, "Bedrock refresh", [`✗ Refresh failed: ${status}.`, "Next: /bedrock doctor"]);
+            emit(ctx, "Bedrock refresh", [
+                `✗ ${sources.failure?.() ?? "The models could not be read from AWS."}`,
+                "Next: /bedrock doctor",
+            ]);
             return;
         }
         const rows = [
@@ -437,8 +456,9 @@ export function registerBedrockCommands(
         rows.push(`${m.ok} Settings: ${home && file.startsWith(home) ? `~${file.slice(home.length)}` : file}`);
         const last = sources.lastChoice?.() ?? { profile: config.profile };
         const profile = last.profile ?? config.profile;
-        if (profile === undefined) rows.push(`${m.fail} AWS profile: none chosen`);
-        else if (last.exists === false) rows.push(`${m.fail} AWS profile: ${clean(profile)} is not in ~/.aws/config.`);
+        if (profile === undefined) rows.push(`${m.fail} AWS profile: none chosen; run /login`);
+        else if (last.exists === false)
+            rows.push(`${m.fail} AWS profile: ${clean(profile)} is not in ~/.aws/config; run /login`);
         else {
             const source =
                 last.source === "env"
@@ -447,11 +467,14 @@ export function registerBedrockCommands(
                       ? "from /login"
                       : last.source === "setting"
                         ? "from bedrock.json"
-                        : "";
+                        : last.source === "default"
+                          ? "from the default profile"
+                          : "";
             rows.push(`${m.ok} AWS profile: ${clean(profile)}${source ? ` (${source})` : ""}`);
         }
         let awsRows: Array<{ ok: boolean; text: string }> = [];
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
+        else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
         for (const check of awsRows) {
             const text = check.text
@@ -460,7 +483,12 @@ export function registerBedrockCommands(
                 .replace(/^One profile: /, "One inference profile: ");
             rows.push(`${check.ok ? m.ok : m.fail} ${text}`);
         }
-        if (!offline && awsRows.length === 0) rows.push(`${m.skip} AWS checks: not run`);
+        if (offline || health.aws.status !== "ready")
+            rows.push(
+                sources.models().length > 0
+                    ? `${m.ok} Models: ${sources.models().length} loaded`
+                    : `${m.skip} Models: not checked`,
+            );
         const selected =
             ctx.model?.provider === "jig-bedrock"
                 ? sources.models().find((model) => model.id === ctx.model?.id)
@@ -494,7 +522,7 @@ export function registerBedrockCommands(
             if (failed.includes("AWS CLI")) return "Next: install AWS CLI v2";
             if (failed.includes("AWS profile")) return "Next: /login, choose Amazon Bedrock (jig-bedrock)";
             if (failed.includes("Sign-in")) return "Next: /bedrock login";
-            if (failed.includes("inference profile:"))
+            if (failed.includes("inference profile"))
                 return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
             if (failed.includes("Models"))
                 return "Next: /bedrock refresh; ask your AWS administrator for bedrock:ListInferenceProfiles";
@@ -534,16 +562,30 @@ export function registerBedrockCommands(
             const a = value;
             const b = name;
             const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
-            for (let j = 1; j <= b.length; j++) dp[0]![j] = j;
+            for (let j = 1; j <= b.length; j++) {
+                let row = dp[0];
+                if (row === undefined) {
+                    row = [];
+                    dp[0] = row;
+                }
+                row[j] = j;
+            }
             for (let i = 1; i <= a.length; i++)
-                for (let j = 1; j <= b.length; j++)
-                    dp[i]![j] = Math.min(
-                        dp[i - 1]![j]! + 1,
-                        dp[i]![j - 1]! + 1,
-                        dp[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+                for (let j = 1; j <= b.length; j++) {
+                    let current = dp[i];
+                    if (current === undefined) {
+                        current = [];
+                        dp[i] = current;
+                    }
+                    current[j] = Math.min(
+                        (dp[i - 1]?.[j] ?? 0) + 1,
+                        (dp[i]?.[j - 1] ?? 0) + 1,
+                        (dp[i - 1]?.[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
                     );
-            if (dp[a.length]![b.length]! < distance) {
-                distance = dp[a.length]![b.length]!;
+                }
+            const score = dp[a.length]?.[b.length] ?? Infinity;
+            if (score < distance) {
+                distance = score;
                 best = name;
             }
         }
@@ -627,7 +669,8 @@ export function registerBedrockCommands(
                 await mapped(args, proxy);
             } else {
                 await mapped(args, ctx);
-                process.stdout.write(`${line}\n`);
+                if (ctx.mode === "print") writeSync(1, `${line}\n`);
+                else process.stdout.write(`${line}\n`);
             }
         };
     pi.registerCommand("bedrock-usage", {
@@ -786,7 +829,8 @@ export function registerBrokenCommands(
                 await mapped(args, proxy);
             } else {
                 await mapped(args, ctx);
-                process.stdout.write(`${line}\n`);
+                if (ctx.mode === "print") writeSync(1, `${line}\n`);
+                else process.stdout.write(`${line}\n`);
             }
         };
     pi.registerCommand("bedrock-usage", {

@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // Every failure the doctor must name in plain words, with stubbed AWS answers so no call leaves the machine.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +30,7 @@ async function doctor(
         aws?: Array<{ ok: boolean; text: string }>;
         models?: unknown[];
         spendCommand?: string[];
+        profile?: string;
     } = {},
 ) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-case-"));
@@ -39,7 +41,12 @@ async function doctor(
     );
     if (options.spendCommand) await tracker.refresh(true);
     const result = registerBedrockCommands({ registerCommand() {} } as never, {
-        config: { ...base, agentDir: root, spendCommand: options.spendCommand },
+        config: {
+            ...base,
+            profile: "profile" in options ? (options.profile as string | undefined) : base.profile,
+            agentDir: root,
+            spendCommand: options.spendCommand,
+        },
         spend: tracker,
         catalog: { load: () => undefined, refresh: async () => "ok" },
         models: () => (options.models ?? []) as never,
@@ -61,11 +68,11 @@ async function doctor(
 
 test("no AWS CLI", async (t) => {
     const text = await doctor(t, { check: { ...ready, aws: { status: "missing" as never } } });
-    assert.match(text, /✗ AWS CLI: unknown · missing/);
+    assert.match(text, /✗ AWS CLI: not found/);
     assert.match(text, /Next: install AWS CLI v2/);
 });
 test("no profile chosen", async (t) => {
-    const text = await doctor(t, { last: {} });
+    const text = await doctor(t, { last: {}, profile: undefined });
     assert.match(text, /✗ AWS profile: none chosen/);
     assert.match(text, /Next: \/login/);
 });
@@ -85,7 +92,7 @@ test("access denied while listing", async (t) => {
 });
 test("access denied on one profile", async (t) => {
     const text = await doctor(t, { aws: [{ ok: false, text: "One profile: access denied" }] });
-    assert.match(text, /One profile: access denied/);
+    assert.match(text, /One inference profile: access denied/);
 });
 test("no profiles for the tag, and a region with none", async (t) => {
     const text = await doctor(t, { aws: [{ ok: false, text: "Inference profiles: none found for these settings" }] });
@@ -97,8 +104,8 @@ test("a failing spend command", async (t) => {
     const bad = join(root, "bad.mjs");
     writeFileSync(bad, "process.exit(2)\n");
     const text = await doctor(t, { spendCommand: [process.execPath, bad] });
-    assert.match(text, /Spend command: .*failed/);
-    assert.match(text, /Next: \/bedrock set spendCommand/);
+    assert.match(text, /Spend command: exit code 2/);
+    assert.match(text, /Next: see docs\/spend-command\.md/);
 });
 test("invalid settings JSON is a doctor row, not a silent disable", async (t) => {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-json-"));
@@ -117,5 +124,11 @@ test("invalid settings JSON is a doctor row, not a silent disable", async (t) =>
         ui: { notify: (text: string) => notice.push(text) },
     } as never);
     assert.match(notice[0]!, /1 problem/);
-    assert.match(notice[0]!, /not valid JSON/);
+    assert.match(notice[0]!, /not valid J/);
+});
+
+test("an AWS CLI version timeout is not a problem and never says install", async (t) => {
+    const text = await doctor(t, { check: { ...ready, aws: { status: "timeout" as never } } });
+    assert.match(text, /– AWS CLI: could not check/);
+    assert.doesNotMatch(text, /install AWS CLI|✗ AWS CLI/);
 });

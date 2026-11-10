@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The model ids this provider registers for a team's profiles. A caller chooses the model as a plain string,
 // `jig-bedrock/claude-sonnet-5-5` and `jig-bedrock/claude-opus-5-5`, without importing anything from here. This is the half
 // of that agreement that lives in this package: the id of a profile is the slug of Pi's name for its foundation model, under the

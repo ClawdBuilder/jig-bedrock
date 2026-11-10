@@ -241,7 +241,7 @@ test("the optional spend command supplies the figure, and a failure falls back t
     const failed = new SpendTracker({ ...config, spendCommand: [process.execPath, bad] }, env, () => now);
     const fallback = await failed.refresh(true);
     assert.equal(fallback.spentUsd, 0);
-    assert.match(fallback.commandError ?? "", /failed/);
+    assert.match(fallback.commandError ?? "", /exit code 3/);
     await assert.rejects(runSpendCommand({ ...config, spendCommand: [process.execPath, bad] }, () => now, { env }));
 });
 
@@ -394,7 +394,7 @@ test("the doctor names why the spend command failed", async (t) => {
         signal: new AbortController().signal,
         ui: { notify: (text: string) => notices.push(text) },
     } as never);
-    assert.match(notices[0]!, /Spend command: the spend command failed/);
+    assert.match(notices[0]!, /Spend command: exit code 2/);
 });
 
 test("the provider records a reply and updates the footer", async (t) => {
