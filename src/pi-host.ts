@@ -1,7 +1,7 @@
 // Where Pi is installed, to load the AWS SDK the way Pi's own Bedrock provider does. Pi gives an extension its own packages but not
-// the SDK behind them, which sits in Pi's install; `createRequire` from there finds it. The old toolkit used
-// PI_HOST_DIR, else the global npm install next to this Node. This keeps both and tries a third first: the install the running
-// `pi` command belongs to, found by walking up from the real path of the script Node was started with.
+// the SDK behind them, which sits in Pi's install; `createRequire` from there finds it. It checks the install the running `pi`
+// command belongs to first, found by walking up from the real path of the script Node was started with, then PI_HOST_DIR and the
+// global npm install next to this Node.
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";

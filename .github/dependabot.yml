@@ -1,5 +1,6 @@
-# Exact pins, updated weekly: patch and minor updates arrive grouped, a major alone. The cooldown lets a release age
-# before it is proposed.
+# Exact dev pins, updated weekly: patch and minor updates arrive grouped, a major alone. Peer ranges are `*` in
+# package.json, so Dependabot has no peer range to increase or rewrite; only the exact dev pins move. The cooldown lets a
+# release age before it is proposed.
 version: 2
 updates:
     - package-ecosystem: npm

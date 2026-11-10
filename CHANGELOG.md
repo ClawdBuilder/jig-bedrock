@@ -12,11 +12,18 @@
 - Discovery accepts a global profile whose foundation-model address has no region, and profile ids with a version suffix such as `-v1:0`.
 - One profile that cannot be read is recorded for that profile and the other profiles still load. A failed refresh names the step and a plain reason, without an AWS account id.
 - The result notice names at most three profiles by their short id, then points to `/bedrock-profiles` for the rest, instead of listing every rejected address.
+- A failed Bedrock request now keeps the AWS error name, message, HTTP status and request id instead of a generic sentence.
+- On the Messages route, an expired SSO session is repaired like a Converse one: a marked local 401 carries the sign-in wording and allows the one replay, instead of surfacing Pi's “Connection error.”.
+- An unknown key in `bedrock.json` is ignored with a warning naming the key and file, while a bad value for a known key still stops the provider and names the field. A `bedrock.json` that is not valid JSON is reported instead of being silently ignored.
 
 ### Changed
 
 - AWS-defined discovery builds the catalog from the `list-inference-profiles` rows themselves: one identity call and one listing call per region, instead of one `get-inference-profile` per profile. The real 33-profile run took 47 seconds; the same account should now take under 10 seconds per region. Tag and explicit discovery still read at most four profiles at once.
 - A listing larger than the 1 MiB per-call limit (8 MiB in total) shows “Could not list inference profiles: the listing is larger than the 1 MiB limit.” and leaves the previous catalog in place.
+- The Pi peer range is `*` instead of an exact version, so a Pi update is not blocked; the development pins stay exact.
+- `CHANGELOG.md` is in the published package, so Pi can show update notes.
+- The README explains the default routes (Converse for AWS-defined profiles, Messages for application profiles), the short and long model ids for the same AWS-defined model, that installing hides Pi's built-in Bedrock models, and that a Bedrock API key is not supported yet.
+- The private-word scan in CI receives the repository secret and prints only the file and line; a Pi without Pi's Anthropic registry path falls back to the model-name pattern instead of stopping the provider, and the leftover internal wording and comments are gone.
 
 ## [0.2.4] - 2026-11-10
 

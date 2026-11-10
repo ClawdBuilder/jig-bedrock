@@ -1,4 +1,4 @@
-// The doctor's four marks, with the same fallbacks the rest of Jig's tools use: symbols on a UTF-8 terminal, words when
+// The doctor's four marks, with this package's fallbacks: symbols on a UTF-8 terminal, words when
 // NO_COLOR is set, TERM=dumb, or the locale cannot be assumed to be UTF-8 (CI logs, a C locale, a redirected pipe).
 export interface Markers {
     ok: string;

@@ -123,14 +123,29 @@ export function agentFolder(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** The user's own bedrock settings file; `bedrock` or the file itself may hold the keys. */
-function userSettings(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+function userSettingsFile(env: NodeJS.ProcessEnv): {
+    settings?: Record<string, unknown>;
+    problem?: string;
+} {
+    const file = path.join(agentFolder(env), "bedrock.json");
+    let text: string;
     try {
-        const raw = JSON.parse(readFileSync(path.join(agentFolder(env), "bedrock.json"), "utf8")) as unknown;
-        const value = isObject(raw) && isObject(raw.bedrock) ? raw.bedrock : raw;
-        return isObject(value) ? value : undefined;
-    } catch {
-        return undefined;
+        text = readFileSync(file, "utf8");
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+        return { problem: `${file} could not be read; check its permissions.` };
     }
+    try {
+        const raw = JSON.parse(text) as unknown;
+        const value = isObject(raw) && isObject(raw.bedrock) ? raw.bedrock : raw;
+        return isObject(value) ? { settings: value } : { problem: `${file} does not hold a JSON object.` };
+    } catch {
+        return { problem: `${file} is not valid JSON; fix it or remove it.` };
+    }
+}
+
+function userSettings(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+    return userSettingsFile(env).settings;
 }
 
 /** Jig's section without the two keys that start programs. */
@@ -173,6 +188,17 @@ export function createJigBedrock(
         let discoverySlow = false;
         let refreshInFlight: Promise<Status> | undefined;
         let guard: ReturnType<typeof registerBedrockSelectionGuard>;
+        const settingsFile = userSettingsFile(options.env ?? process.env).problem;
+        const unknownSettings = resolved.unknown ?? [];
+        if (settingsFile !== undefined || unknownSettings.length > 0)
+            pi.on("session_start", (_event, context) => {
+                if (settingsFile !== undefined) context.ui.notify(settingsFile, "warning");
+                if (unknownSettings.length > 0)
+                    context.ui.notify(
+                        `Bedrock ignores unknown setting${unknownSettings.length === 1 ? "" : "s"} ${unknownSettings.join(", ")} in ${path.join(agentFolder(options.env), "bedrock.json")}; see docs/settings.md.`,
+                        "warning",
+                    );
+            });
         if (!config) {
             const file = path.join(agentFolder(options.env), "bedrock.json");
             const where = `Fix bedrock in jig.json or in ${file}, then /reload.`;

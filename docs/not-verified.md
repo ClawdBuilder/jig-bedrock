@@ -24,9 +24,10 @@ approval.
 Unit tests use recorded shapes and a fake AWS CLI: `npm test` runs them, `npm run check` typechecks and lints, and
 `npm run scan` looks for secrets and for company words supplied from outside the repository.
 
-`npm run check:emails` checks the author and committer addresses in `origin/main..HEAD`. CI reads the private word list
-from the `SCAN_WORDS` secret, passed as `JIG_SCAN_WORDS_TEXT`; locally, `JIG_SCAN_WORDS_TEXT`, `JIG_SCAN_WORDS` or
-`~/.config/jig/scan-words.txt` supplies it. A match fails the run. Without a list (a fork's CI), only
+`npm run check:emails` checks the author and committer addresses in `origin/main..HEAD`, and `npm run scan` checks
+the tree for secret shapes and for the same private words. CI passes the `SCAN_WORDS` secret to both steps as
+`JIG_SCAN_WORDS_TEXT`; locally, `JIG_SCAN_WORDS_TEXT`, `JIG_SCAN_WORDS` or `~/.config/jig/scan-words.txt` supplies it.
+A match fails the run, and the scan prints only the file and line, never the word. Without a list (a fork's CI), only
 `noreply@example.com`, an address at `users.noreply.github.com`, and the maintainer's public address pass; any other
 address warns and does not block the run. The optional pre-push hook is not installed: copy
 `scripts/pre-push-commit-emails.sh` to `.git/hooks/pre-push` and make it executable.

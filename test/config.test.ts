@@ -80,10 +80,10 @@ describe("the section's messages", () => {
 
     test("a missing team says to set bedrock.team, and a wrong field in the file says where to look", () => {
         assert.equal(loadConfig({ raw: undefined, env: {} }).config?.mode, "system");
-        assert.match(
-            loadConfig({ raw: { team: "t", typo: 1 }, env: {} }).error ?? "",
-            /^Unknown field in bedrock in jig\.json/,
-        );
+        const unknown = loadConfig({ raw: { team: "t", typo: 1 }, env: {} });
+        assert.equal(unknown.error, undefined);
+        assert.deepEqual(unknown.unknown, ["typo"]);
+        assert.equal(unknown.config?.team, "t", "the known settings still apply");
     });
 });
 

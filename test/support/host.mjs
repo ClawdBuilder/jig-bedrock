@@ -20,7 +20,7 @@ registerHooks({ resolve: hostHooks.resolveSync });
 const dir = mkdtempSync(path.join(tmpdir(), "jig-bedrock-isolated-"));
 const bin = path.join(dir, "bin");
 mkdirSync(bin);
-for (const program of ["pass", "gpg", "aws", "ssh", "sshpass", "fly", "kubectl", "gh", "glab"]) {
+for (const program of ["aws"]) {
     const file = path.join(bin, program);
     writeFileSync(file, `#!/bin/sh\necho '${program} is not available in tests' >&2\nexit 1\n`);
     chmodSync(file, 0o755);

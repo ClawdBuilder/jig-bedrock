@@ -21,7 +21,7 @@ export function switchNotice(
     if (!(usd >= NOTICE_FLOOR_USD)) return;
     return {
         usd,
-        text: `Switching model rewrites ~${tokensLabel(tokens)} tokens of cache: about ${dollars(usd)} (once). For one hard question, ask the planner subagent instead.`,
+        text: `Switching model rewrites ~${tokensLabel(tokens)} tokens of cache: about ${dollars(usd)} (once). For one hard question, switch for that request only and switch back.`,
     };
 }
 

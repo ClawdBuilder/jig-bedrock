@@ -35,3 +35,18 @@ test("every relative link in README.md resolves inside the published package", (
         assert.ok(files.has(path), `README links ${target}, which npm pack does not publish`);
     }
 });
+
+test("the changelog is published, so Pi can show update notes", () => {
+    assert.ok(new Set(packedFiles()).has("CHANGELOG.md"), "npm pack includes CHANGELOG.md");
+});
+
+test("the Pi peer range stays open while the dev pins stay exact", () => {
+    const manifest = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")) as {
+        peerDependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+    };
+    for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
+        assert.equal(manifest.peerDependencies?.[name], "*", name);
+        assert.equal(manifest.devDependencies?.[name], "1.5.0", name);
+    }
+});

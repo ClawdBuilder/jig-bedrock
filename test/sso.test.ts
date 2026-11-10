@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createSignedFetch } from "../src/bedrock-fetch.ts";
 import { noticeFor, withSsoRecovery } from "../src/sso.ts";
 import { hostImport } from "./support/pi-host.ts";
 
@@ -109,28 +110,93 @@ test("healthy requests incur no auth helper or retry", async () => {
     assert.equal(calls, 1);
 });
 
-test("an incomplete or throwing provider terminates with a safe error instead of hanging", async () => {
-    for (const native of [
+test("an incomplete provider terminates with a safe error instead of hanging", async () => {
+    const wrapped = withSsoRecovery(
         () => {
             const stream = make();
             stream.end();
             return stream;
         },
-        () => {
-            throw new Error("fixture-sensitive-failure");
-        },
-    ]) {
-        const wrapped = withSsoRecovery(
-            native,
-            make,
-            async () => assert.fail("unexpected login"),
-            () => {},
-        );
-        const out = await collect(wrapped(model, context, options));
-        assert.equal(out.length, 1);
-        assert.equal(out[0].type, "error");
-        assert.ok(!JSON.stringify(out).includes("fixture-sensitive"));
+        make,
+        async () => assert.fail("unexpected login"),
+        () => {},
+    );
+    const out = await collect(wrapped(model, context, options));
+    assert.equal(out.length, 1);
+    assert.equal(out[0].type, "error");
+    assert.match(out[0].error.errorMessage, /Incomplete Bedrock stream/);
+});
+
+test("a thrown AWS error keeps its name, message, HTTP status and request id on both routes", async () => {
+    for (const api of ["bedrock-converse-stream", "anthropic-messages"]) {
+        for (const failure of [
+            {
+                name: "AccessDeniedException",
+                message: "not authorized to perform bedrock:InvokeModel",
+                status: 403,
+                id: "req-denied",
+            },
+            { name: "ThrottlingException", message: "Too many requests", status: 429, id: "req-throttled" },
+            { name: "ValidationException", message: "The model identifier is invalid", status: 400, id: "req-invalid" },
+        ]) {
+            const wrapped = withSsoRecovery(
+                () => {
+                    throw Object.assign(new Error(failure.message), {
+                        name: failure.name,
+                        $metadata: { httpStatusCode: failure.status, requestId: failure.id },
+                    });
+                },
+                make,
+                async () => assert.fail("unexpected login"),
+                () => {},
+            );
+            const out = await collect(wrapped({ ...model, api }, context, options));
+            const message = out[0].error.errorMessage as string;
+            assert.match(message, new RegExp(failure.name));
+            assert.match(message, new RegExp(failure.message));
+            assert.match(message, new RegExp(`HTTP ${failure.status}`));
+            assert.match(message, new RegExp(failure.id));
+        }
     }
+});
+
+test("the real Anthropic client replays a credential failure after the marked local 401", async () => {
+    const anthropic = (await hostImport("@earendil-works/pi-ai/providers/all"))
+        .builtinProviders()
+        .find((provider: { id?: string }) => provider.id === "anthropic");
+    const base = anthropic.getModels().find((candidate: { id?: string }) => candidate.id === "claude-sonnet-5-5");
+    const signed = createSignedFetch({
+        credentials: async () => {
+            attempts++;
+            if (attempts === 1) throw new Error("Token is expired. To refresh this SSO session run aws sso login.");
+            return { accessKeyId: "AKIAFIXTURE", secretAccessKey: "fixture-secret", sessionToken: "fixture-token" };
+        },
+        fetch: async () =>
+            new Response('data: {"type":"message_stop"}\n\n', {
+                status: 200,
+                headers: { "content-type": "text/event-stream" },
+            }),
+    });
+    let attempts = 0;
+    const recovered: string[] = [];
+    const wrapped = withSsoRecovery(
+        anthropic.stream,
+        make,
+        async (profile: string) => {
+            recovered.push(profile);
+        },
+        () => {},
+    );
+    const out = await collect(
+        wrapped({ ...base, baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic" }, context, {
+            apiKey: "bedrock-sigv4",
+            env: { AWS_PROFILE: "fixture-profile" },
+            fetch: signed,
+        } as never),
+    );
+    assert.deepEqual(recovered, ["fixture-profile"]);
+    assert.equal(attempts, 2, "the retry asked the credential chain again");
+    assert.doesNotMatch(JSON.stringify(out), /fixture-secret|fixture-token|AKIAFIXTURE/);
 });
 
 test("non-auth errors, partial responses, billed requests and bearer auth never trigger login/replay", async () => {

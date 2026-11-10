@@ -325,3 +325,21 @@ test("temperature follows Pi's Anthropic entry for each Claude family", async ()
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("a Pi without the Anthropic registry path falls back to the name pattern", async () => {
+    await usePiAnthropicRegistry(async () => {
+        throw new Error("the path is not there");
+    });
+    const dir = usageDir();
+    try {
+        const [model] = discoveredProfiles(catalog, dir).available;
+        assert.ok(model, "the provider still builds its model");
+        const compat = (model.compat ?? {}) as Record<string, unknown>;
+        assert.equal(compat.forceAdaptiveThinking, true, "the 5.5 fallback still marks adaptive thinking");
+        assert.equal(compat.supportsMidConvoEffort, undefined, "no registry entry to copy");
+        assert.equal(compat.supportsTemperature, true, "the base setting is untouched");
+    } finally {
+        await usePiAnthropicRegistry();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});

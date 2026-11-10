@@ -30,6 +30,8 @@ export interface SignedFetchOptions {
 }
 
 const SSO_FAILURE = /aws sso login|sso session|token is expired|expired or is otherwise invalid/i;
+/** Marks the synthetic 401 so the recovery wrapper can replay a local credential failure after a response. */
+export const SSO_EXPIRY_HEADER = "x-jig-sso-expiry";
 
 /** `fetch` with the SigV4 headers of the profile's credentials, and without the client's own auth headers. */
 export function createSignedFetch(options: SignedFetchOptions): typeof globalThis.fetch {
@@ -56,8 +58,17 @@ export function createSignedFetch(options: SignedFetchOptions): typeof globalThi
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             if (SSO_FAILURE.test(message)) {
-                throw new Error(
-                    `SSO session for the configured AWS profile is expired or invalid; run aws sso login with the configured profile. ${message}`,
+                const hint =
+                    options.signInHint ??
+                    `SSO session for the configured AWS profile is expired or invalid; run aws sso login with the configured profile.`;
+                // A thrown fetch becomes Pi's "Connection error." and loses this wording. A synthetic 401 keeps the
+                // sign-in message in Pi's error event; the header tells the recovery wrapper this never left the machine.
+                return new Response(
+                    JSON.stringify({
+                        type: "error",
+                        error: { type: "authentication_error", message: `${hint} ${message}` },
+                    }),
+                    { status: 401, headers: { "content-type": "application/json", [SSO_EXPIRY_HEADER]: "1" } },
                 );
             }
             throw error;

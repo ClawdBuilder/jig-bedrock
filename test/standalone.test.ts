@@ -207,8 +207,11 @@ test("config precedence and invalid or missing teams fail closed without throwin
     assert.equal(loadConfig({ raw: undefined, env: {} }).config?.mode, "system");
 });
 test("configuration diagnostics identify invalid fields without exposing their contents", () => {
+    const unknown = loadConfig({ raw: { team: "fixture", typo: "private-canary" }, env: {} });
+    assert.ok(unknown.config, "an unknown key no longer disables the provider");
+    assert.deepEqual(unknown.unknown, ["typo"]);
+    assert.doesNotMatch(JSON.stringify(unknown), /private-canary/);
     for (const [value, expected] of [
-        [{ team: "fixture", typo: "private-canary" }, /Unknown field/],
         [{ team: "fixture", profile: "private-canary\n" }, /profile must/],
         [{ team: "fixture", regions: ["us-east-1", "us-east-1"] }, /regions must/],
         [{ team: "fixture", monthlyBudgetUsd: "private-canary" }, /monthlyBudgetUsd must/],
@@ -451,14 +454,17 @@ test("standalone stream blocks unknown, removed and cross-scope profiles before 
         () => config.profile,
     );
     assert.equal(stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), "ok");
-    assert.throws(() => stream({ ...models[0], provider: "amazon-bedrock" } as any, {} as any), /Unapproved/);
+    assert.throws(
+        () => stream({ ...models[0], provider: "amazon-bedrock" } as any, {} as any),
+        /not in your model list/,
+    );
     assert.throws(
         () => stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any, { env: { AWS_PROFILE: "other" } }),
         /scope/,
     );
     f.state.empty = true;
     await source.refresh(true);
-    assert.throws(() => stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), /Unapproved/);
+    assert.throws(() => stream({ ...models[0], provider: "jig-bedrock" } as any, {} as any), /not in your model list/);
     assert.equal(calls, 1);
 });
 test("removed selection blocks after Pi changes model until a user chooses", () => {

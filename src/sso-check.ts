@@ -1,7 +1,6 @@
 // Is the profile's AWS SSO session still good? Answered the way Pi's Bedrock provider will resolve it: through the AWS SDK's node
-// credential chain, not the AWS CLI, whose cached role credentials outlive an expired SSO session. Based on the older
-// bin/aws-sso-check.ts. The answer is one word and never a credential: the SDK's result is thrown away, and the token cache is
-// read for its expiry time alone.
+// credential chain, not the AWS CLI, whose cached role credentials outlive an expired SSO session. The answer is one word and
+// never a credential: the SDK's result is thrown away, and the token cache is read for its expiry time alone.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

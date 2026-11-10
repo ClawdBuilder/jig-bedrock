@@ -9,6 +9,7 @@ import type {
     ProviderConfig,
     ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
+import { isObject } from "./check.ts";
 import { BEDROCK_PROVIDER_NAME, isJigBedrock, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
@@ -31,13 +32,27 @@ export function usePiRegistry(native: import("@earendil-works/pi-ai").Provider):
 // Pi's own Anthropic registry entries for the same foundation model, so this package copies the mid-conversation
 // compatibility facts Pi has already verified instead of guessing them again.
 let anthropicRegistry: Record<string, Json> = {};
-export async function usePiAnthropicRegistry(): Promise<void> {
-    const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
-    const anthropic = builtinProviders().find((provider) => provider.id === "anthropic");
-    const models = anthropic?.getModels() ?? [];
-    anthropicRegistry = Object.fromEntries(
-        models.filter((m: Json) => typeof m.id === "string").map((m: Json) => [m.id, m]),
-    );
+type AnthropicRegistryModule = {
+    builtinProviders?: () => Array<{ id?: unknown; getModels?: () => readonly unknown[] }>;
+};
+/**
+ * Pi's registry path is not a stable peer API. A Pi that lacks it (older or newer) must leave the fallback name
+ * pattern in charge, never stop the provider: an import failure empties the registry.
+ */
+export async function usePiAnthropicRegistry(
+    load: () => Promise<unknown> = () => import("@earendil-works/pi-ai/providers/all"),
+): Promise<void> {
+    try {
+        const { builtinProviders } = (await load()) as AnthropicRegistryModule;
+        if (typeof builtinProviders !== "function") throw new Error("no provider registry");
+        const anthropic = builtinProviders().find((provider) => provider.id === "anthropic");
+        const models = anthropic?.getModels?.() ?? [];
+        anthropicRegistry = Object.fromEntries(
+            models.filter((m): m is Json => isObject(m) && typeof m.id === "string").map((m: Json) => [m.id, m]),
+        );
+    } catch {
+        anthropicRegistry = {};
+    }
 }
 
 /** The Anthropic-route flags this package has verified on Bedrock; Pi's entry may carry more. */
@@ -475,7 +490,7 @@ export function bedrockStream(
                 (p) => p.arn === physical.arn && p.foundation_model_id === physical.foundationModelId,
             )
         )
-            throw new Error("Unapproved Bedrock profile; choose an available model with /model.");
+            throw new Error("That Bedrock profile is not in your model list; choose an available model with /model.");
         const current = profile();
         // A key or bearer token is never this provider's auth, and a different profile is never borrowed silently.
         if (
@@ -486,7 +501,9 @@ export function bedrockStream(
                 (((options as Json)?.profile && (options as Json).profile !== current) ||
                     (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== current)))
         )
-            throw new Error("Unapproved Bedrock authentication scope; choose the configured profile with /model.");
+            throw new Error(
+                "That Bedrock authentication scope is not supported; choose the configured profile with /model.",
+            );
         const scoped = {
             ...options,
             ...(current === undefined ? {} : { profile: current }),
@@ -500,8 +517,7 @@ export function bedrockStream(
         const wire = { ...model, ...physical, id: physical.arn, provider: "amazon-bedrock" as const };
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
-            if (!messages || !signedFetch)
-                throw new Error("The Bedrock Messages route is not available; reload Pi and check the Jig install.");
+            if (!messages || !signedFetch) throw new Error("The Bedrock Messages route is not available; reload Pi.");
             const previous = (options as Json)?.onPayload as
                 | ((payload: unknown, selected: unknown) => unknown)
                 | undefined;

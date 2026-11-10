@@ -48,16 +48,18 @@ test("signs the request and removes the client's key and authorization headers",
     assert.equal(headers.get("content-type"), "application/json");
 });
 
-test("an expired SSO session says so in words Pi's recovery matches", async () => {
+test("an expired SSO session returns a marked 401 in words Pi's recovery matches", async () => {
     const fetch = createSignedFetch({
         credentials: async () => {
-            throw new Error("The SSO session has expired; run aws sso login --profile my-bedrock-profile.");
+            throw new Error("The SSO session has expired; run aws sso login --profile my-profile.");
         },
         fetch: (async () => new Response("{}")) as typeof globalThis.fetch,
     });
-    await assert.rejects(fetch(URL, { method: "POST", body: "{}" }), (error: Error) => {
-        assert.match(error.message, /SSO session/);
-        assert.match(error.message, /aws sso login/);
-        return true;
-    });
+    const response = await fetch(URL, { method: "POST", body: "{}" });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("x-jig-sso-expiry"), "1");
+    const body = (await response.json()) as { error?: { message?: string } };
+    assert.match(body.error?.message ?? "", /SSO session/);
+    assert.match(body.error?.message ?? "", /aws sso login/);
+    assert.doesNotMatch(JSON.stringify(body), /my-bedrock-profile/);
 });
