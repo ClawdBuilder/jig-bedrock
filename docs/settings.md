@@ -109,7 +109,9 @@ it executable:
 exec usage-cli usage "$@"
 ```
 
-## Windows
+## Platforms
+
+Linux and WSL2 are supported. macOS is expected to work but is not tested; reports and fixes are welcome.
 
 Native Windows is not supported. The sign-in lock needs a POSIX owner and a private `0700` directory, and the
 no-browser fallback is the WSL-only `bin/windows-browser` script: on WSL, an unset `browser` runs it, so the sign-in

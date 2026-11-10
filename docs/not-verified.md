@@ -18,6 +18,7 @@ approval.
   are supported by the SDK and CLI, but no real run in this package has used them.
 - Pricing and model metadata for system-defined profiles, which come from Pi's registry; no live `GetFoundationModel`
   call is made.
+- macOS: expected to work, but no real run in this package has used it. Linux and WSL2 are the supported platforms.
 
 ## How it is checked
 

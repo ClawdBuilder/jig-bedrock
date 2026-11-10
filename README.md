@@ -20,8 +20,8 @@ pi install npm:@clawdbuilder/jig-bedrock
 ```
 
 Requirements: Node 22.19 or later, Pi 1.5 or later, and the AWS CLI v2 for discovery. You need an AWS profile the CLI can
-use; **SSO is one option, not a requirement**. Linux, WSL2 and macOS are supported; native Windows is not
-([why](docs/settings.md#windows)).
+use; **SSO is one option, not a requirement**. Linux and WSL2 are supported. macOS is expected to work but is not
+tested; reports and fixes are welcome. Native Windows is not supported ([why](docs/settings.md#windows)).
 
 Run `/bedrock-doctor` after installing; it checks Node, the AWS CLI, `bash`, `jq` and the optional usage program without
 calling AWS.
@@ -68,8 +68,8 @@ inference profiles. `api: "messages"` only applies the Messages route where the 
 AWS-defined discovery can show two models for one foundation model, for example `claude-haiku-4-5` and
 `claude-haiku-4-5--us-east-1--global.anthropic.claude-haiku-4-5-20251001-v1:0`. The **short id** is the preferred
 system profile: the geography prefix that matches your first configured region (`us`, `eu`, `apac`, `jp`, `au`,
-`us-gov`), then `global`, then the other regions in the order you configured them (`src/catalog.ts:320-342`, chosen at
-`src/catalog.ts:387-390`). The **long form** is another system profile for the same model:
+`us-gov`), then `global`, then the other regions in the order you configured them. The **long form** is another system
+profile for the same model:
 `<slug>--<region>--<profile id>`. Both are separate AWS inference profiles with their own routing and price, so both
 stay in `/model`.
 
