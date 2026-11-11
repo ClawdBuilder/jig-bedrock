@@ -139,7 +139,7 @@ _One session, three calls, measured on AWS: a tool loaded in the middle rewrites
 | `/bedrock status`  | One screen: AWS profile, sign-in, models, route, spend. No AWS call. |
 | `/bedrock doctor`  | Checks everything, then tells you the one next step.                 |
 | `/bedrock models`  | Lists the models with their route and price.                         |
-| `/bedrock refresh` | Reads the models from AWS again.                                     |
+| `/bedrock refresh` | Reads the models now, whatever the cache age.                        |
 | `/bedrock login`   | Renews the AWS sign-in.                                              |
 | `/bedrock usage`   | The spend by model, for a day, a week or a month.                    |
 

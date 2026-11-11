@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Opening `/model` refreshes the Bedrock list when its cache is older than 24 hours, so a new inference profile appears without `/bedrock refresh`; failures show Pi's cached-model warning.
 ## [0.3.0] - 2026-11-11
 
 **Updating from 0.2.5.** The settings file moved from the `bedrock` section of `jig.json` to `bedrock.json`. Run `/bedrock migrate` once; it copies the section and leaves the old file alone. The old command names (`/bedrock-doctor`, `/bedrock-usage`, `/bedrock-stats`, `/bedrock-profiles`, `/bedrock-refresh`, `/aws-login`) still work for this release only and name their replacement.

@@ -48,5 +48,5 @@
   <rect x="345" y="378" width="290" height="40" rx="6" fill="#FBF5EA" stroke="#C08326" stroke-width="1.8"/>
   <text x="490" y="402.5" font-size="13" fill="#8A5A12" font-weight="700" text-anchor="middle">after /login</text>
   <rect x="645" y="378" width="290" height="40" rx="6" fill="#FBF5EA" stroke="#C08326" stroke-width="1.8"/>
-  <text x="790" y="402.5" font-size="13" fill="#8A5A12" font-weight="700" text-anchor="middle">when you run /bedrock refresh</text>
+  <text x="790" y="402.5" font-size="13" fill="#8A5A12" font-weight="700" text-anchor="middle">when /model opens or you run /bedrock refresh</text>
 </svg>

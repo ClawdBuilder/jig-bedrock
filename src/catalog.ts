@@ -645,25 +645,47 @@ export async function registerBedrockProvider(
     identity: BedrockIdentity = { profile: () => undefined, auth: {} },
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
+    refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
 ): Promise<BedrockModel[]> {
     if (!native) {
         const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
         native = builtinProviders().find((provider) => provider.id === "amazon-bedrock");
         if (!native) throw new Error("Pi Bedrock provider unavailable; update Pi and reload.");
     }
-    const picker = models.map(
-        ({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
+    const makePicker = () =>
+        models.map(({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
             ...m,
             type: "chat" as const,
             provider: JIG_BEDROCK,
-        }),
-    );
+        }));
+    let picker = makePicker();
+    const fillPicker = (): void => {
+        picker = makePicker();
+    };
     pi.registerProvider({
         id: JIG_BEDROCK,
         name: BEDROCK_PROVIDER_NAME,
         auth: identity.auth,
         getModels: () => picker,
         getAllModels: () => picker,
+        ...(refreshCatalog === undefined
+            ? {}
+            : {
+                  refreshModels: async (context: {
+                      allowNetwork: boolean;
+                      force?: boolean;
+                      signal: AbortSignal;
+                      publish: (value: { update: () => void }) => Promise<boolean>;
+                  }) => {
+                      if (!context.allowNetwork) return;
+                      await refreshCatalog({
+                          allowNetwork: context.allowNetwork,
+                          force: context.force === true,
+                          signal: context.signal,
+                      });
+                      await context.publish({ update: fillPicker });
+                  },
+              }),
         stream: bedrockStream(
             models,
             { converse: native.stream as Stream, ...(messages ? { messages: messages.stream } : {}) },

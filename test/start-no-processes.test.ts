@@ -65,13 +65,43 @@ function machine(t: test.TestContext, files: { config?: string; credentials?: st
 }
 
 /** Loads the extension as Pi does and fires every session_start hook; returns when the hooks have returned. */
-async function start(m: Machine): Promise<{ sessionStartMs: number }> {
+async function start(m: Machine): Promise<{
+    sessionStartMs: number;
+    providers: Array<{
+        id?: string;
+        refreshModels?: (context: {
+            allowNetwork: boolean;
+            force?: boolean;
+            signal: AbortSignal;
+            publish: (value: { update: () => void }) => Promise<boolean>;
+        }) => Promise<void>;
+    }>;
+}> {
     const hooks = new Map<string, Hook[]>();
+    const providers: Array<{
+        id?: string;
+        refreshModels?: (context: {
+            allowNetwork: boolean;
+            force?: boolean;
+            signal: AbortSignal;
+            publish: (value: { update: () => void }) => Promise<boolean>;
+        }) => Promise<void>;
+    }> = [];
     const pi = {
         on(name: string, hook: Hook) {
             hooks.set(name, [...(hooks.get(name) ?? []), hook]);
         },
-        registerProvider() {},
+        registerProvider(provider: {
+            id?: string;
+            refreshModels?: (context: {
+                allowNetwork: boolean;
+                force?: boolean;
+                signal: AbortSignal;
+                publish: (value: { update: () => void }) => Promise<boolean>;
+            }) => Promise<void>;
+        }) {
+            providers.push(provider);
+        },
         registerCommand() {},
         events: { emit() {} },
         setModel: () => false,
@@ -85,7 +115,7 @@ async function start(m: Machine): Promise<{ sessionStartMs: number }> {
     };
     const began = performance.now();
     for (const hook of hooks.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
-    return { sessionStartMs: performance.now() - began };
+    return { sessionStartMs: performance.now() - began, providers };
 }
 
 /** Long enough for the background work a session start begins (the sign-in check waits one turn of the event loop). */
@@ -167,5 +197,24 @@ test("a spend command runs after the session has started, and session_start does
     );
     await settle();
     assert.equal(existsSync(join(m.dir, "spend-ran")), true, "the spend command the user set did run");
+    assert.equal(existsSync(m.marker), false, "the AWS CLI was started");
+});
+
+test("Pi's start-up refresh call with allowNetwork false starts no program", async (t) => {
+    const m = machine(t, { config: KEYS, credentials: KEY_FILE, settings: { profile: "work" } });
+    writeCache(m, "work");
+    const { providers } = await start(m);
+    const provider = providers.find((entry) => entry.id === "jig-bedrock");
+    assert.ok(provider?.refreshModels, "the provider has refreshModels");
+    await provider.refreshModels({
+        allowNetwork: false,
+        force: true,
+        signal: new AbortController().signal,
+        publish: async (value) => {
+            value.update();
+            return true;
+        },
+    });
+    await settle();
     assert.equal(existsSync(m.marker), false, "the AWS CLI was started");
 });

@@ -400,6 +400,7 @@ export function createBedrockProvider(
                 identity,
                 messages,
                 signedFetch,
+                (options) => refreshForModelSelector(options.force),
             );
         } catch {
             failed = true;
@@ -495,6 +496,7 @@ export function createBedrockProvider(
                         identity,
                         messages,
                         signedFetch,
+                        (options) => refreshForModelSelector(options.force),
                     );
                 }
                 return status;
@@ -504,6 +506,10 @@ export function createBedrockProvider(
             });
             return refreshInFlight;
         };
+        async function refreshForModelSelector(force: boolean): Promise<void> {
+            const status = await refresh(force, false, true);
+            if (status !== "ok") throw new Error(catalog.failure?.() ?? "Bedrock could not load models.");
+        }
         afterProfileLogin = async (profile, interaction, signal) => {
             config.profile = profile;
             profiles.stored = profile;
