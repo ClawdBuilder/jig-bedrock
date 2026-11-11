@@ -347,12 +347,28 @@ function providerHarness() {
     const hooks = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
     const notices: Array<{ text: string; type?: string }> = [];
-    const providers: Array<{ getModels?: () => Array<{ id: string }> }> = [];
+    const providers: Array<{
+        getModels?: () => Array<{ id: string }>;
+        refreshModels?: (context: {
+            allowNetwork: boolean;
+            force?: boolean;
+            signal: AbortSignal;
+            publish: (value: { update: () => void }) => Promise<boolean>;
+        }) => Promise<void>;
+    }> = [];
     const pi = {
         on(name: string, fn: (event: unknown, ctx: unknown) => unknown) {
             hooks.set(name, [...(hooks.get(name) ?? []), fn]);
         },
-        registerProvider(provider: { getModels?: () => Array<{ id: string }> }) {
+        registerProvider(provider: {
+            getModels?: () => Array<{ id: string }>;
+            refreshModels?: (context: {
+                allowNetwork: boolean;
+                force?: boolean;
+                signal: AbortSignal;
+                publish: (value: { update: () => void }) => Promise<boolean>;
+            }) => Promise<void>;
+        }) {
             providers.push(provider);
         },
         registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
@@ -447,6 +463,68 @@ test("a cached catalog for the ambient credential chain is in the provider at th
         })(h.pi as never);
         const provider = h.providers.find((entry) => entry.getModels !== undefined);
         assert.ok(provider?.getModels?.().some((model) => model.id === "claude-haiku-5-5"));
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("the provider's refreshModels uses one shared refresh and obeys allowNetwork and force", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "real-discovery-provider-refresh-"));
+    try {
+        let calls = 0;
+        const forces: boolean[] = [];
+        let status: "ok" | "credentials" = "ok";
+        const h = providerHarness();
+        const controller = await createBedrockProvider({
+            env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
+            config: { ...config, profile: "fixture", agentDir: dir } as ResolvedConfig,
+            listProfiles: async () => ["fixture"],
+            catalog: {
+                load: () => undefined,
+                refresh: async (force = false) => {
+                    calls++;
+                    forces.push(force);
+                    return status;
+                },
+                failure: () => "Bedrock: the AWS profile fixture has no credentials.",
+            },
+            backgroundRefresh: false,
+            usageEvents: false,
+        })(h.pi as never);
+        const provider = h.providers.find((entry) => entry.refreshModels !== undefined);
+        assert.ok(provider?.refreshModels);
+        let updates = 0;
+        const context = {
+            allowNetwork: false,
+            force: true,
+            signal: new AbortController().signal,
+            publish: async (value: { update: () => void }) => {
+                updates++;
+                value.update();
+                return true;
+            },
+        };
+        await provider.refreshModels(context);
+        assert.equal(calls, 0, "allowNetwork false starts no discovery");
+        await provider.refreshModels({ ...context, allowNetwork: true, force: false });
+        assert.deepEqual(forces, [false], "without force the catalog decides from its cache age");
+        await provider.refreshModels({ ...context, allowNetwork: true, force: true });
+        assert.deepEqual(forces, [false, true], "force starts discovery now");
+        assert.equal(calls, 2, "one discovery per call");
+        status = "credentials";
+        await assert.rejects(
+            provider.refreshModels({ ...context, allowNetwork: true, force: false }),
+            /Bedrock: the AWS profile fixture has no credentials\./,
+        );
+        assert.ok(controller);
+        assert.equal(updates, 2, "each successful refresh publishes the new list");
+        status = "ok";
+        const before = calls;
+        await Promise.all([
+            controller.refresh(),
+            provider.refreshModels({ ...context, allowNetwork: true, force: true }),
+        ]);
+        assert.equal(calls, before + 1, "/bedrock refresh and refreshModels share one discovery");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
