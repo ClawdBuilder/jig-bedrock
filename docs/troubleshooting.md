@@ -28,13 +28,15 @@ Next: ask your AWS administrator for bedrock:ListInferenceProfiles, then /bedroc
 
 **Still wrong?** Give your AWS administrator the failed row and this table. Both routes need `bedrock:InvokeModelWithResponseStream` on the inference profile and each foundation model it routes to.
 
-| Permission                              | Needed for                     | Resource                          |
-| --------------------------------------- | ------------------------------ | --------------------------------- |
-| `sts:GetCallerIdentity`                 | Account check and doctor       | `*`                               |
-| `bedrock:ListInferenceProfiles`         | AWS-defined listing and doctor | `*`                               |
-| `tag:GetResources`                      | Discovery by tag               | `*`                               |
-| `bedrock:GetInferenceProfile`           | One profile, tag or hand mode  | The inference-profile ARN         |
-| `bedrock:InvokeModelWithResponseStream` | Requests, both routes          | Profile and foundation-model ARNs |
+| Permission                              | Needed for                                     | Resource                          |
+| --------------------------------------- | ---------------------------------------------- | --------------------------------- |
+| `sts:GetCallerIdentity`                 | Account check and doctor                       | `*`                               |
+| `bedrock:ListInferenceProfiles`         | AWS-defined listing and doctor                 | `*`                               |
+| `tag:GetResources`                      | Discovery by tag                               | `*`                               |
+| `bedrock:GetInferenceProfile`           | Reading an inference profile (by tag, by hand) | The inference-profile ARN         |
+| `bedrock:InvokeModelWithResponseStream` | Requests, both routes                          | Profile and foundation-model ARNs |
+
+[inference-profile permissions][ip-iam]
 
 ## No models
 
@@ -91,7 +93,7 @@ No spend line under Pi's footer.
 
 **Run:** `/bedrock models`
 
-**Still wrong?** That model is on Converse. Only Messages keeps the cache; force a model with `converseModels` or accept Converse.
+**Still wrong?** Expected on Converse; Pi's built-in provider does the same. Only the four Messages models keep the cache; the route column shows each model's route. Nothing to set.
 
 ## Settings are not valid
 
@@ -124,11 +126,11 @@ No spend line under Pi's footer.
 
 ## A Bedrock API key does not work here
 
-**You see:** requests use the wrong credentials.
+**You have:** a Bedrock API key and no AWS profile.
 
-**Run:** `/model`
+**Run:** `/model`, then pick an `amazon-bedrock` model.
 
-**Still wrong?** This package signs with an AWS profile. A Bedrock API key belongs to Pi's built-in Bedrock provider.
+**Still wrong?** Pi's built-in provider takes the key; this package signs with an AWS profile.
 
 [Back to the README](../README.md).
 

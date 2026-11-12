@@ -42,24 +42,24 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 
 When `profile` is unset, the first of these wins:
 
-| Order | Source                                 |
-| ----- | -------------------------------------- |
-| 1     | `profile` or `JIG_BEDROCK_PROFILE`     |
-| 2     | The AWS profile chosen at `/login`     |
-| 3     | `AWS_PROFILE`                          |
-| 4     | `AWS_DEFAULT_PROFILE`                  |
-| 5     | The `default` profile in the AWS files |
-| 6     | The environment credential chain       |
+| Order | Source                             |
+| ----- | ---------------------------------- |
+| 1     | `profile` or `JIG_BEDROCK_PROFILE` |
+| 2     | The AWS profile chosen at `/login` |
+| 3     | `AWS_PROFILE`                      |
+| 4     | `AWS_DEFAULT_PROFILE`              |
+| 5     | The AWS profile named `default`    |
+| 6     | The environment credential chain   |
 
-An explicit choice never falls back when it is missing. `/bedrock doctor` names the wrong AWS profile.
+An explicit choice never falls back when it is missing. `/bedrock doctor` names the missing AWS profile.
 
 ## The three ways models are found
 
-| Way            | Settings              | What it uses                                   |
-| -------------- | --------------------- | ---------------------------------------------- |
-| AWS-defined    | no tag, no `profiles` | Every AWS-defined Claude profile in `regions`. |
-| By tag         | `tagKey`, `tagValue`  | Application profiles with the tag.             |
-| Listed by hand | `profiles`            | Exactly the ARNs or ids named.                 |
+| Way            | Settings              | What it uses                                             |
+| -------------- | --------------------- | -------------------------------------------------------- |
+| AWS-defined    | no tag, no `profiles` | Every AWS-defined Claude inference profile in `regions`. |
+| By tag         | `tagKey`, `tagValue`  | Application inference profiles with the tag.             |
+| Listed by hand | `profiles`            | Exactly the ARNs or ids named.                           |
 
 [How it works](how-it-works.md#how-models-are-found) has the calls and limits.
 
@@ -67,15 +67,15 @@ An explicit choice never falls back when it is missing. `/bedrock doctor` names 
 
 Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must work in both.
 
-| You have                      | Requests and discovery | Repaired | Real AWS        |
-| ----------------------------- | ---------------------- | -------- | --------------- |
-| SSO                           | yes                    | yes      | yes             |
-| Keys in an AWS profile        | yes                    | no       | yes             |
-| Keys in the environment       | yes                    | no       | yes             |
-| Assumed role                  | yes                    | no       | not since 0.2.4 |
-| `credential_process`          | yes                    | no       | no              |
-| Web identity or instance role | requests only          | no       | no              |
-| Bedrock API key               | built-in provider only | no       | no              |
+| You have                      | Requests and discovery | Repaired | Real AWS                          |
+| ----------------------------- | ---------------------- | -------- | --------------------------------- |
+| SSO                           | yes                    | yes      | yes                               |
+| Keys in an AWS profile        | yes                    | no       | yes                               |
+| Keys in the environment       | yes                    | no       | yes                               |
+| Assumed role                  | yes                    | no       | timed out on 0.2.4; not run since |
+| `credential_process`          | yes                    | no       | no                                |
+| Web identity or instance role | requests only          | no       | no                                |
+| Bedrock API key               | built-in provider only | no       | no                                |
 
 “No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it.
 
@@ -94,15 +94,14 @@ Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must
 
 ## Files on disk
 
-| File or folder | What it is                                     |
-| -------------- | ---------------------------------------------- |
-| `bedrock.json` | Your settings, in the agent folder.            |
-| `catalog.json` | The model list, private and kept for 24 hours. |
-| `spend/`       | This machine's monthly spend records.          |
-| `debug.log`    | The optional debug log; rotates at 5 MB.       |
-| `sso-runtime/` | The sign-in lock and runtime files.            |
+| Path                                                   | What it is                                              |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| `~/.pi/agent/bedrock.json` (`PI_CODING_AGENT_DIR`)     | Your settings.                                          |
+| `~/.cache/jig-bedrock/catalog.json` (`XDG_CACHE_HOME`) | The model list, private, 24 hours.                      |
+| `~/.local/state/jig-bedrock/` (`XDG_STATE_HOME`)       | `spend/`, `debug.log`, `sso-runtime/`.                  |
+| `~/.aws/config.jig-bedrock-backup-<time>`              | Up to five backups before `/login` adds an AWS profile. |
 
-The cache folder may be a link; the `jig-bedrock` folder and `catalog.json` must not be. Removal leaves these files; delete them if you want.
+The AWS profiles `/login` added stay in `~/.aws/config`. Pi's `auth.json` keeps the AWS profile's name until `/logout`. The cache folder may be a link; `jig-bedrock` and `catalog.json` must not be.
 
 ## Debug log
 
