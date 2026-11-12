@@ -104,14 +104,14 @@ Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must
 
 ## Files on disk
 
-| Path                                                   | What it is                                              |
-| ------------------------------------------------------ | ------------------------------------------------------- |
-| `~/.pi/agent/bedrock.json` (`PI_CODING_AGENT_DIR`)     | Your settings.                                          |
-| `~/.cache/jig-bedrock/catalog.json` (`XDG_CACHE_HOME`) | The model list, private, 24 hours.                      |
-| `~/.local/state/jig-bedrock/` (`XDG_STATE_HOME`)       | `spend/`, `debug.log`, `sso-runtime/`.                  |
-| `~/.aws/config.jig-bedrock-backup-<time>`              | Up to five backups before `/login` adds an AWS profile. |
+| Path                                                                                          | What it is                                                                                 |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `~/.pi/agent/bedrock.json` for `pi`; `~/.jig` for `jig` (`PI_CODING_AGENT_DIR` or `JIG_HOME`) | Your settings and `/login` choice.                                                         |
+| `~/.cache/jig-bedrock/catalog-<hash>.json` (`XDG_CACHE_HOME`)                                 | The model lists, one per AWS profile and discovery settings, at most 8; private, 24 hours. |
+| `~/.local/state/jig-bedrock/` (`XDG_STATE_HOME`)                                              | `spend/`, `debug.log`, `sso-runtime/`.                                                     |
+| `~/.aws/config.jig-bedrock-backup-<time>`                                                     | Up to five backups before `/login` adds an AWS profile.                                    |
 
-The AWS profiles `/login` added stay in `~/.aws/config`. Pi's `auth.json` keeps the AWS profile's name until `/logout`. The cache folder may be a link; `jig-bedrock` and `catalog.json` must not be.
+The AWS profiles `/login` added stay in `~/.aws/config`. Pi's `auth.json` keeps the AWS profile's name until `/logout`. The model-list cache and spend record are per machine, shared by every Pi folder that runs jig-bedrock. The cache folder may be a link; `jig-bedrock` and the catalog files must not be. An older `catalog.json` is read until it ages out.
 
 ## Debug log
 

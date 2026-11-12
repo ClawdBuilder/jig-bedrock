@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-12
+
+- The README says how to install and update jig-bedrock in Jig.
+
 ## [0.4.0] - 2026-11-12
 
 - Presets and `/bedrock use` switch a named set of AWS profile, discovery, route, budget and spend settings.
