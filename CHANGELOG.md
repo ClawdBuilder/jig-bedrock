@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-12
+
 - The README and pages explain with diagrams and short tables.
 
 ## [0.3.1] - 2026-11-11
