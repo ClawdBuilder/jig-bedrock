@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-12
+
+- The README and pages say which models are listed and which keep the prompt cache.
+
 ## [0.3.2] - 2026-11-12
 
 - The README and pages explain with diagrams and short tables.

@@ -38,7 +38,17 @@ A model newer than the installed Pi uses Converse until Pi is updated or the mod
 | Sonnet 5, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 | Converse | 400 after a tool load   |
 | Opus 4.5, Sonnet 4.5, Opus 4.1                      | Converse | 404 on Messages         |
 
-Both routes stream the reply. Messages declares only the 5-minute cache lifetime, so `PI_CACHE_RETENTION=long` does nothing there. Converse keeps both lifetimes.
+### Prompt cache by model
+
+| Model                                     | Route    | Cache        | After a tool load    |
+| ----------------------------------------- | -------- | ------------ | -------------------- |
+| Haiku 5.5, Sonnet 5.5, Opus 5.5, Opus 4.8 | Messages | 5 min        | Cache kept           |
+| Other Claude 4.5 and later                | Converse | 5 min or 1 h | Prompt written again |
+| Older Claude                              | Converse | 5 min        | Prompt written again |
+| Amazon Nova Micro, Lite, Pro              | Converse | 5 min        | Not measured         |
+| Any other model                           | Converse | None         | —                    |
+
+Both routes stream the reply. Messages declares only the 5-minute cache lifetime, so `PI_CACHE_RETENTION=long` does nothing there; Converse keeps both lifetimes.
 
 ## How models are found
 
@@ -49,8 +59,8 @@ _Three sources, one read-only catalog._
 The settings choose one way; there is no fallback.
 
 - **AWS-defined (default):** lists the AWS-defined inference profiles in each region. Only Claude entries with status `ACTIVE` are kept.
-- **By tag:** reads application inference profiles with `tagKey` and `tagValue`, then reads each match.
-- **Listed by hand:** reads each ARN or id in `profiles`.
+- **By tag:** reads application inference profiles with `tagKey` and `tagValue`; any model Pi knows is allowed.
+- **Listed by hand:** reads each ARN or id in `profiles`; application inference profiles may hold any model Pi knows, while an AWS-defined one is Claude only.
 
 Each way starts with `aws sts get-caller-identity`. A call may take 20 seconds; a run stops at 90 seconds. At most 256 inference profiles are kept. An inference profile that points at another is followed up to two levels. `GetFoundationModel` is never called.
 

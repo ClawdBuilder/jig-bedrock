@@ -55,11 +55,11 @@ An explicit choice never falls back when it is missing. `/bedrock doctor` names 
 
 ## The three ways models are found
 
-| Way            | Settings              | What it uses                                             |
-| -------------- | --------------------- | -------------------------------------------------------- |
-| AWS-defined    | no tag, no `profiles` | Every AWS-defined Claude inference profile in `regions`. |
-| By tag         | `tagKey`, `tagValue`  | Application inference profiles with the tag.             |
-| Listed by hand | `profiles`            | Exactly the ARNs or ids named.                           |
+| Way            | Settings              | What it uses                                                     |
+| -------------- | --------------------- | ---------------------------------------------------------------- |
+| AWS-defined    | no tag, no `profiles` | Every AWS-defined Claude inference profile in `regions`.         |
+| By tag         | `tagKey`, `tagValue`  | Application inference profiles with the tag; any Pi-known model. |
+| Listed by hand | `profiles`            | Exact ARNs or ids; AWS-defined is Claude only.                   |
 
 [How it works](how-it-works.md#how-models-are-found) has the calls and limits.
 
