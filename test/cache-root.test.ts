@@ -39,10 +39,10 @@ function folder(t: test.TestContext): string {
 }
 
 test("the cache root is XDG_CACHE_HOME when it is absolute, else ~/.cache", () => {
-    assert.equal(cacheRoot({ XDG_CACHE_HOME: "/data/cache", HOME: "/home/a" }), "/data/cache");
-    assert.equal(cacheRoot({ XDG_CACHE_HOME: "relative", HOME: "/home/a" }), "/home/a/.cache");
-    assert.equal(cacheRoot({ XDG_CACHE_HOME: "", HOME: "/home/a" }), "/home/a/.cache");
-    assert.equal(cacheRoot({ HOME: "/home/a" }), "/home/a/.cache");
+    assert.equal(cacheRoot({ XDG_CACHE_HOME: "/data/cache", HOME: "/home/user" }), "/data/cache");
+    assert.equal(cacheRoot({ XDG_CACHE_HOME: "relative", HOME: "/home/user" }), "/home/user/.cache");
+    assert.equal(cacheRoot({ XDG_CACHE_HOME: "", HOME: "/home/user" }), "/home/user/.cache");
+    assert.equal(cacheRoot({ HOME: "/home/user" }), "/home/user/.cache");
 });
 
 test("a linked cache root works: the cache is written, then read", async (t) => {

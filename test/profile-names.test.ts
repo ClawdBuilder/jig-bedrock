@@ -61,11 +61,11 @@ test("a missing file is an empty list, not an error", (t) => {
 
 test("without the two variables the files are under HOME/.aws", () => {
     const seen: string[] = [];
-    listProfileNames({ HOME: "/home/someone" }, (file) => {
+    listProfileNames({ HOME: "/home/user" }, (file) => {
         seen.push(file);
         return undefined;
     });
-    assert.deepEqual(seen, ["/home/someone/.aws/config", "/home/someone/.aws/credentials"]);
+    assert.deepEqual(seen, ["/home/user/.aws/config", "/home/user/.aws/credentials"]);
 });
 
 test("createListProfiles answers the same names through the ListProfiles type", async (t) => {

@@ -13,9 +13,19 @@
 // Converse that call rewrites the cache, so the row passes when the session completes. The exit code is 1 when any row
 // fails. `--retention long` sets PI_CACHE_RETENTION=long, to see what a person who asks for the 1-hour cache gets.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve, sep } from "node:path";
 
 const argv = process.argv.slice(2);
 const positional = [];
@@ -92,10 +102,28 @@ if (options.team !== undefined && options.profiles !== undefined) {
     console.error("use either --team or --profiles, not both");
     process.exit(2);
 }
-const defaultPi = "/home/hp/.nvm/versions/node/v26.13.0/bin/pi";
-const piBinary = options.pi ?? (existsSync(defaultPi) ? defaultPi : undefined);
+/** The first Pi on PATH whose real path is the global @earendil-works/pi-coding-agent install. */
+function piOnPath() {
+    for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+        if (dir === "") continue;
+        for (const name of process.platform === "win32" ? ["pi.cmd", "pi.exe", "pi"] : ["pi"]) {
+            const candidate = join(dir, name);
+            try {
+                statSync(candidate);
+                const real = realpathSync(candidate);
+                if (!real.includes(`@earendil-works${sep}pi-coding-agent${sep}`)) continue;
+                const first = readFileSync(candidate, "utf8").slice(0, 80);
+                if (first.startsWith("#!") && /(?:sh|bash|dash)/.test(first)) continue;
+                return candidate;
+            } catch {}
+        }
+    }
+    return undefined;
+}
+
+const piBinary = options.pi ?? piOnPath();
 if (!piBinary) {
-    console.error(`--pi <path> is required: this machine has no Pi at ${defaultPi}`);
+    console.error("--pi <path> is required: no Pi install found on PATH");
     process.exit(2);
 }
 if (!existsSync(piBinary)) {
