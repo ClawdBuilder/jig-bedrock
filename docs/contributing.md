@@ -101,8 +101,22 @@ The README and these pages are checked by `test/docs.test.ts`: every setting in 
 setting that page names exists, every `JIG_BEDROCK_*` variable named anywhere exists in `src/`, every relative link and
 image points at a file that is published, and no page uses "profile" without a word before it ("AWS profile" or
 "inference profile"). Each meaning has one home: the words and the route rule in `docs/how-it-works.md`, the settings in
-`docs/settings.md`, symptoms in `docs/troubleshooting.md`. The other pages point there. Diagrams are hand-written SVG in
-`docs/img/`, with their own marker ids, an `aria-label`, and text of 11 to 13 pixels.
+`docs/settings.md`, symptoms in `docs/troubleshooting.md`. The other pages point there.
+
+## Diagram design
+
+Hand-written SVG in `docs/img/`, one look:
+
+- `width="880"` and matching viewBox; one white card `rx="12"` with `#D0D7DE` stroke; system font on the root.
+- Text: 13 labels, 15 bold box titles, 12 footnotes, 28 bold for one number; 12 to 28 only.
+- Colour: Pi `#5D4B7C`; jig-bedrock `#1D3B4D`; AWS `#5C9CAB`; green `#2E7D4F` on `#E3F1E7`; red `#B03A2E` on `#F8E4E1`; amber `#9A6212` on `#FDF5E6`; text `#24292F`; muted `#57606A`.
+- Box titles 3 words or fewer; one line of 5 words or fewer. Arrow labels 2 words or fewer. No sentences.
+- 24 px from the card edge to content. No empty band; rows share a centre and equal gaps.
+- A 64 px box has its title baseline at top+28 and line at top+48. One line: top + height/2 + 5.
+- Arrows start and end 2 px outside boxes, with a gap of 40 px or more, stroke 2, head 8 x 8. Labels sit 6 px above the line.
+- Glyphs are drawn 16 x 16 shapes, stroke 2; never Unicode icons. Commands and ids use monospace.
+- Chart bars are solid, not outlined. Size each box from its text; 16 px side padding.
+- Own marker ids; an `aria-label` with the same facts. Open every SVG in a browser at full size and README width; no text touches an edge or another shape.
 
 Images in the README use the full `https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/...` address,
 so they show on GitHub, npm and Pi's package gallery. They show the version on `main`, so change a diagram and its

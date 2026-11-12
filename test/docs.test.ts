@@ -147,15 +147,24 @@ test("no page uses 'the profile' or 'a profile' in prose: it is an AWS profile o
 test("the diagrams are accessible, small-text SVG with marker ids of their own", () => {
     const folder = resolve(ROOT, "docs/img");
     const files = readdirSync(folder).filter((name) => name.endsWith(".svg"));
-    assert.deepEqual(files.sort(), ["cache-after-tool-load.svg", "discovery.svg", "request-flow.svg"]);
+    assert.deepEqual(files.sort(), [
+        "cache-after-tool-load.svg",
+        "discovery.svg",
+        "overview.svg",
+        "routes.svg",
+        "setup.svg",
+        "sign-in-repair.svg",
+    ]);
     const seen = new Map<string, string>();
     for (const name of files) {
         const svg = readFileSync(resolve(folder, name), "utf8");
+        assert.match(svg, /<svg [^>]*width="880"/, `${name} has width 880`);
+        assert.match(svg, /<svg [^>]*viewBox="0 0 880 \d+"/, `${name} has a matching viewBox`);
         assert.match(svg, /<svg [^>]*role="img"/, `${name} has role="img"`);
         assert.match(svg, /<svg [^>]*aria-label="[^"]{40,}"/, `${name} has an aria-label that says what it shows`);
         for (const [, size] of svg.matchAll(/font-size="([\d.]+)"/g)) {
             const px = Number(size);
-            assert.ok(px >= 11 && px <= 13, `${name} has text of ${px} px; it must be 11 to 13`);
+            assert.ok(px >= 12 && px <= 28, `${name} has text of ${px} px; it must be 12 to 28`);
         }
         for (const [, id] of svg.matchAll(/<marker id="([^"]+)"/g)) {
             assert.equal(seen.get(id ?? ""), undefined, `${name} reuses the marker id ${id} of ${seen.get(id ?? "")}`);

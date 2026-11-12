@@ -1,162 +1,136 @@
 # Troubleshooting
 
-Find your symptom, run the command, and compare with what to expect. Every command here is a `/bedrock` command typed
-in Pi. Each one prints a title and rows. A row starts with a mark: `✓` fine, `✗` a problem, `!` needs attention, `–` not
-known yet. (The marks are words only when `TERM=dumb` or the terminal locale is not UTF-8; `NO_COLOR` removes colour, not marks.) The last line, `Next:`, is the one command to run now.
-
-If you do not know the symptom, start with `/bedrock doctor`. It ends with `Bedrock is ready` or with a count of
-problems and one `Next:` line.
+Each section shows what you see, the command to run, and what to try next. `/bedrock doctor` is the general first step.
 
 ## Sign-in expired
 
-You see `Bedrock: the AWS profile my-profile sign-in expired.`, or a request stops with a message about your AWS SSO session. The doctor shows:
+**You see**
 
 ```text
 ✗ Sign-in: sign-in expired
 Next: /bedrock login
 ```
 
-1. Run `/bedrock login`. A browser opens; finish the sign-in there.
-2. Run `/bedrock refresh` if the model list was empty.
+**Run:** `/bedrock login`
 
-Expect `/bedrock doctor` to show the sign-in row with `✓`. Pi renews an expired SSO sign-in by itself when a request
-fails, and sends the request once more, so you meet this only when the renewal could not finish (no browser, a closed
-window, a timeout of five minutes). Only SSO sign-ins are renewed. For access keys or an assumed role, fix the AWS
-profile in the AWS CLI.
+**Still wrong?** Finish the browser sign-in. Only SSO sign-ins are repaired. For keys or a role, fix the AWS profile in the AWS CLI.
 
 ## Access denied
 
-A row or a failed request says access is denied. A listing refusal looks like:
+**You see**
 
 ```text
 ✗ Models: access denied while listing; ask your AWS administrator for bedrock:ListInferenceProfiles
 Next: ask your AWS administrator for bedrock:ListInferenceProfiles, then /bedrock refresh
 ```
 
-A single unreadable profile looks like:
+**Run:** `/bedrock doctor`
 
-```text
-✗ Access denied for inference profile claude-opus-4-1: …; ask your AWS administrator for bedrock:GetInferenceProfile
-Next: ask your AWS administrator for bedrock:GetInferenceProfile, then /bedrock refresh
-```
+**Still wrong?** Give your AWS administrator the failed row and this table. Both routes need `bedrock:InvokeModelWithResponseStream` on the inference profile and each foundation model it routes to.
 
-Run `/bedrock doctor`. It makes three free AWS calls and says which one was refused: who you are, listing inference
-profiles, or reading one. Give your AWS administrator the row and the permission that fits, from this table.
+| Permission                              | Needed for                                     | Resource                          |
+| --------------------------------------- | ---------------------------------------------- | --------------------------------- |
+| `sts:GetCallerIdentity`                 | Account check and doctor                       | `*`                               |
+| `bedrock:ListInferenceProfiles`         | AWS-defined listing and doctor                 | `*`                               |
+| `tag:GetResources`                      | Discovery by tag                               | `*`                               |
+| `bedrock:GetInferenceProfile`           | Reading an inference profile (by tag, by hand) | The inference-profile ARN         |
+| `bedrock:InvokeModelWithResponseStream` | Requests, both routes                          | Profile and foundation-model ARNs |
 
-| Permission                              | Needed for                                                     | Resource                                                             |
-| --------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `sts:GetCallerIdentity`                 | The account check before discovery, and the doctor             | `*`                                                                  |
-| `bedrock:ListInferenceProfiles`         | AWS-defined discovery: the list; the doctor                    | `*`                                                                  |
-| `tag:GetResources`                      | Discovery by tag                                               | `*`                                                                  |
-| `bedrock:GetInferenceProfile`           | Discovery by tag or by hand: one inference profile; the doctor | The inference-profile ARN                                            |
-| `bedrock:InvokeModelWithResponseStream` | Requests, on both routes                                       | The inference-profile ARN and each foundation-model ARN it routes to |
-
-Every request streams. Messages goes to Bedrock's Anthropic interface and Converse uses `ConverseStream`; both are
-authorized by `bedrock:InvokeModelWithResponseStream`, so `bedrock:InvokeModel` is not needed. No `ListFoundationModels`
-or `GetFoundationModel` permission is needed: the package reads the foundation model from the inference profile's ARN.
-
-An inference profile must allow itself **and** the foundation model in every region it routes to. AWS's
-[inference-profile permissions][ip-iam] say the same. A role that only allows application inference profiles is refused
-for the AWS-defined ones: use discovery by tag or by hand (`/bedrock settings` shows which way you use).
+[inference-profile permissions][ip-iam]
 
 ## No models
 
-`/model` shows no jig-bedrock models.
+**You see**
 
 ```text
 ✗ Models: no Claude models in eu-north-1
 Next: /bedrock settings, then check regions
 ```
 
-or, in tag mode:
+In tag mode the row says `no inference profiles with tag Team=payments`.
 
-```text
-✗ Models: no inference profiles with tag Team=payments in us-east-1
-Next: /bedrock settings, then check tagKey/tagValue
-```
+**Run:** `/bedrock refresh`
 
-1. Run `/bedrock status`. If it says no AWS profile is chosen, run `/login` and choose Amazon Bedrock (jig-bedrock).
-2. Run `/bedrock refresh`, then `/bedrock models`.
-
-Expect `/bedrock models` to list models, each with its short id, region, route and price. If the list is empty, the
-refresh row says why in plain words: the sign-in expired (see above), access was denied (see above), or no inference
-profiles were found. For "no inference profiles found", check the way models are found: `/bedrock settings` shows
-`tagKey`, `tagValue`, `profiles` and `regions`. A tag that does not match anything, or a region where AWS offers no
-Claude inference profiles, gives an empty list.
-
-A refresh that times out (the whole run is limited to 90 seconds) is slower than usual because the AWS CLI is slow: an
-assumed-role AWS profile assumes the role again on each call. List fewer regions in `regions`.
+**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. Then run `/bedrock models`.
 
 ## A model is missing after an update
 
-A model you used yesterday is gone from `/model`, or a new Claude model never appears.
-
-Run `/bedrock models`. After the models it lists the rejected inference profiles, up to three, then a count, each with a
-reason:
+**You see**
 
 ```text
 – This Pi does not know the model: arn:aws:bedrock:us-east-1:…:inference-profile/orders-api, us-east-1
 ```
-The usual reason is that Pi has no metadata for the model, because Pi's own model list is older than the model. Update Pi, then run `/bedrock refresh`. A model with no price is still listed, marked "no price".
 
-A model that is missing because it is in your account but not in your `regions` needs the region added to `regions`.
+**Run:** `/bedrock refresh`
+
+**Still wrong?** Update Pi; its model list may be older. Add the missing region to `regions`. A model with no price is still listed as “no price”.
 
 ## The footer shows no amount
 
-You expect a line such as `Nov $12.40` at the bottom and see nothing.
+**You see**
 
-The footer shows only while a jig-bedrock model is selected: it is cleared when you pick a model of another provider, and
-it does not exist in print or JSON mode. Select a model with `/model`, then run `/bedrock usage`.
+No spend line under Pi's footer.
 
-Expect `/bedrock usage` to show this machine's Pi sessions as a dollar amount. If it shows `0.00` after replies, the
-record could not be written: Pi says so once per session, and the state folder (`~/.local/state/jig-bedrock/spend/`,
-or `XDG_STATE_HOME`) must be writable. A `+` after the amount means some reply had no price; that is normal for a model
-with no price. If you set a `spendCommand`, `/bedrock doctor` says why the command failed, and the footer uses this
-machine's figure meanwhile.
+**Run:** `/bedrock usage`
+
+**Still wrong?** Select a jig-bedrock model with `/model`; the footer hides for other providers. Check the state folder is writable. A `+` means an unpriced reply.
 
 ## A 400 after a tool was loaded
 
-A request fails with a 400 from AWS right after the model loaded a tool in the middle of a session.
+**You see**
 
-That model is on the Messages route, and AWS does not accept mid-session tool changes for it. The package puts a model
-on Messages only when the installed Pi lists tool changes for it, or when you forced it with `messagesModels`. Run
-`/bedrock models` to see the model's route and the reason. Then keep it on Converse:
-
-```
-/bedrock set converseModels <short id>
+```text
+400: tool_addition/tool_removal requires a model that supports mid-conversation system content
 ```
 
-Use the short id that `/bedrock models` shows, such as `claude-opus-5`; add more ids after commas. The models the
-package puts on Messages by itself were run on real AWS: see
-[which route a model gets](how-it-works.md#which-route-a-model-gets).
+**Run:** `/bedrock set converseModels <short id>`
 
-## The prompt is written to the cache again after a tool load
+**Still wrong?** Run `/bedrock models` and use its short id. The route rule is [here](how-it-works.md#which-route-a-model-gets).
 
-A model on Converse writes the whole prompt to the cache again when a tool is loaded in the middle of a session. That is
-expected: it is how Converse and Pi's built-in provider behave. Only the models on the Messages route keep the cache;
-the README lists them.
+## The cache is written again after a tool load
+
+**You see:** high cache-write tokens after a tool load.
+
+**Run:** `/bedrock models`
+
+**Still wrong?** Expected on Converse; Pi's built-in provider does the same. Only the four Messages models keep the cache; the route column shows each model's route. Nothing to set.
 
 ## Settings are not valid
 
-At the start of a session Pi says the Bedrock provider is disabled, or names a key in `bedrock.json` it ignores.
+**You see**
 
-Run `/bedrock settings`. It names the key and the file. Fix the value with `/bedrock set <key> <value>`, or `/bedrock
-unset <key>`, or edit the file; see [Settings](settings.md). A file that is not valid JSON is reported by name too.
+```text
+✗ Settings file is not valid JSON.
+– File: ~/.pi/agent/bedrock.json
+```
+
+**Run:** `/bedrock settings`
+
+**Still wrong?** Fix one key with `/bedrock set <key> <value>` or `/bedrock unset <key>`; see [Settings](settings.md).
 
 ## Your settings are in jig.json
 
-At the start of a session you see "Your Bedrock settings are in jig.json". That is a 0.2.x file. Run `/bedrock
-migrate`: it copies the section to `bedrock.json`, once, and leaves `jig.json` alone.
+**You see:** `Your Bedrock settings are in jig.json.`
+
+**Run:** `/bedrock migrate`
+
+**Still wrong?** Check the file was written next to it as `bedrock.json`, then `/reload`.
 
 ## A Fable model is refused
 
-A Fable model returns an error about a data-retention mode. That is an account setting at AWS, on both routes. Ask your
-AWS administrator to change it; the package cannot.
+**You see:** an AWS error about data retention.
+
+**Run:** `/bedrock doctor`
+
+**Still wrong?** Ask your AWS administrator to change the account data-retention setting. Both routes are refused.
 
 ## A Bedrock API key does not work here
 
-This package signs in with an AWS profile. A Bedrock API key works through Pi's built-in Amazon Bedrock provider, which
-is installed with Pi and stays beside this one in `/model`.
+**You have:** a Bedrock API key and no AWS profile.
+
+**Run:** `/model`, then pick an `amazon-bedrock` model.
+
+**Still wrong?** Pi's built-in provider takes the key; this package signs with an AWS profile.
 
 [Back to the README](../README.md).
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-12
+
+- The README and pages explain with diagrams and short tables.
+
 ## [0.3.1] - 2026-11-11
 
 - Opening `/model` refreshes the Bedrock list when its cache is older than 24 hours, so a new inference profile appears without `/bedrock refresh`; if AWS fails, Pi says it is showing cached models.
