@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
+- Presets and `/bedrock use` switch a named set of AWS profile, discovery, route, budget and spend settings.
+- One model list per AWS profile and discovery scope, so two terminals do not re-read AWS and never overwrite each other.
+- Spend and budget are per preset; the footer names the active preset and `/bedrock usage` splits by it.
+
 ## [0.3.3] - 2026-11-12
 
 - The README and pages say which models are listed and which keep the prompt cache.
