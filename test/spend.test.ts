@@ -489,3 +489,32 @@ test("sub-cent money and eight-decimal cost are stored and printed as the rules 
     };
     assert.equal(stored.costUsd, 0.00003);
 });
+
+test("spend lines carry the active preset, and the footer and usage separate it", async (t) => {
+    const root = folder(t);
+    const env = { XDG_STATE_HOME: root, HOME: root, PI_CODING_AGENT_DIR: root };
+    const withPreset = { ...config, preset: "work", monthlyBudgetUsd: 200 };
+    const tracker = new SpendTracker(withPreset, env, () => now);
+    tracker.record(
+        {
+            role: "assistant",
+            provider: "jig-bedrock",
+            api: "anthropic-messages",
+            model: "claude-sonnet-5-5",
+            stopReason: "stop",
+            usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+        },
+        "s1",
+        model as never,
+    );
+    const line = JSON.parse(readFileSync(join(spendFolder(env), "2026-11.jsonl"), "utf8").trim()) as {
+        preset?: string;
+    };
+    assert.equal(line.preset, "work");
+    assert.match(tracker.footerText(), /^work · /);
+    const machine = tracker.machine();
+    assert.ok(machine.presets?.some((entry) => entry.preset === "work" && entry.spentUsd === 0.01));
+    const plain = new SpendTracker({ ...config, preset: undefined }, env, () => now);
+    assert.equal(plain.local().spentUsd, 0);
+    assert.equal(plain.machine().spentUsd, 0.01);
+});

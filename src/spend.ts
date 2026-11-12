@@ -43,6 +43,7 @@ export const isPriced = (
 
 export interface SpendReply {
     type: "reply";
+    preset?: string;
     at: string;
     session: string;
     model: string;
@@ -71,6 +72,7 @@ export interface SpendView extends SpendTotals {
     month: string;
     local: SpendTotals;
     models: SpendModel[];
+    presets?: Array<{ preset: string; spentUsd: number; unpriced: boolean; replies: number }>;
     command?: SpendTotals;
     commandError?: string;
 }
@@ -149,6 +151,7 @@ export function readMonth(env: NodeJS.ProcessEnv, month: string): SpendReply[] {
             continue;
         replies.push({
             type: "reply",
+            ...(typeof value.preset === "string" ? { preset: value.preset } : {}),
             at: value.at,
             session: value.session,
             model: value.model,
@@ -285,16 +288,27 @@ export function localView(
     month: string,
     period: "day" | "week" | "month",
     now = Date.now(),
+    preset?: string | null,
 ): SpendView {
     const all = readMonth(env, month);
     const today = new Date(now).toISOString().slice(0, 10);
-    const replies =
+    const timed =
         period === "day"
             ? all.filter((reply) => reply.at.slice(0, 10) === today)
             : period === "week"
               ? all.filter((reply) => now - Date.parse(reply.at) <= 7 * 86_400_000)
               : all;
-    return { month, local: totals(replies), models: modelTotals(replies), ...totals(replies) };
+    const replies =
+        preset === undefined || preset === null ? timed : timed.filter((reply) => (reply.preset ?? "") === preset);
+    const groups = new Map<string, SpendReply[]>();
+    for (const reply of timed) groups.set(reply.preset ?? "", [...(groups.get(reply.preset ?? "") ?? []), reply]);
+    return {
+        month,
+        local: totals(replies),
+        models: modelTotals(replies),
+        presets: [...groups.entries()].map(([name, list]) => ({ preset: name, ...totals(list) })),
+        ...totals(replies),
+    };
 }
 
 export function runSpendCommand(
@@ -433,7 +447,10 @@ export class SpendTracker {
         this.runner = runner;
     }
     local(period: "day" | "week" | "month" = "month"): SpendView {
-        return localView(this.env, monthOf(this.now()), period, this.now());
+        return localView(this.env, monthOf(this.now()), period, this.now(), this.config.preset ?? "");
+    }
+    machine(period: "day" | "week" | "month" = "month"): SpendView {
+        return localView(this.env, monthOf(this.now()), period, this.now(), null);
     }
     private withCommand(view: SpendView): SpendView {
         if (this.config.spendCommand === undefined) return view;
@@ -498,6 +515,7 @@ export class SpendTracker {
                 : typeof cost === "number" && Number.isFinite(cost) && cost > 0;
         const reply: SpendReply = {
             type: "reply",
+            ...(this.config.preset === undefined ? {} : { preset: this.config.preset }),
             at: new Date(this.now()).toISOString(),
             session,
             model: typeof message.model === "string" ? message.model : (model?.id ?? "unknown"),
@@ -531,7 +549,8 @@ export class SpendTracker {
         const limit = this.config.monthlyBudgetUsd;
         const short = MONTHS[Number(view.month.slice(5)) - 1] ?? view.month;
         const budget = limit === undefined ? "" : ` / $${Number.isInteger(limit) ? limit : limit.toFixed(2)}`;
-        return `${short} ${money(view.spentUsd)}${view.unpriced ? "+" : ""}${budget}`;
+        const prefix = this.config.preset === undefined ? "" : `${this.config.preset} · `;
+        return `${prefix}${short} ${money(view.spentUsd)}${view.unpriced ? "+" : ""}${budget}`;
     }
     updateFooter(context: ExtensionContext): void {
         if (!context.hasUI || typeof context.ui.setStatus !== "function") return;
@@ -589,7 +608,8 @@ export class SpendTracker {
         return "not run yet";
     }
     async report(period: "day" | "week" | "month", ctx: ExtensionCommandContext): Promise<void> {
-        const view = await this.refresh(true);
+        const activeView = await this.refresh(true);
+        const view = this.machine(period);
         const day = new Date(this.now()).toISOString().slice(0, 10);
         const periodLabel =
             period === "day" ? `today (${day})` : period === "week" ? "last 7 days" : monthLabel(view.month);
@@ -607,13 +627,20 @@ export class SpendTracker {
         }
         if (view.models.length > shown.length) rows.push(`... and ${view.models.length - shown.length} more`);
         if (view.models.length === 0) rows.push("No replies recorded in this period.");
-        const limit = this.config.monthlyBudgetUsd;
-        const percentage =
-            limit === undefined ? "" : `   budget ${money(limit)} (${Math.round((view.spentUsd / limit) * 100)}%)`;
+        rows.push(`${"Total".padEnd(width)}  ${tableMoney(view.spentUsd).padStart(9)}${view.unpriced ? " +" : ""}`);
+        if ((view.presets ?? []).some((entry) => entry.preset !== "")) {
+            rows.push("By preset:");
+            const byPreset = [...(view.presets ?? [])].sort((a, b) => b.spentUsd - a.spentUsd);
+            for (const entry of byPreset)
+                rows.push(
+                    `  ${(entry.preset === "" ? "no preset" : entry.preset).padEnd(12)} ${tableMoney(entry.spentUsd)}${entry.unpriced ? " +" : ""}`,
+                );
+        }
         rows.push(
-            `${"Total".padEnd(width)}  ${tableMoney(view.spentUsd).padStart(9)}${view.unpriced ? " +" : ""}${percentage}`,
+            activeView.command
+                ? `Your spend command: ${money(activeView.command.spentUsd)}`
+                : "Your spend command: not set",
         );
-        rows.push(view.command ? `Your spend command: ${money(view.command.spentUsd)}` : "Your spend command: not set");
         emit(ctx, `Bedrock spend · ${periodLabel} · this machine's Pi sessions`, rows);
     }
     async budgetReport(ctx: ExtensionCommandContext): Promise<void> {

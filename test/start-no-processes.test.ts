@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { atomicCache } from "../src/cache.ts";
+import { catalogFileFor } from "../src/cache-root.ts";
 import { filterHash } from "../src/catalog.ts";
 import { jigBedrock } from "../src/index.ts";
 
@@ -215,6 +216,36 @@ test("Pi's start-up refresh call with allowNetwork false starts no program", asy
             return true;
         },
     });
+    await settle();
+    assert.equal(existsSync(m.marker), false, "the AWS CLI was started");
+});
+
+test("an active preset with a fresh list starts no program", async (t) => {
+    const m = machine(t, {
+        config: KEYS,
+        credentials: KEY_FILE,
+        settings: { preset: "work", presets: { work: { profile: "work" } } },
+    });
+    const file = catalogFileFor({ profile: "work", mode: "system", regions: ["us-east-1"] }, m.env, true);
+    atomicCache(file, {
+        schema: 1,
+        mode: "system",
+        aws_profile: "work",
+        account_id: "123456789012",
+        regions: ["us-east-1"],
+        fetched_at: Math.floor(Date.now() / 1000),
+        filter_hash: filterHash({ mode: "system" }),
+        profiles: [
+            {
+                arn: ARN,
+                profile_name: "Haiku",
+                foundation_model_id: "anthropic.claude-haiku-4-5",
+                region: "us-east-1",
+                kind: "system",
+            },
+        ],
+    });
+    await start(m);
     await settle();
     assert.equal(existsSync(m.marker), false, "the AWS CLI was started");
 });

@@ -116,6 +116,22 @@ Done when the last line is `Bedrock is ready.`
 | 1-hour cache            | Claude 4.5 and later      | Converse models only                            |
 | Spend and budget        | Not included              | In the footer                                   |
 
+## Several AWS profiles
+
+Presets are named settings.
+
+```json
+{
+    "presets": {
+        "work": { "profile": "company-profile", "team": "my-team", "monthlyBudgetUsd": 200 },
+        "personal": { "profile": "my-profile", "regions": ["us-west-2"] }
+    },
+    "preset": "work"
+}
+```
+
+`/bedrock use` lists them. `/bedrock use personal` switches this session; a fresh saved list loads at once, otherwise the models are read in the background. `/bedrock preset add work` saves the current sign-in as a preset. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+
 ## Commands
 
 | Command            | What it does                     |
@@ -126,6 +142,7 @@ Done when the last line is `Bedrock is ready.`
 | `/bedrock refresh` | Reads models now, any cache age. |
 | `/bedrock login`   | Renews the AWS sign-in.          |
 | `/bedrock usage`   | Spend by model and period.       |
+| `/bedrock use`     | List or switch presets.          |
 
 `/bedrock help` lists every command, including `settings`, `set` and `budget`.
 

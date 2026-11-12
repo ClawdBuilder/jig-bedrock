@@ -20,6 +20,7 @@ import {
     verifyAwsProfile,
 } from "./aws-profile.ts";
 import { createSignedFetch } from "./bedrock-fetch.ts";
+import { catalogFileFor } from "./cache-root.ts";
 import type { BedrockModel } from "./catalog.ts";
 import {
     bedrockStream,
@@ -33,7 +34,7 @@ import {
 import { isObject } from "./check.ts";
 import { type BedrockCommand, registerBedrockCommands, registerBrokenCommands } from "./commands.ts";
 import type { ConfigResult, ResolvedConfig } from "./config.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, PRESET_FIELDS, presetNamePattern } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import { createDebugLog, debugEnabled, withDebugCatalog, withDebugLog, withDebugRecover } from "./debug-log.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
@@ -49,7 +50,7 @@ import {
     missingProfileNotice,
     ProfileResolver,
 } from "./profile.ts";
-import { saveDiscoverySettings } from "./settings-write.ts";
+import { readSettingsDocument, saveDiscoverySettings, writeSettingsDocument } from "./settings-write.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import { SpendTracker } from "./spend.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
@@ -306,10 +307,26 @@ export function createBedrockProvider(
         }
         const identity = { profile: currentProfile, auth };
         const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
-        const catalog = withDebugCatalog(options.catalog ?? createAwsDiscovery(config), debug, () => ({
-            mode: config.mode,
-            regions: config.regions,
-        }));
+        const catalogPath = () =>
+            catalogFileFor(
+                {
+                    profile: config.profile,
+                    mode: config.mode,
+                    tagKey: config.tagKey,
+                    tagValue: config.tagValue,
+                    activeTagKey: config.activeTagKey,
+                    activeTagValue: config.activeTagValue,
+                    profiles: config.profiles,
+                    regions: config.regions,
+                },
+                profileEnv,
+                true,
+            );
+        let catalog = withDebugCatalog(
+            options.catalog ?? createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv),
+            debug,
+            () => ({ mode: config.mode, regions: config.regions }),
+        );
         const spend = options.spend ?? new SpendTracker(config, options.env ?? process.env);
         registerSwitchNotice(pi, { env: options.env });
         const lifetime = new AbortController();
@@ -541,6 +558,12 @@ export function createBedrockProvider(
             if (signal.aborted) return;
             const message = loginOutcomeMessage(models.length, settled);
             interaction.notify({ type: "info", message });
+            if (config.preset !== undefined && config.profileSource === "preset") {
+                interaction.notify({
+                    type: "info",
+                    message: `Preset ${config.preset} is active; its AWS profile ${config.profile} is used. /bedrock preset add ${config.preset} saves this sign-in as a preset.`,
+                });
+            }
             // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
             // the dialog's teardown cannot clear the only lasting explanation of what happened.
             const context = ctx;
@@ -549,10 +572,216 @@ export function createBedrockProvider(
                 timer.unref();
             }
         };
+        const presetList = () => {
+            const raw = userSettings(profileEnv)?.presets;
+            return Object.keys(isObject(raw) ? raw : {})
+                .sort()
+                .map((name) => {
+                    const body = isObject(raw) && isObject(raw[name]) ? (raw[name] as Record<string, unknown>) : {};
+                    const profile =
+                        typeof body.profile === "string"
+                            ? body.profile
+                            : config.preset === name
+                              ? config.profile
+                              : undefined;
+                    const mode =
+                        body.profiles !== undefined
+                            ? "listed"
+                            : body.tagKey !== undefined || body.team !== undefined
+                              ? "by tag"
+                              : "AWS-defined";
+                    return {
+                        name,
+                        profile,
+                        mode,
+                        active: config.preset === name,
+                        source: config.preset === name ? config.presetSource : undefined,
+                    };
+                });
+        };
+        const saveSettings = (document: Record<string, unknown>): string | undefined => {
+            const saved = writeSettingsDocument(profileEnv, document);
+            return saved.ok ? undefined : saved.error;
+        };
+        const applyConfig = (next: ResolvedConfig): void => {
+            for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
+                if (!(key in next)) delete config[key];
+            Object.assign(config, next);
+            profiles.updateSetting(config.profile, config.profileSource);
+        };
+        const reloadForPreset = (name: string | undefined, context?: ExtensionCommandContext): ConfigResult => {
+            const raw = userSettings(profileEnv) ?? {};
+            const env = { ...profileEnv };
+            if (name !== undefined && env.JIG_BEDROCK_PRESET !== undefined) env.JIG_BEDROCK_PRESET = name;
+            const next = loadConfig({
+                raw: name === undefined ? raw : { ...raw, preset: name },
+                env,
+                agentDir: config.agentDir,
+                presetOverride: name,
+            });
+            return next;
+        };
+        const switchPreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
+            const before = new Set(config.presetNames ?? []);
+            if (!before.has(name)) {
+                emitPreset(context, [
+                    `✗ Unknown preset ${name}.`,
+                    `Known presets: ${[...before].sort().join(", ") || "none"}.`,
+                ]);
+                return;
+            }
+            const document = readSettingsDocument(profileEnv);
+            if (!("error" in document)) {
+                if (profileEnv.JIG_BEDROCK_PRESET === undefined) {
+                    document.target.preset = name;
+                    const error = saveSettings(document.document);
+                    if (error !== undefined) {
+                        emitPreset(context, [`✗ ${error}`]);
+                        return;
+                    }
+                }
+            }
+            const next = reloadForPreset(name, context);
+            if (!next.config) {
+                emitPreset(context, [`✗ ${next.error}`]);
+                return;
+            }
+            applyConfig(next.config);
+            lastChoice = { profile: config.profile, source: "preset", exists: true };
+            if (native) {
+                catalog = withDebugCatalog(
+                    options.catalog ?? createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv),
+                    debug,
+                    () => ({ mode: config.mode, regions: config.regions }),
+                );
+                await registerBedrockProvider(
+                    pi,
+                    config.agentDir || "",
+                    native,
+                    models,
+                    catalog.load,
+                    identity,
+                    messages,
+                    signedFetch,
+                    (options) => refreshForModelSelector(options.force),
+                );
+                const updated = readModels().available;
+                const selected = context.model;
+                const selectedId = selected?.provider === JIG_BEDROCK ? selected.id : undefined;
+                updateModels(models, updated);
+                let selectionNotified = false;
+                const checkSelection = (): void => {
+                    if (
+                        selectedId === undefined ||
+                        selectionNotified ||
+                        models.some((model) => model.id === selectedId)
+                    )
+                        return;
+                    selectionNotified = true;
+                    guard.blockUntilChoice();
+                    context.ui.notify(
+                        `Bedrock: ${selectedId} is not in preset ${name}; choose one with /model.`,
+                        "warning",
+                    );
+                };
+                const afterDiscovery = async (): Promise<void> => {
+                    const status = await refresh(false, false, true);
+                    if (status !== "ok") {
+                        context.ui.notify(`Bedrock: could not read the models for preset ${name}.`, "warning");
+                        return;
+                    }
+                    checkSelection();
+                };
+                if (models.length === 0) {
+                    context.ui.notify(`Bedrock: reading the models for ${name}…`, "info");
+                    void afterDiscovery();
+                } else {
+                    checkSelection();
+                    void afterDiscovery();
+                }
+            }
+            spend.updateFooter(context);
+            context.ui.notify(
+                profileEnv.JIG_BEDROCK_PRESET === undefined
+                    ? `Bedrock: preset ${name} is active.`
+                    : `Bedrock: preset ${name} is active for this Pi only.`,
+                "info",
+            );
+        };
+        const addPreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
+            if (!presetNamePattern.test(name)) {
+                emitPreset(context, [`✗ ${name} is not a preset name.`]);
+                return;
+            }
+            const document = readSettingsDocument(profileEnv);
+            if ("error" in document) {
+                emitPreset(context, [`✗ ${document.error}`]);
+                return;
+            }
+            const presets = isObject(document.target.presets) ? { ...document.target.presets } : {};
+            if (presets[name] !== undefined) {
+                emitPreset(context, [`✗ Preset ${name} already exists.`]);
+                return;
+            }
+            const body: Record<string, unknown> = {};
+            for (const key of PRESET_FIELDS) {
+                const value = (config as unknown as Record<string, unknown>)[key];
+                if (value !== undefined) body[key] = value;
+            }
+            if (config.profile !== undefined) body.profile = config.profile;
+            presets[name] = body;
+            document.target.presets = presets;
+            document.target.preset = name;
+            const error = saveSettings(document.document);
+            if (error !== undefined) {
+                emitPreset(context, [`✗ ${error}`]);
+                return;
+            }
+            const next = reloadForPreset(name);
+            if (!next.config) {
+                emitPreset(context, [`✗ ${next.error}`]);
+                return;
+            }
+            applyConfig(next.config);
+            lastChoice = { profile: config.profile, source: "preset", exists: true };
+            emitPreset(context, [`✓ Preset ${name} saved and active.`]);
+        };
+        const removePreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
+            const document = readSettingsDocument(profileEnv);
+            if ("error" in document) {
+                emitPreset(context, [`✗ ${document.error}`]);
+                return;
+            }
+            const presets = isObject(document.target.presets) ? { ...document.target.presets } : {};
+            if (presets[name] === undefined) {
+                emitPreset(context, [`✗ Preset ${name} does not exist.`]);
+                return;
+            }
+            delete presets[name];
+            document.target.presets = presets;
+            if (document.target.preset === name) delete document.target.preset;
+            const error = saveSettings(document.document);
+            if (error !== undefined) {
+                emitPreset(context, [`✗ ${error}`]);
+                return;
+            }
+            const next = reloadForPreset(undefined);
+            if (next.config) applyConfig(next.config);
+            emitPreset(context, [`✓ Preset ${name} removed.`]);
+        };
+        const emitPreset = (context: ExtensionCommandContext, rows: string[]): void => {
+            const text = ["Bedrock presets", ...rows].join("\n");
+            if (context.hasUI) context.ui.notify(text, "info");
+            else process.stdout.write(`${text}\n`);
+        };
         const commands = registerBedrockCommands(pi, {
             config,
             spend,
-            catalog,
+            catalog: {
+                load: () => catalog.load(),
+                refresh: (force = false) => catalog.refresh(force),
+                failure: () => catalog.failure?.(),
+            },
             models: () => models,
             profiles,
             stored: () => profiles.stored,
@@ -570,6 +799,12 @@ export function createBedrockProvider(
             unavailable: () => readModels().unavailable,
             lastChoice: () => lastChoice,
             loading: () => refreshInFlight !== undefined && models.length === 0,
+            presetNames: () => config.presetNames ?? [],
+            presetList: () => presetList(),
+            activePreset: () => ({ name: config.preset, source: config.presetSource }),
+            usePreset: (name, commandContext) => switchPreset(name, commandContext),
+            presetAdd: (name, commandContext) => addPreset(name, commandContext),
+            presetRemove: (name, commandContext) => removePreset(name, commandContext),
             apply: () => {
                 const next = loadConfig({
                     raw: userSettings(options.env ?? process.env),
@@ -699,7 +934,12 @@ export function createBedrockProvider(
             disposed = false;
             ctx = context;
             const choice = await resolveProfile(context);
-            if (options.preserveNativeAuth) {
+            if (config.presetUnknown !== undefined) {
+                context.ui.notify(
+                    `Bedrock: preset ${config.presetUnknown} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}.`,
+                    "warning",
+                );
+            } else if (options.preserveNativeAuth) {
                 // The native provider's own credentials decide; nothing here is reported.
             } else if (choice.ambient === true) {
                 if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
@@ -714,7 +954,9 @@ export function createBedrockProvider(
                 context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
             // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
             // discovery cannot succeed, so it is not started (the notice above already says what to do).
-            const canRefresh = choice.ambient === true || (config.profile !== undefined && choice.exists !== false);
+            const canRefresh =
+                config.presetUnknown === undefined &&
+                (choice.ambient === true || (config.profile !== undefined && choice.exists !== false));
             if (backgroundRefresh && canRefresh) void refresh(false).catch(() => {});
             void spend
                 .start(

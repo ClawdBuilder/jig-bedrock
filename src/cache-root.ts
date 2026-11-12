@@ -2,6 +2,7 @@
 // `~/.cache`). The root is the user's own choice and may be a link (`~/.cache` on another disk, or the temporary folder under
 // /var on macOS), so its real path is resolved here and used from then on. Below it, in the package's own folder, a link is
 // still refused (src/cache.ts when writing, src/catalog.ts when reading).
+import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -34,4 +35,37 @@ export function realCacheRoot(env: NodeJS.ProcessEnv = process.env, create = fal
 /** The catalog cache file under the real cache root; `create` makes the root when it is missing (before a write). */
 export function catalogFile(env: NodeJS.ProcessEnv = process.env, create = false): string {
     return join(realCacheRoot(env, create), "jig-bedrock", "catalog.json");
+}
+
+/** One catalog per AWS profile and discovery scope. The name is a short hash, never the profile itself. */
+export function catalogFileFor(
+    scope: {
+        profile?: string;
+        mode?: string;
+        tagKey?: string;
+        tagValue?: string;
+        activeTagKey?: string;
+        activeTagValue?: string;
+        profiles?: readonly string[];
+        regions?: readonly string[];
+    },
+    env: NodeJS.ProcessEnv = process.env,
+    create = false,
+): string {
+    const hash = createHash("sha256")
+        .update(
+            JSON.stringify([
+                scope.profile ?? "",
+                scope.mode ?? "",
+                scope.tagKey ?? "",
+                scope.tagValue ?? "",
+                scope.activeTagKey ?? "",
+                scope.activeTagValue ?? "",
+                scope.profiles ?? [],
+                scope.regions ?? [],
+            ]),
+        )
+        .digest("hex")
+        .slice(0, 12);
+    return join(realCacheRoot(env, create), "jig-bedrock", `catalog-${hash}.json`);
 }

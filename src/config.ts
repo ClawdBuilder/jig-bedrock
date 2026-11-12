@@ -34,7 +34,15 @@ export interface ResolvedConfig {
     /** Unset when the person has not configured one; the resolver in profile.ts fills it in. */
     profile?: string;
     /** Where an explicitly configured profile came from, for diagnostics. */
-    profileSource?: "setting" | "env";
+    profileSource?: "setting" | "env" | "preset";
+    /** The active preset that supplied the profile, for diagnostics. */
+    profilePreset?: string;
+    /** The active preset name, its source, and the valid names. */
+    preset?: string;
+    presetSource?: "file" | "env";
+    presetNames?: string[];
+    /** Set when the active preset name does not exist; the provider lists no models. */
+    presetUnknown?: string;
     regions: string[];
     /** Optional argv that prints { month, spentUsd }; never a shell. */
     spendCommand?: string[];
@@ -65,7 +73,26 @@ const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a browser path may not contain control characters
 const browserPattern = /^(?:\/[^\s\x00-\x1f\x7f]{1,4095}|[A-Za-z0-9][A-Za-z0-9._+-]{0,127})$/;
 /** Every setting of the `bedrock` section. A key that is not one of these is an error. */
+export const PRESET_FIELDS = [
+    "profile",
+    "regions",
+    "tagKey",
+    "tagValue",
+    "activeTagKey",
+    "activeTagValue",
+    "profiles",
+    "team",
+    "api",
+    "converseModels",
+    "messagesModels",
+    "monthlyBudgetUsd",
+    "spendCommand",
+] as const;
+export const MACHINE_FIELDS = ["ssoLoginCommand", "signInAtStart", "browser", "debug"] as const;
+export const presetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 export const FIELDS = [
+    "presets",
+    "preset",
     "team",
     "tagKey",
     "tagValue",
@@ -259,12 +286,40 @@ export function validateBedrock(raw: unknown): string[] {
     return errors;
 }
 
+/** The presets object, or the problem with it. Machine-wide keys are refused inside a preset. */
+function readPresets(value: unknown): { presets?: Record<string, Record<string, unknown>>; error?: string } {
+    if (value === undefined) return { presets: {} };
+    if (!isObject(value)) return { error: "bedrock.presets must be an object of named presets" };
+    const presets: Record<string, Record<string, unknown>> = {};
+    for (const [name, body] of Object.entries(value)) {
+        if (!presetNamePattern.test(name))
+            return {
+                error: `bedrock.presets.${name} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
+            };
+        if (!isObject(body)) return { error: `bedrock.presets.${name} must be an object` };
+        const machine = Object.keys(body).find((key) => (MACHINE_FIELDS as readonly string[]).includes(key));
+        if (machine !== undefined)
+            return { error: `bedrock.presets.${name}.${machine} is machine-wide; keep it at the top level` };
+        const unknown = Object.keys(body).find((key) => !(PRESET_FIELDS as readonly string[]).includes(key));
+        if (unknown !== undefined) return { error: `bedrock.presets.${name}.${unknown} is not a preset setting` };
+        const [problem] = problemsOf({ ...DEFAULTS, ...body } as Record<string, unknown>);
+        if (problem !== undefined) return { error: `bedrock.presets.${name}: ${problem}` };
+        presets[name] = body;
+    }
+    return { presets };
+}
+
 /**
  * The settings as the provider uses them: the package defaults, then `raw` (the `bedrock` section, or undefined when
  * there is none), then the environment variables.
  */
 export function loadConfig(
-    options: { raw: Record<string, unknown> | undefined; env?: NodeJS.ProcessEnv; agentDir?: string } = {
+    options: {
+        raw: Record<string, unknown> | undefined;
+        env?: NodeJS.ProcessEnv;
+        agentDir?: string;
+        presetOverride?: string;
+    } = {
         raw: undefined,
     },
 ): ConfigResult {
@@ -275,15 +330,62 @@ export function loadConfig(
     const known = Object.fromEntries(
         Object.entries(raw).filter(([key]) => (FIELDS as readonly string[]).includes(key)),
     );
-    const c: Record<string, unknown> = { ...DEFAULTS, ...known, agentDir };
+    const parsedPresets = readPresets(known.presets);
+    if (parsedPresets.error !== undefined) return { error: parsedPresets.error };
+    const presets = parsedPresets.presets ?? {};
+    const names = Object.keys(presets).sort();
+    const envPreset = env.JIG_BEDROCK_PRESET;
+    const requested =
+        options.presetOverride ??
+        (envPreset !== undefined && envPreset !== ""
+            ? envPreset
+            : typeof known.preset === "string"
+              ? known.preset
+              : undefined);
+    if (requested !== undefined && !presetNamePattern.test(requested))
+        return { error: `bedrock.preset must be a preset name: ${requested}` };
+    if (requested !== undefined && presets[requested] === undefined)
+        return {
+            config: {
+                ...(DEFAULTS as unknown as ResolvedConfig),
+                regions: [...DEFAULTS.regions],
+                agentDir,
+                preset: requested,
+                presetNames: names,
+                presetUnknown: requested,
+            },
+            ...(unknown.length === 0 ? {} : { unknown }),
+        };
+    const active = requested === undefined ? {} : (presets[requested] ?? {});
+    const c: Record<string, unknown> = {
+        ...DEFAULTS,
+        ...known,
+        ...active,
+        agentDir,
+        ...(requested === undefined ? {} : { preset: requested }),
+        ...(requested === undefined
+            ? {}
+            : { presetSource: envPreset !== undefined && envPreset !== "" ? "env" : "file" }),
+        presetNames: names,
+    };
+    delete c.presets;
+    // The active name itself is metadata, not an effective value; keep it only as config.preset.
+    delete c.preset;
+    if (requested !== undefined) c.preset = requested;
     if (env.JIG_BEDROCK_TEAM !== undefined) c.team = env.JIG_BEDROCK_TEAM;
     if (env.JIG_BEDROCK_TAG_KEY !== undefined) c.tagKey = env.JIG_BEDROCK_TAG_KEY;
     if (env.JIG_BEDROCK_TAG_VALUE !== undefined) c.tagValue = env.JIG_BEDROCK_TAG_VALUE;
-    let profileSource: "setting" | "env" | undefined =
-        typeof c.profile === "string" && c.profile !== "" ? "setting" : undefined;
+    let profileSource: "setting" | "env" | "preset" | undefined =
+        typeof c.profile === "string" && c.profile !== ""
+            ? active.profile !== undefined
+                ? "preset"
+                : "setting"
+            : undefined;
+    if (active.profile !== undefined) c.profilePreset = requested;
     if (env.JIG_BEDROCK_PROFILE !== undefined) {
         c.profile = env.JIG_BEDROCK_PROFILE;
         profileSource = "env";
+        delete c.profilePreset;
     }
     if (env.JIG_BEDROCK_DEBUG === "1") c.debug = true;
     if (env.JIG_BEDROCK_REGIONS !== undefined)
@@ -291,6 +393,7 @@ export function loadConfig(
     if (typeof c.profile === "string" && c.profile.trim() === "") {
         delete c.profile;
         profileSource = undefined;
+        delete c.profilePreset;
     }
     const [problem] = problemsOf(c);
     if (problem !== undefined) return { error: `${problem}.` };
@@ -307,7 +410,6 @@ export function loadConfig(
     c.tagValue = tagValue;
     if (profileSource !== undefined) c.profileSource = profileSource;
     c.mode = explicit ? "explicit" : tagValue !== undefined || c.tagKey !== undefined ? "tag" : "system";
-    // Legacy team settings keep Active=true unless the user sets an active tag key.
     if (c.mode === "tag" && c.activeTagKey === undefined && team !== undefined)
         c.activeTagValue = c.activeTagValue ?? "true";
     if (c.mode !== "tag") {

@@ -18,6 +18,8 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 
 | Setting            | Type                         | Default                             | Environment variable    | Meaning                                                                |
 | ------------------ | ---------------------------- | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `presets`          | object                       | unset                               | none                    | Named sets of profile, discovery, route, budget and spend settings.    |
+| `preset`           | string                       | unset                               | `JIG_BEDROCK_PRESET`    | Active preset name.                                                    |
 | `profile`          | string                       | unset                               | `JIG_BEDROCK_PROFILE`   | AWS profile for discovery, requests and sign-in.                       |
 | `regions`          | list                         | `["us-east-1"]`                     | `JIG_BEDROCK_REGIONS`   | Regions to search, 1 to 16; the first picks the plain id.              |
 | `tagKey`           | string                       | unset                               | `JIG_BEDROCK_TAG_KEY`   | Tag name for tag mode; use with `tagValue`.                            |
@@ -37,6 +39,14 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 | `debug`            | boolean                      | `false`                             | `JIG_BEDROCK_DEBUG=1`   | One private JSON line per request, discovery or repair.                |
 
 `set` and `unset` change one key at a time. A model cannot be in both `converseModels` and `messagesModels`.
+
+## Presets
+
+A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
+
+A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
+
+Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. `/bedrock use` switches now; `/bedrock preset add` snapshots the current settings; `/bedrock preset remove` deletes one.
 
 ## Which AWS profile is used
 
