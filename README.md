@@ -31,7 +31,9 @@ You need: Node 22.19+, Pi 1.5 or later, AWS CLI v2, an AWS profile that can call
 pi install npm:@clawdbuilder/jig-bedrock
 ```
 
-Done when `pi list` shows `npm:@clawdbuilder/jig-bedrock`.
+Using Jig? `jig install npm:@clawdbuilder/jig-bedrock`; then use `jig` wherever these steps say `pi`.
+
+Done when `pi list` or `jig list` shows `npm:@clawdbuilder/jig-bedrock`.
 
 **2. Sign in**
 
@@ -169,6 +171,8 @@ Presets are named settings.
 **Update:** `pi update npm:@clawdbuilder/jig-bedrock`, then `/reload`.
 
 **Remove:** `/logout`, then `pi remove npm:@clawdbuilder/jig-bedrock`. It leaves some files: [Files on disk](docs/settings.md#files-on-disk).
+
+With Jig, `jig update` updates jig-bedrock (it is installed unpinned) and `jig remove npm:@clawdbuilder/jig-bedrock` removes it.
 
 ## More detail
 
