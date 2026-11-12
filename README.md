@@ -1,6 +1,6 @@
 # jig-bedrock
 
-Claude on AWS Bedrock for Pi, signed in with your AWS profile.
+Claude on AWS Bedrock for Pi, using your AWS profile.
 
 ![Pi sends a request to jig-bedrock, which signs it for Amazon Bedrock. jig-bedrock finds your models, renews an expired SSO sign-in, keeps the prompt cache and shows spend in the footer.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/overview.svg)
 
@@ -9,9 +9,9 @@ _jig-bedrock sits between Pi and Amazon Bedrock and adds four things._
 ## Why use it
 
 - After a tool loads: 275 tokens written to the cache, not 34,463.
-- Lists your account's Claude models, by tag too.
-- An expired SSO sign-in renews, and the request is sent once more.
-- Month spend and budget in Pi's footer.
+- Lists your account's Claude models; your team's application inference profiles may hold other models too.
+- An expired SSO sign-in renews; the request is sent once more.
+- Spend and budget in the footer.
 
 ![Bar chart: after a tool loads, jig-bedrock writes 275 tokens to the cache and Pi built-in writes 34,463. Session cost is $0.0051 against $0.0099.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/cache-after-tool-load.svg)
 
@@ -102,19 +102,19 @@ Done when the last line is `Bedrock is ready.`
 /bedrock budget 200
 ```
 
-`Nov $12.40 / $200`; warning at 80%, error at 100%. [Details](docs/how-it-works.md#spend-and-the-footer).
+`Nov $12.40 / $200`; warning at 80%, error at 100%. [Spend details](docs/how-it-works.md#spend-and-the-footer); [prompt cache](docs/how-it-works.md#prompt-cache-by-model).
 
 ## Compared with Pi's built-in Bedrock provider
 
-|                         | Pi built-in               | jig-bedrock                   |
-| ----------------------- | ------------------------- | ----------------------------- |
-| Install                 | Part of Pi                | `pi install`                  |
-| Sign-in                 | API key or environment    | AWS profile: SSO, keys, role  |
-| Models                  | Pi's list, non-Claude too | Claude models in your account |
-| Expired SSO sign-in     | Request fails             | Renewed, sent once more       |
-| Cache after a tool load | Rewritten                 | Kept on four models           |
-| 1-hour cache            | Claude 4.5 and later      | Converse models only          |
-| Spend and budget        | Not included              | In the footer                 |
+|                         | Pi built-in               | jig-bedrock                                     |
+| ----------------------- | ------------------------- | ----------------------------------------------- |
+| Install                 | Part of Pi                | `pi install`                                    |
+| Sign-in                 | API key or environment    | AWS profile: SSO, keys, role                    |
+| Models                  | Pi's list, non-Claude too | Claude; others by application inference profile |
+| Expired SSO sign-in     | Request fails             | Renewed, sent once more                         |
+| Cache after a tool load | Rewritten                 | Kept on four Claude models                      |
+| 1-hour cache            | Claude 4.5 and later      | Converse models only                            |
+| Spend and budget        | Not included              | In the footer                                   |
 
 ## Commands
 
@@ -125,7 +125,7 @@ Done when the last line is `Bedrock is ready.`
 | `/bedrock models`  | Models, route, price.            |
 | `/bedrock refresh` | Reads models now, any cache age. |
 | `/bedrock login`   | Renews the AWS sign-in.          |
-| `/bedrock usage`   | Spend by model, period.          |
+| `/bedrock usage`   | Spend by model and period.       |
 
 `/bedrock help` lists every command, including `settings`, `set` and `budget`.
 
@@ -155,12 +155,12 @@ Done when the last line is `Bedrock is ready.`
 
 ## More detail
 
-| Page                                       | Read it when         |
-| ------------------------------------------ | -------------------- |
-| [How it works](docs/how-it-works.md)       | Routes and ids.      |
-| [Settings](docs/settings.md)               | Edit `bedrock.json`. |
-| [Troubleshooting](docs/troubleshooting.md) | A command fails.     |
-| [Spend command](docs/spend-command.md)     | When using one.      |
+| Page                                       | Read it when            |
+| ------------------------------------------ | ----------------------- |
+| [How it works](docs/how-it-works.md)       | Routes and ids.         |
+| [Settings](docs/settings.md)               | Edit `bedrock.json`.    |
+| [Troubleshooting](docs/troubleshooting.md) | A command fails.        |
+| [Spend command](docs/spend-command.md)     | You set `spendCommand`. |
 
 ## For an agent setting this up
 
