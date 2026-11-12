@@ -62,7 +62,7 @@ approval.
   [--timeout 240] [--keep] [--dry-run] [--fake-aws]` runs, for each model and thinking level, a session that thinks,
   loads a tool with `tool_search`, calls it and answers, in a temporary home with the real `~/.aws` linked in. It prints
   the cache read and write of each call and one table. On Messages a row passes only when the call after the tool load
-  read the prompt from the cache. `--dry-run` and `--fake-aws` check the script itself without AWS.
+  read the prompt from the cache. `--dry-run` and `--fake-aws` check the script itself without AWS. `--pi` defaults to the first Pi on PATH.
 
 Those runs are how the route table in [How it works](how-it-works.md#which-route-a-model-gets) was made. When a Pi release
 adds a Claude model, run the second script for it before you trust the route rule.

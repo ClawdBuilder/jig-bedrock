@@ -119,8 +119,8 @@ test("on with JIG_BEDROCK_DEBUG=1 or the debug setting, and the setting is check
 });
 
 test("the log path follows XDG_STATE_HOME, else ~/.local/state", () => {
-    assert.equal(debugLogPath({ XDG_STATE_HOME: "/state", HOME: "/home/a" }), "/state/jig-bedrock/debug.log");
-    assert.equal(debugLogPath({ HOME: "/home/a" }), "/home/a/.local/state/jig-bedrock/debug.log");
+    assert.equal(debugLogPath({ XDG_STATE_HOME: "/state", HOME: "/home/user" }), "/state/jig-bedrock/debug.log");
+    assert.equal(debugLogPath({ HOME: "/home/user" }), "/home/user/.local/state/jig-bedrock/debug.log");
 });
 
 test("redact: an account id becomes <account>, a full ARN its last path segment, a secret goes", () => {

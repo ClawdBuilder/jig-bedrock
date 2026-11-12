@@ -3,6 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const wordFile = process.env.JIG_SCAN_WORDS || path.join(homedir(), ".config", "jig", "scan-words.txt");
@@ -30,18 +31,27 @@ const BANNED =
         ? undefined
         : new RegExp(`\\b(?:${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
 const SECRET = /(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const HOME_NAME = /^(?:me|you|user|<user>)$/i;
+/** A machine path, except the obvious placeholders pages use in examples. */
+export function hasMachinePath(line) {
+    for (const match of line.matchAll(/\/home\/([^/\s]+)\//g)) if (!HOME_NAME.test(match[1] ?? "")) return true;
+    for (const match of line.matchAll(/\/Users\/([^/\s]+)\//g)) if (!HOME_NAME.test(match[1] ?? "")) return true;
+    for (const match of line.matchAll(/[A-Za-z]:\\Users\\([^\\\s]+)\\/g))
+        if (!HOME_NAME.test(match[1] ?? "")) return true;
+    return /\.nvm\/versions\/node\//.test(line) || /\/tmp\/claude-/.test(line);
+}
 let bad = 0;
 function walk(dir) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.name === ".git" || entry.name === "node_modules") continue;
         const file = path.join(dir, entry.name);
         if (entry.isDirectory()) walk(file);
-        else if (/\.(ts|js|md|json|mjs|yml|yaml|txt)$/.test(entry.name)) {
+        else if (/\.(ts|js|md|json|mjs|yml|yaml|txt|sh|bash|zsh)$/.test(entry.name)) {
             const relative = path.relative(ROOT, file);
             const lines = readFileSync(file, "utf8").split("\n");
             for (let index = 0; index < lines.length; index++) {
                 const line = lines[index] ?? "";
-                if (SECRET.test(line) || (BANNED && BANNED.test(line))) {
+                if (SECRET.test(line) || hasMachinePath(line) || (BANNED && BANNED.test(line))) {
                     // Only the location: the matched word and its context stay out of the log.
                     console.log(`${relative}:${index + 1}`);
                     bad++;
@@ -50,6 +60,10 @@ function walk(dir) {
         }
     }
 }
-walk(ROOT);
-console.log(`scan: ${bad} hits, ${note}`);
-process.exit(bad === 0 ? 0 : 1);
+function run() {
+    walk(ROOT);
+    console.log(`scan: ${bad} hits, ${note}`);
+    process.exit(bad === 0 ? 0 : 1);
+}
+
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
