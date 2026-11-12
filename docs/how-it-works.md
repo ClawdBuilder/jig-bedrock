@@ -104,6 +104,7 @@ Nothing waits for AWS at start.
 
 - Every reply adds one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`; no prompt, ARN, account id or AWS profile name.
 - The first reply of a month imports earlier sessions from this agent folder once.
+- With a preset the footer starts with its name: `work · Nov $12.40 / $200`.
 - The footer shows `Nov $12.40`, or `Nov $12.40 / $200` with a budget. A `+` means an unpriced reply.
 - Warning colour starts at 80%, error at 100%; the footer clears when another provider's model is selected.
 - A `spendCommand` supplies the figure instead: [Spend command](spend-command.md).

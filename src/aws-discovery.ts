@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
@@ -140,10 +141,21 @@ async function eachLimit<T>(items: T[], limit: number, worker: (item: T) => Prom
     await Promise.all(workers);
 }
 
+/** Keep the eight newest per-scope catalog files; the old single catalog.json is left alone. */
+export function pruneCatalogFiles(folder: string, keep = 8): void {
+    try {
+        const files = readdirSync(folder)
+            .filter((name) => /^catalog-[0-9a-f]{12}\.json$/.test(name))
+            .map((name) => ({ name, time: statSync(join(folder, name)).mtimeMs }))
+            .sort((a, b) => b.time - a.time);
+        for (const entry of files.slice(keep)) rmSync(join(folder, entry.name), { force: true });
+    } catch {}
+}
+
 export function createAwsDiscovery(
     config: ResolvedConfig,
     runner: Runner = runFile,
-    file?: string,
+    file?: string | (() => string),
     now = Date.now,
     env: NodeJS.ProcessEnv = process.env,
 ): CatalogSource {
@@ -161,8 +173,14 @@ export function createAwsDiscovery(
         config.activeTagKey ?? (config.team === undefined ? undefined : "Active");
     const scope = () => ({ ...config, mode: modeFor(), team: config.team });
     // Without a file of its own the cache is in the user's cache root, whose links are followed (src/cache-root.ts).
-    const readFrom = () => file ?? catalogFile(env);
-    const load = () => (invalidAccount ? undefined : readCatalog(readFrom(), scope(), now()));
+    const readFrom = () => (typeof file === "function" ? file() : (file ?? catalogFile(env)));
+    const readCurrent = () => {
+        if (invalidAccount) return undefined;
+        const current = readCatalog(readFrom(), scope(), now());
+        if (current !== undefined || (file !== undefined && typeof file === "string")) return current;
+        return readCatalog(catalogFile(env), scope(), now());
+    };
+    const load = () => readCurrent();
     const perform = async (force = false): Promise<Status> => {
         const mode = modeFor();
         const activeKey = activeKeyFor();
@@ -198,7 +216,7 @@ export function createAwsDiscovery(
         };
         try {
             if (!force && !invalidAccount) {
-                const cached = readCatalog(readFrom(), scope(), now());
+                const cached = readCurrent();
                 if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
             const account = (await step("check the AWS account", () => aws(["sts", "get-caller-identity"]))).Account;
@@ -441,7 +459,8 @@ export function createAwsDiscovery(
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             };
-            atomicCache(file ?? catalogFile(env, true), catalog);
+            atomicCache(readFrom(), catalog);
+            if (typeof file === "function") pruneCatalogFiles(dirname(readFrom()));
             invalidAccount = false;
             lastFailure = undefined;
             return "ok";

@@ -53,6 +53,18 @@ In tag mode the row says `no inference profiles with tag Team=payments`.
 
 **Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. Then run `/bedrock models`.
 
+## Unknown preset
+
+**You see**
+
+```text
+Bedrock: preset work is not defined; known: personal.
+```
+
+**Run:** `/bedrock use`
+
+**Still wrong?** Fix `preset` in `bedrock.json`, unset `JIG_BEDROCK_PRESET`, or add the preset with `/bedrock preset add <name>`.
+
 ## A model is missing after an update
 
 **You see**

@@ -7,7 +7,7 @@ import type { ApiKeyCredential, ProviderAuth, ProviderAuthInteraction } from "@e
 import { listProfileNames } from "./aws-config-read.ts";
 import { profilePattern } from "./config.ts";
 
-export type ProfileSource = "setting" | "env" | "login" | "AWS_PROFILE" | "AWS_DEFAULT_PROFILE" | "default";
+export type ProfileSource = "setting" | "env" | "preset" | "login" | "AWS_PROFILE" | "AWS_DEFAULT_PROFILE" | "default";
 
 /** The profile to use, where it came from, and whether the AWS CLI lists it. `exists` undefined means "not checked". */
 export interface ProfileChoice {
@@ -24,7 +24,7 @@ export interface ProfileSettings {
     /** `bedrock.profile` from the settings file. */
     setting?: string;
     /** `env` when JIG_BEDROCK_PROFILE supplied the setting; `setting` otherwise. */
-    settingSource?: "setting" | "env";
+    settingSource?: "setting" | "env" | "preset";
     env?: NodeJS.ProcessEnv;
 }
 
@@ -40,6 +40,8 @@ export function sourceLabel(source: ProfileSource | undefined): string {
     switch (source) {
         case "setting":
             return "bedrock.profile";
+        case "preset":
+            return "active preset";
         case "env":
             return "JIG_BEDROCK_PROFILE";
         case "login":
@@ -139,7 +141,7 @@ export class ProfileResolver {
     }
 
     /** The settings can change on a reload; the next resolve uses the new setting. */
-    updateSetting(setting: string | undefined, source: "setting" | "env" | undefined): void {
+    updateSetting(setting: string | undefined, source: "setting" | "env" | "preset" | undefined): void {
         this.settings.setting = setting;
         this.settings.settingSource = source;
     }

@@ -7,6 +7,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
+import { isObject } from "./check.ts";
 import { DEFAULTS, FIELDS, loadConfig, type ResolvedConfig } from "./config.ts";
 import { debugEnabled, debugLogPath } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
@@ -27,6 +28,8 @@ export const BEDROCK_SUBCOMMANDS = [
     "set",
     "unset",
     "migrate",
+    "use",
+    "preset",
     "help",
 ] as const;
 const HELP: Record<(typeof BEDROCK_SUBCOMMANDS)[number], string> = {
@@ -41,6 +44,8 @@ const HELP: Record<(typeof BEDROCK_SUBCOMMANDS)[number], string> = {
     set: "change one setting in bedrock.json",
     unset: "remove one setting from bedrock.json",
     migrate: "copy a 0.2.x jig.json section once",
+    use: "switch presets, or list them",
+    preset: "add or remove a preset",
     help: "this list",
 };
 const clean = (value: unknown, max = 100): string =>
@@ -100,6 +105,12 @@ export interface BedrockCommandSources {
     unavailable?: () => Array<{ profile: string; region: string; reason: string }>;
     apply?: () => void;
     lastChoice?: () => ProfileChoice;
+    presetNames?: () => string[];
+    presetList?: () => Array<{ name: string; profile?: string; mode?: string; active: boolean; source?: string }>;
+    activePreset?: () => { name?: string; source?: string };
+    usePreset?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
+    presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
+    presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
     doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
@@ -158,6 +169,12 @@ export function registerBedrockCommands(
         const limit = config.monthlyBudgetUsd;
         const rows: string[] = [];
         let problems = 0;
+        if (config.presetUnknown !== undefined) {
+            rows.push(
+                `${m.fail} Preset: ${clean(config.presetUnknown)} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}`,
+            );
+            problems++;
+        }
         if (last.profile === undefined) {
             rows.push(`${m.fail} AWS profile: none chosen`);
             problems++;
@@ -246,15 +263,21 @@ export function registerBedrockCommands(
             debug: "JIG_BEDROCK_DEBUG",
         };
         const defaults = DEFAULTS as Record<string, unknown>;
-        const keys = FIELDS.filter((key) => key !== "team");
-        const isSet = (key: string) =>
-            envNames[key] !== undefined && env[envNames[key] as string] !== undefined
-                ? "environment"
-                : Object.hasOwn(doc.target, key)
-                  ? "file"
-                  : Object.hasOwn(defaults, key)
-                    ? "default"
-                    : undefined;
+        const keys = FIELDS.filter((key) => key !== "team" && key !== "presets");
+        const rawPresets = isObject(doc.target.presets) ? (doc.target.presets as Record<string, unknown>) : {};
+        const presetBody =
+            config.preset !== undefined && isObject(rawPresets[config.preset])
+                ? (rawPresets[config.preset] as Record<string, unknown>)
+                : {};
+        const isSet = (key: string) => {
+            if (key === "preset")
+                return config.preset === undefined ? undefined : config.presetSource === "env" ? "environment" : "file";
+            if (envNames[key] !== undefined && env[envNames[key] as string] !== undefined) return "environment";
+            if (config.preset !== undefined && Object.hasOwn(presetBody, key)) return `preset ${config.preset}`;
+            if (Object.hasOwn(doc.target, key)) return "file";
+            if (Object.hasOwn(defaults, key)) return "default";
+            return undefined;
+        };
         const show = (key: string, value: unknown): string => {
             if (Array.isArray(value)) {
                 if (key === "ssoLoginCommand" || key === "spendCommand") return value.join(" ");
@@ -460,6 +483,10 @@ export function registerBedrockCommands(
         });
         const m = markers(env);
         const rows: string[] = [];
+        if (config.presetUnknown !== undefined)
+            rows.push(
+                `${m.fail} Preset: ${clean(config.presetUnknown)} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}`,
+            );
         const node =
             health.node.status === "ready"
                 ? `${m.ok} Node ${health.node.version ?? "unknown"}`
@@ -538,6 +565,7 @@ export function registerBedrockCommands(
         const problems = rows.filter((row) => row.startsWith(m.fail)).length;
         const next = (() => {
             const failed = rows.find((row) => row.startsWith(m.fail)) ?? "";
+            if (failed.includes("Preset")) return "Next: /bedrock use, or edit bedrock.json";
             if (failed.includes("Node")) return "Next: upgrade Node to 22.19 or later";
             if (failed.includes("AWS CLI")) return "Next: install AWS CLI v2";
             if (failed.includes("AWS profile")) return "Next: /login, choose Amazon Bedrock (jig-bedrock)";
@@ -553,6 +581,59 @@ export function registerBedrockCommands(
         rows.push(problems === 0 ? "Bedrock is ready." : `${problems} problem${problems === 1 ? "" : "s"}.`);
         if (problems > 0) rows.push(next);
         emit(ctx, "Bedrock doctor", rows);
+    };
+    const use = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        const name = args.trim();
+        if (name === "") {
+            const list = sources.presetList?.() ?? [];
+            if (list.length === 0) {
+                emit(ctx, "Bedrock presets", ["– No presets. Add one with /bedrock preset add <name>."]);
+                return;
+            }
+            const m = markers(env);
+            emit(ctx, "Bedrock presets", [
+                ...list.map((entry) => {
+                    const active = entry.active ? " · active" : "";
+                    const source = entry.active && entry.source !== undefined ? ` (${entry.source})` : "";
+                    return `${entry.active ? m.ok : m.skip} ${entry.name} · ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${active}${source}`;
+                }),
+                "Next: /bedrock use <name>",
+            ]);
+            return;
+        }
+        if (!sources.usePreset) {
+            emit(ctx, "Bedrock presets", ["✗ This install cannot switch presets."]);
+            return;
+        }
+        await sources.usePreset(name, ctx);
+    };
+    const preset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        const [action = "", name = ""] = args.trim().split(/\s+/);
+        if (action === "add") {
+            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
+                emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset add <name>"]);
+                return;
+            }
+            if (!sources.presetAdd) {
+                emit(ctx, "Bedrock presets", ["✗ This install cannot add presets."]);
+                return;
+            }
+            await sources.presetAdd(name, ctx);
+            return;
+        }
+        if (action === "remove") {
+            if (name === "") {
+                emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset remove <name>"]);
+                return;
+            }
+            if (!sources.presetRemove) {
+                emit(ctx, "Bedrock presets", ["✗ This install cannot remove presets."]);
+                return;
+            }
+            await sources.presetRemove(name, ctx);
+            return;
+        }
+        emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset add|remove <name>"]);
     };
     const help = async (ctx: ExtensionCommandContext): Promise<void> => {
         emit(
@@ -646,6 +727,12 @@ export function registerBedrockCommands(
             case "unset":
                 await unset(tail, ctx);
                 return;
+            case "use":
+                await use(tail, ctx);
+                return;
+            case "preset":
+                await preset(tail, ctx);
+                return;
             case "migrate":
                 if (sources.migrate) await sources.migrate("migrate", ctx);
                 else emit(ctx, "Bedrock", ["! No 0.2.x settings to migrate."]);
@@ -669,8 +756,19 @@ export function registerBedrockCommands(
             return names
                 .filter((name) => name.startsWith(parts[0] ?? ""))
                 .map((name) => ({ value: name, label: name }));
-        if (parts[0] === "set" && parts.length === 2)
-            return FIELDS.filter((key) => key.startsWith(parts[1] ?? "")).map((key) => ({ value: key, label: key }));
+        if ((parts[0] === "set" || parts[0] === "unset") && parts.length === 2)
+            return FIELDS.filter((key) => key.startsWith(parts[1] ?? "")).map((key) => ({
+                value: `${parts[0]} ${key}`,
+                label: key,
+            }));
+        if (parts[0] === "use" && parts.length === 2)
+            return (sources.presetNames?.() ?? [])
+                .filter((name) => name.startsWith(parts[1] ?? ""))
+                .map((name) => ({ value: `use ${name}`, label: name }));
+        if (parts[0] === "preset" && parts[1] === "remove" && parts.length === 3)
+            return (sources.presetNames?.() ?? [])
+                .filter((name) => name.startsWith(parts[2] ?? ""))
+                .map((name) => ({ value: `preset remove ${name}`, label: name }));
         return [];
     };
     const legacy =

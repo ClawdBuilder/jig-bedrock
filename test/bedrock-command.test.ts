@@ -50,6 +50,7 @@ function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv) {
         refresh: async () => "ok",
         lastChoice: () => ({ profile: "fixture", exists: true }),
         unavailable: () => [],
+        presetNames: () => ["dev", "work"],
     });
     const ctx = {
         hasUI: true,
@@ -103,7 +104,21 @@ test("set and unset write the settings file and apply", async (t) => {
 test("completions list sub-commands and setting names", () => {
     const h = harness({ after() {} }, {});
     assert.ok(h.result.completions("us").some((item) => item.value === "usage"));
-    assert.ok(h.result.completions("set pro").some((item) => item.value === "profile"));
+    assert.ok(h.result.completions("set pro").some((item) => item.value === "set profile" && item.label === "profile"));
+    assert.ok(h.result.completions("unset pro").some((item) => item.value === "unset profile"));
+    for (const [prefix, command] of [
+        ["set r", "set"],
+        ["unset r", "unset"],
+        ["use d", "use"],
+        ["preset remove d", "preset remove"],
+    ] as const) {
+        const values = h.result.completions(prefix);
+        assert.ok(values.length > 0, prefix);
+        assert.ok(
+            values.every((item) => item.value.startsWith(`${command} `)),
+            prefix,
+        );
+    }
 });
 
 test("old names append the deprecation line", async (t) => {
