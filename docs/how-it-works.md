@@ -58,7 +58,7 @@ The catalog is private, written by atomic rename, and records the AWS profile an
 
 ## Model ids
 
-The short id is the Claude name and version, such as `claude-sonnet-5-5`. The plain id goes to the AWS-defined inference profile of your first region's geography, then `global`, then other regions in order. Another profile for the same model gets a longer id, such as `-global`; two application profiles both get the longer form. An older id still selects it.
+The short id is the Claude name and version, such as `claude-sonnet-5-5`. The plain id goes to the AWS-defined inference profile of your first region's geography, then `global`, then other regions in order. Another inference profile for the same model gets a longer id, such as `-global`; two application inference profiles for one model both get the longer form. An older id still selects it.
 
 A reply is recorded as `jig-bedrock/<short id>`; the ARN stays off the session list.
 
