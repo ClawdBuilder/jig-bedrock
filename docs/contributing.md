@@ -103,20 +103,28 @@ image points at a file that is published, and no page uses "profile" without a w
 "inference profile"). Each meaning has one home: the words and the route rule in `docs/how-it-works.md`, the settings in
 `docs/settings.md`, symptoms in `docs/troubleshooting.md`. The other pages point there.
 
-## Diagram design
+## Diagrams
 
-Hand-written SVG in `docs/img/`, one look:
+1. **Name the path.** Write the one sequence the diagram shows, 4 to 6 nodes, as `A → B → C`; for example `Pi → jig-bedrock → Amazon Bedrock`. Every other idea is a marker on that path or belongs in the text around the image. _Done when_ the path fits on one line.
 
-- `width="880"` and matching viewBox; one white card `rx="12"` with `#D0D7DE` stroke; system font on the root.
-- Text: 13 labels, 15 bold box titles, 12 footnotes, 28 bold for one number; 12 to 28 only.
-- Colour: Pi `#5D4B7C`; jig-bedrock `#1D3B4D`; AWS `#5C9CAB`; green `#2E7D4F` on `#E3F1E7`; red `#B03A2E` on `#F8E4E1`; amber `#9A6212` on `#FDF5E6`; text `#24292F`; muted `#57606A`.
-- Box titles 3 words or fewer; one line of 5 words or fewer. Arrow labels 2 words or fewer. No sentences.
-- 24 px from the card edge to content. No empty band; rows share a centre and equal gaps.
-- A 64 px box has its title baseline at top+28 and line at top+48. One line: top + height/2 + 5.
-- Arrows start and end 2 px outside boxes, with a gap of 40 px or more, stroke 2, head 8 x 8. Labels sit 6 px above the line.
-- Glyphs are drawn 16 x 16 shapes, stroke 2; never Unicode icons. Commands and ids use monospace.
-- Chart bars are solid, not outlined. Size each box from its text; 16 px side padding.
-- Own marker ids; an `aria-label` with the same facts. Open every SVG in a browser at full size and README width; no text touches an edge or another shape.
+2. **Budget the words.** Give each node, marker and chip a label of 1 to 3 words; aim for about 25 visible words in the whole picture. _Done when_ the visible words, not the `aria-label`, number 30 or fewer.
+
+3. **Draw.** Run the path left to right. A node is a rounded box with a thin border, a drawn line icon and its label. A marker sits on the path as a small glyph with 1 or 2 words, such as a gate, switch or key. Outcomes are small chips at the end. The picture must read in light and dark mode: put the colours in a `<style>` with `@media (prefers-color-scheme: dark)`, or record the dark values when the diagram is redrawn. Keep the file self-contained with inline paths and the system font stack, and give it a full-sentence `aria-label`. Use a product's official mark only where its owner allows it in diagrams; otherwise draw a neutral icon. Details:
+   - `width="880"` and a matching viewBox; one card `rx="12"` with a `#D0D7DE` stroke; system font on the root.
+   - Text sizes: 13 labels, 15 bold box titles, 12 footnotes, 28 bold for one number; 12 to 28 only.
+   - Colour meanings, with light values: Pi `#5D4B7C`; jig-bedrock `#1D3B4D`; AWS `#5C9CAB`; good `#2E7D4F` on `#E3F1E7`; bad `#B03A2E` on `#F8E4E1`; automatic `#9A6212` on `#FDF5E6`; text `#24292F`; muted `#57606A`. Dark values are chosen per diagram when it is redrawn.
+   - Box titles 3 words or fewer; one line of 5 words or fewer. Arrow labels 2 words or fewer. No sentences.
+   - 24 px from the card edge to content. No empty band; rows share a centre and equal gaps.
+   - A 64 px box has its title baseline at top+28 and line at top+48. One line: top + height/2 + 5.
+   - Arrows start and end 2 px outside boxes, with a gap of 40 px or more, stroke 2, head 8 x 8. Labels sit 6 px above the line.
+   - Glyphs are drawn 16 x 16 shapes, stroke 2; never Unicode icons. Commands and ids use monospace.
+   - Chart bars are solid, not outlined. Size each box from its text; 16 px side padding.
+   - Own marker ids; no text touches an edge or another shape.
+     _Done when_ the drawing follows every rule above.
+
+4. **Render and look.** Open the SVG in a browser in light mode and dark mode, at full size and at the README's width. ImageMagick's built-in renderer drops arrowheads, so it is not a check. _Done when_ you have looked at both and fixed what you saw.
+
+5. **Link the details.** In the caption or paragraph around the image, say where each part is explained, with a page and heading. _Done when_ every node with a detail behind it has its link in the text.
 
 Images in the README use the full `https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/...` address,
 so they show on GitHub, npm and Pi's package gallery. They show the version on `main`, so change a diagram and its
