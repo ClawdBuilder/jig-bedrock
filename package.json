@@ -1,11 +1,12 @@
 {
     "name": "@clawdbuilder/jig-bedrock",
     "version": "0.4.2",
-    "description": "Claude on AWS Bedrock for Pi: inference-profile discovery, the Messages route with cache-friendly tools, Converse fallback, SSO repair and a budget footer.",
+    "description": "Claude and other Bedrock models in Pi, signed in with your AWS profile: finds your models, keeps the prompt cache, renews SSO, shows spend.",
     "type": "module",
     "license": "MIT",
     "keywords": [
         "pi-package",
+        "pi-extension",
         "pi",
         "bedrock",
         "aws",
@@ -24,7 +25,8 @@
     "pi": {
         "extensions": [
             "index.ts"
-        ]
+        ],
+        "image": "https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/cover/cover.png"
     },
     "scripts": {
         "check": "tsc -p tsconfig.json && biome ci .",

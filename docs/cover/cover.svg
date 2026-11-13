@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" role="img" aria-label="jig-bedrock, a Pi extension for Claude on AWS Bedrock signed in with your AWS profile. The Bedrock doctor screen shows eight checks ready, and the install command is pi install npm:@clawdbuilder/jig-bedrock." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
+  <style>
+    text { fill: #f4f4f5; }
+    .muted { fill: #a1a1aa; }
+    .accent { fill: #4fd1c5; }
+    .panel { fill: none; stroke: #30313a; }
+    .rule { stroke: #30313a; }
+    .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 2px; }
+    .title { font-size: 46px; font-weight: 600; letter-spacing: -1px; }
+    .subtitle { font-size: 15px; font-weight: 400; }
+    .screen { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 500; }
+    .screen-title { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; font-weight: 600; }
+    .install { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 500; }
+  </style>
+  <rect width="640" height="400" fill="#0f1014"/>
+  <text class="muted eyebrow" x="24" y="42">PI EXTENSION</text>
+  <text class="title" x="30" y="86">jig-bedrock</text>
+  <text class="muted subtitle" x="24" y="120">Claude on AWS Bedrock, signed in with your AWS profile.</text>
+  <rect class="panel" x="24" y="144" width="592" height="190" rx="14"/>
+  <text class="screen-title" x="42" y="166">Bedrock doctor</text>
+  <text class="screen accent" x="42" y="184">✓</text><text class="screen" x="60" y="184">Node 26.13.0</text>
+  <text class="screen accent" x="42" y="200">✓</text><text class="screen" x="60" y="200">AWS CLI 2.34.46</text>
+  <text class="screen accent" x="42" y="216">✓</text><text class="screen" x="60" y="216">Settings: ~/.pi/agent/bedrock.json</text>
+  <text class="screen accent" x="42" y="232">✓</text><text class="screen" x="60" y="232">AWS profile: my-profile (from /login)</text>
+  <text class="screen accent" x="42" y="248">✓</text><text class="screen" x="60" y="248">Sign-in: AWS answered</text>
+  <text class="screen accent" x="42" y="264">✓</text><text class="screen" x="60" y="264">Models: 31 found in us-east-1 (AWS-defined)</text>
+  <text class="screen accent" x="42" y="280">✓</text><text class="screen" x="60" y="280">Selected model: claude-sonnet-5-5 · Messages route</text>
+  <text class="screen muted" x="42" y="296">–</text><text class="screen" x="60" y="296">Spend command: not set</text>
+  <text class="screen accent" x="42" y="318">Bedrock is ready.</text>
+  <line class="rule" x1="24" y1="352" x2="616" y2="352"/>
+  <text class="muted install" x="24" y="372">pi install npm:@clawdbuilder/jig-bedrock</text>
+</svg>
