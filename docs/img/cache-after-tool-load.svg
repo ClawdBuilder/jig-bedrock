@@ -1,4 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="250" viewBox="0 0 880 250" role="img" aria-label="Grouped bar chart: after a tool load jig-bedrock writes 275 tokens and Pi built-in writes 34,463. Session costs are $0.0051 and $0.0099." font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-<rect x="0.75" y="0.75" width="878.5" height="248.5" rx="12" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.5"/>
-<text x="24" y="40" font-size="15" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">One session, two routes</text><rect x="520" y="26" width="10" height="10" rx="2" fill="#2E7D4F"/><text x="536" y="36" font-size="12" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="start">jig-bedrock (Messages)</text><rect x="700" y="26" width="10" height="10" rx="2" fill="#B03A2E"/><text x="716" y="36" font-size="12" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="start">Pi built-in (Converse)</text><text x="24" y="84" font-size="13" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">Cache write</text><text x="24" y="100" font-size="13" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">after a tool load</text><rect x="250" y="72" width="4" height="22" rx="2" fill="#2E7D4F"/><text x="262" y="88" font-size="15" fill="#2E7D4F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">275 tokens</text><rect x="250" y="102" width="500" height="22" rx="2" fill="#B03A2E"/><text x="758" y="118" font-size="15" fill="#B03A2E" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">34,463 tokens</text><text x="24" y="164" font-size="13" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">Session cost</text><rect x="250" y="150" width="257.5" height="22" rx="2" fill="#2E7D4F"/><text x="515.5" y="166" font-size="15" fill="#2E7D4F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">$0.0051</text><rect x="250" y="180" width="500" height="22" rx="2" fill="#B03A2E"/><text x="758" y="196" font-size="15" fill="#B03A2E" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">$0.0099</text><text x="24" y="232" font-size="12" fill="#57606A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="start">Claude Haiku 5.5 on AWS, 2026-11-10, a prompt of about 34,000 tokens</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="224" viewBox="0 0 880 224" role="img" aria-label="Bar chart of one session on two routes. After a tool load jig-bedrock writes 275 tokens to the cache and Pi built-in writes 34,463. Session costs are $0.0051 and $0.0099." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<style>
+.canvas { fill: #ffffff; stroke: #e6e6e6; }
+text { fill: #17171a; }
+.box { fill: #ffffff; stroke: #c1c3cd; }
+.label { fill: #17171a; }
+.muted { fill: #6b6b70; }
+.accent { fill: #0e7c86; }
+.accent-stroke { stroke: #0e7c86; fill: none; }
+.line { stroke: #0e7c86; fill: none; }
+.branch { stroke: #c1c3cd; fill: none; }
+.return { stroke: #c1c3cd; fill: none; }
+.chip { fill: #ffffff; stroke: #c1c3cd; }
+.icon { stroke: #0e7c86; fill: none; }
+.marker-accent { fill: #0e7c86; }
+.marker-branch { fill: #c1c3cd; }
+.good { fill: #1a7f37; }
+.bad { fill: #cf222e; }
+.chip-good { fill: #ffffff; stroke: #1a7f37; }
+.chip-bad { fill: #ffffff; stroke: #cf222e; }
+.bar-neutral { fill: #c1c3cd; stroke: none; }
+.title { font-size: 15px; font-weight: 600; }
+.small { font-size: 12.5px; font-weight: 500; }
+.tiny { font-size: 12px; font-weight: 500; }
+.chip-text { font-size: 12.5px; font-weight: 500; }
+@media (prefers-color-scheme: dark) {
+  .canvas { fill: #0f1014; stroke: #30313a; }
+  text { fill: #f4f4f5; }
+  .box { fill: #15161b; stroke: #4a4c53; }
+  .label { fill: #f4f4f5; }
+  .muted { fill: #a1a1aa; }
+  .accent { fill: #4fd1c5; }
+  .accent-stroke { stroke: #4fd1c5; }
+  .line { stroke: #4fd1c5; }
+  .branch { stroke: #4a4c53; }
+  .return { stroke: #4a4c53; }
+  .chip { fill: #15161b; stroke: #4a4c53; }
+  .icon { stroke: #4fd1c5; }
+  .marker-accent { fill: #4fd1c5; }
+  .marker-branch { fill: #4a4c53; }
+  .good { fill: #3fb950; }
+  .bad { fill: #f85149; }
+  .chip-good { fill: #15161b; stroke: #3fb950; }
+  .chip-bad { fill: #15161b; stroke: #f85149; }
+  .bar-neutral { fill: #4a4c53; stroke: none; }
+}
+</style>
+<defs>
+<marker id="cache-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="marker-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="cache-branch" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="marker-branch" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="canvas" x="1" y="1" width="878" height="222" rx="14"/>
+<text class="title" x="24" y="38" text-anchor="start">One session, two routes</text><rect class="accent" x="530" y="26" width="12" height="12" rx="3"/><text class="small" x="548" y="37" text-anchor="start">jig-bedrock (Messages)</text><rect class="bar-neutral" x="710" y="26" width="12" height="12" rx="3"/><text class="small" x="728" y="37" text-anchor="start">Pi built-in (Converse)</text><text class="small" x="24" y="88" text-anchor="start">Cache write after</text><text class="small" x="24" y="104" text-anchor="start">a tool load</text><rect class="accent" x="250" y="74" width="4" height="22" rx="3"/><text class="small accent" x="262" y="90" text-anchor="start">275 tokens</text><rect class="bar-neutral" x="250" y="106" width="500" height="22" rx="3"/><text class="small muted" x="758" y="122" text-anchor="start">34,463 tokens</text><text class="small" x="24" y="162" text-anchor="start">Session cost</text><rect class="accent" x="250" y="146" width="258" height="22" rx="3"/><text class="small accent" x="516" y="162" text-anchor="start">$0.0051</text><rect class="bar-neutral" x="250" y="178" width="500" height="22" rx="3"/><text class="small muted" x="758" y="194" text-anchor="start">$0.0099</text>
 </svg>

@@ -1,4 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="282" viewBox="0 0 880 282" role="img" aria-label="Three sources feed the read-only AWS CLI: AWS-defined, by tag, and listed by hand. The catalog is kept 24 hours and fills /model. Refresh moments are session start, after login, opening /model, and /bedrock refresh." font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-<rect x="0.75" y="0.75" width="878.5" height="280.5" rx="12" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.5"/>
-<defs><marker id="di-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#57606A"/></marker></defs><rect x="24" y="27" width="242" height="40" rx="8" fill="#E3F1E7" stroke="#2E7D4F" stroke-width="1.5"/><text x="145" y="53" font-size="12" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">AWS-defined · the default</text><path d="M268 47 H284" stroke="#57606A" stroke-width="2" /><rect x="24" y="75" width="242" height="40" rx="8" fill="#E3F1E7" stroke="#2E7D4F" stroke-width="1.5"/><text x="145" y="101" font-size="12" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">By tag · your team&#x27;s tag</text><path d="M268 95 H284" stroke="#57606A" stroke-width="2" /><rect x="24" y="123" width="242" height="40" rx="8" fill="#E3F1E7" stroke="#2E7D4F" stroke-width="1.5"/><text x="145" y="149" font-size="12" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">Listed by hand · ARNs or ids</text><path d="M268 143 H284" stroke="#57606A" stroke-width="2" /><path d="M284 47 V143" stroke="#57606A" stroke-width="2"/><path d="M284 95 H304" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#di-arrow)"/><rect x="306" y="59" width="150" height="72" rx="8" fill="#1D3B4D"/><text x="381" y="87" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">AWS CLI</text><text x="381" y="107" font-size="13" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">read only</text><path d="M458 95 H496" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#di-arrow)"/><rect x="496" y="59" width="160" height="72" rx="8" fill="#5C9CAB"/><text x="576" y="87" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Catalog</text><circle cx="544" cy="111" r="8" fill="none" stroke="#FFFFFF" stroke-width="2"/><path d="M544 106 V112 H549" fill="none" stroke="#FFFFFF" stroke-width="2"/><text x="560" y="116" font-size="13" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="start">24 hours</text><path d="M658 95 H696" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#di-arrow)"/><rect x="696" y="59" width="150" height="72" rx="8" fill="#5D4B7C"/><text x="771" y="87" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">/model</text><text x="771" y="107" font-size="12" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">cached list</text><text x="24" y="190" font-size="13" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="start">Refreshed at</text><rect x="24" y="206" width="198" height="52" rx="8" fill="#FDF5E6" stroke="#9A6212" stroke-width="1.5"/><text x="123" y="228" font-size="13" fill="#9A6212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Session start</text><text x="123" y="246" font-size="12" fill="#57606A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">if over 24 h</text><rect x="230" y="206" width="198" height="52" rx="8" fill="#FDF5E6" stroke="#9A6212" stroke-width="1.5"/><text x="329" y="228" font-size="13" fill="#9A6212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">After /login</text><text x="329" y="246" font-size="12" fill="#57606A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">always</text><rect x="436" y="206" width="198" height="52" rx="8" fill="#FDF5E6" stroke="#9A6212" stroke-width="1.5"/><text x="535" y="228" font-size="13" fill="#9A6212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">/model opens</text><text x="535" y="246" font-size="12" fill="#57606A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">if over 24 h</text><rect x="642" y="206" width="198" height="52" rx="8" fill="#FDF5E6" stroke="#9A6212" stroke-width="1.5"/><text x="741" y="228" font-size="13" fill="#9A6212" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">/bedrock refresh</text><text x="741" y="246" font-size="12" fill="#57606A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">right now</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="182" viewBox="0 0 880 182" role="img" aria-label="Three sources, AWS-defined, by tag and by hand, join the AWS CLI. It reads only, fills the Catalog kept 24 hours, and gives /model its list." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<style>
+.canvas { fill: #ffffff; stroke: #e6e6e6; }
+text { fill: #17171a; }
+.box { fill: #ffffff; stroke: #c1c3cd; }
+.label { fill: #17171a; }
+.muted { fill: #6b6b70; }
+.accent { fill: #0e7c86; }
+.accent-stroke { stroke: #0e7c86; fill: none; }
+.line { stroke: #0e7c86; fill: none; }
+.branch { stroke: #c1c3cd; fill: none; }
+.return { stroke: #c1c3cd; fill: none; }
+.chip { fill: #ffffff; stroke: #c1c3cd; }
+.icon { stroke: #0e7c86; fill: none; }
+.marker-accent { fill: #0e7c86; }
+.marker-branch { fill: #c1c3cd; }
+.good { fill: #1a7f37; }
+.bad { fill: #cf222e; }
+.chip-good { fill: #ffffff; stroke: #1a7f37; }
+.chip-bad { fill: #ffffff; stroke: #cf222e; }
+.bar-neutral { fill: #c1c3cd; stroke: none; }
+.title { font-size: 15px; font-weight: 600; }
+.small { font-size: 12.5px; font-weight: 500; }
+.tiny { font-size: 12px; font-weight: 500; }
+.chip-text { font-size: 12.5px; font-weight: 500; }
+@media (prefers-color-scheme: dark) {
+  .canvas { fill: #0f1014; stroke: #30313a; }
+  text { fill: #f4f4f5; }
+  .box { fill: #15161b; stroke: #4a4c53; }
+  .label { fill: #f4f4f5; }
+  .muted { fill: #a1a1aa; }
+  .accent { fill: #4fd1c5; }
+  .accent-stroke { stroke: #4fd1c5; }
+  .line { stroke: #4fd1c5; }
+  .branch { stroke: #4a4c53; }
+  .return { stroke: #4a4c53; }
+  .chip { fill: #15161b; stroke: #4a4c53; }
+  .icon { stroke: #4fd1c5; }
+  .marker-accent { fill: #4fd1c5; }
+  .marker-branch { fill: #4a4c53; }
+  .good { fill: #3fb950; }
+  .bad { fill: #f85149; }
+  .chip-good { fill: #15161b; stroke: #3fb950; }
+  .chip-bad { fill: #15161b; stroke: #f85149; }
+  .bar-neutral { fill: #4a4c53; stroke: none; }
+}
+</style>
+<defs>
+<marker id="discovery-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="marker-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="discovery-branch" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="marker-branch" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="canvas" x="1" y="1" width="878" height="180" rx="14"/>
+<path class="branch" d="M154 56 H270" stroke-width="1.6"/><path class="branch" d="M154 90 H270" stroke-width="1.6"/><path class="branch" d="M154 124 H270" stroke-width="1.6"/><path class="branch" d="M270 56 V124" stroke-width="1.6"/><path class="line" d="M270 90 H298" stroke-width="2" marker-end="url(#discovery-arrow)"/><rect class="box" x="24" y="22" width="130" height="40" rx="10"/><text class="small" x="89" y="47" text-anchor="middle">AWS-defined</text><rect class="box" x="24" y="70" width="130" height="40" rx="10"/><text class="small" x="89" y="95" text-anchor="middle">by tag</text><rect class="box" x="24" y="118" width="130" height="40" rx="10"/><text class="small" x="89" y="143" text-anchor="middle">by hand</text><rect class="box" x="300" y="44" width="150" height="92" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="367" y="63" width="16" height="13" rx="2"/><path d="M371 67 l3 3 -3 3"/><path d="M377 73 h4"/></g><text class="small" x="375" y="108" text-anchor="middle">AWS CLI</text><path class="line" d="M450 90 H474" stroke-width="2"/><rect class="box" x="474" y="76" width="28" height="28" rx="9"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="482" y="89" width="12" height="9" rx="2"/><path d="M484 89 v-3 a4 4 0 0 1 8 0 v3"/></g><text class="tiny" x="488" y="66" text-anchor="middle">read only</text><path class="line" d="M502 90 H526" stroke-width="2" marker-end="url(#discovery-arrow)"/><rect class="box" x="528" y="44" width="150" height="92" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="603" cy="65" rx="7" ry="3"/><path d="M596 65 v10 a7 3 0 0 0 14 0 V65"/></g><text class="small" x="603" y="108" text-anchor="middle">Catalog</text><path class="line" d="M678 90 H700" stroke-width="2"/><rect class="box" x="700" y="76" width="28" height="28" rx="9"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="714" cy="90" r="9"/><path d="M714 85 v6 h4"/></g><text class="tiny" x="714" y="66" text-anchor="middle">24 h</text><path class="line" d="M728 90 H748" stroke-width="2" marker-end="url(#discovery-arrow)"/><rect class="box" x="748" y="44" width="108" height="92" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M797 65 h10 M797 70 h10 M797 75 h7"/><circle cx="795" cy="65" r="1" fill="currentColor"/><circle cx="795" cy="70" r="1" fill="currentColor"/><circle cx="795" cy="75" r="1" fill="currentColor"/></g><text class="small" x="802" y="108" text-anchor="middle">/model</text>
 </svg>

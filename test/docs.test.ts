@@ -166,12 +166,27 @@ test("the diagrams are accessible, small-text SVG with marker ids of their own",
             const px = Number(size);
             assert.ok(px >= 12 && px <= 28, `${name} has text of ${px} px; it must be 12 to 28`);
         }
+        for (const [, size] of svg.matchAll(/font-size:\s*([\d.]+)px/g)) {
+            const px = Number(size);
+            assert.ok(px >= 12 && px <= 28, `${name} has CSS text of ${px} px; it must be 12 to 28`);
+        }
         for (const [, id] of svg.matchAll(/<marker id="([^"]+)"/g)) {
             assert.equal(seen.get(id ?? ""), undefined, `${name} reuses the marker id ${id} of ${seen.get(id ?? "")}`);
             seen.set(id ?? "", name);
         }
         for (const [, id] of svg.matchAll(/url\(#([^)]+)\)/g))
             assert.ok(seen.get(id ?? "") === name, `${name} uses a marker ${id} it does not define`);
+        const words = [...svg.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].reduce(
+            (count, [, body]) =>
+                count +
+                (body ?? "")
+                    .replace(/<[^>]+>/g, "")
+                    .trim()
+                    .split(/\s+/)
+                    .filter(Boolean).length,
+            0,
+        );
+        assert.ok(words <= 30, `${name} has ${words} visible words; keep to 30`);
     }
 });
 

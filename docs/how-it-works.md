@@ -18,7 +18,7 @@ Routes, model names, discovery, sign-in repair and spend.
 
 ![A question chooses the route: if Pi says tool changes work, the model uses Messages and keeps the cache; otherwise it uses Converse like Pi's built-in provider.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/routes.svg)
 
-_One question chooses the route._
+_Pi's answer decides; details in [Which route a model gets](#which-route-a-model-gets) and [Prompt cache by model](#prompt-cache-by-model)._
 
 The rule asks in order; the first answer wins:
 
@@ -54,7 +54,7 @@ Both routes stream the reply. Messages declares only the 5-minute cache lifetime
 
 ![Three sources feed the AWS CLI: AWS-defined, by tag, or listed by hand. The CLI only reads and fills the catalog, kept for 24 hours, which fills /model.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/discovery.svg)
 
-_Three sources, one read-only catalog._
+_Three sources; details in [How models are found](#how-models-are-found), [What runs when](#what-runs-when), and [Settings](settings.md#the-three-ways-models-are-found)._
 
 The settings choose one way; there is no fallback.
 
@@ -76,7 +76,7 @@ A reply is recorded as `jig-bedrock/<short id>`; the ARN stays off the session l
 
 ![A request asks whether the SSO sign-in expired; if so an aws sso login with a browser runs, then the request is sent once more.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/sign-in-repair.svg)
 
-_At most one retry._
+_One retry, never a third time; details in [Sign-in repair](#sign-in-repair) and [Settings](settings.md#sign-in-methods)._
 
 1. At session start, the saved SSO token's expiry is checked. An expired one gets a `/bedrock login` notice. With `signInAtStart: true` the sign-in starts at once; the default is false.
 2. If a request fails before any reply because the SSO session expired, `ssoLoginCommand` (`aws sso login --profile <name>`) runs, then the request is sent once more. Never a third time.

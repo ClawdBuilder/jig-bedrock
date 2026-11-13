@@ -4,7 +4,7 @@ Claude on AWS Bedrock for Pi, using your AWS profile.
 
 ![Pi sends a request to jig-bedrock, which signs it for Amazon Bedrock. jig-bedrock finds your models, renews an expired SSO sign-in, keeps the prompt cache and shows spend in the footer.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/overview.svg)
 
-_jig-bedrock sits between Pi and Amazon Bedrock and adds four things._
+_jig-bedrock between Pi and Bedrock: [models](docs/how-it-works.md#how-models-are-found), [routes](docs/how-it-works.md#which-route-a-model-gets), [sign-in](docs/how-it-works.md#sign-in-repair), [spend](docs/how-it-works.md#spend-and-the-footer)._
 
 ## Why use it
 
@@ -15,13 +15,13 @@ _jig-bedrock sits between Pi and Amazon Bedrock and adds four things._
 
 ![Bar chart: after a tool loads, jig-bedrock writes 275 tokens to the cache and Pi built-in writes 34,463. Session cost is $0.0051 against $0.0099.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/cache-after-tool-load.svg)
 
-_Claude Haiku 5.5, one prompt of about 34,000 tokens._
+_Measured on AWS on 2026-11-10: Claude Haiku 5.5, a prompt of about 34,000 tokens. [Cache details](docs/how-it-works.md#prompt-cache-by-model)._
 
 ## Set up
 
 ![Four setup steps — install, sign in, pick a model, check — end at a green Ready check.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/setup.svg)
 
-_Each step below ends with a "Done when" line._
+_Four steps; settings in [Settings](docs/settings.md#files-on-disk), checks in [Commands](#commands)._
 
 You need: Node 22.19+, Pi 1.5 or later, AWS CLI v2, an AWS profile that can call Bedrock.
 

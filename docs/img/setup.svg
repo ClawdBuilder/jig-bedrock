@@ -1,4 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="120" viewBox="0 0 880 120" role="img" aria-label="Four setup steps lead to a green Ready check: install, sign in, pick a model, and check." font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-<rect x="0.75" y="0.75" width="878.5" height="118.5" rx="12" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.5"/>
-<defs><marker id="su-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#57606A"/></marker></defs><circle cx="90" cy="42" r="18" fill="#1D3B4D"/><text x="90" y="47" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">1</text><text x="90" y="78" font-size="15" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Install</text><text x="90" y="96" font-size="12" fill="#57606A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">pi install</text><path d="M158 42 H197" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#su-arrow)"/><circle cx="265" cy="42" r="18" fill="#1D3B4D"/><text x="265" y="47" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">2</text><text x="265" y="78" font-size="15" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Sign in</text><text x="265" y="96" font-size="12" fill="#57606A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">/login</text><path d="M333 42 H372" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#su-arrow)"/><circle cx="440" cy="42" r="18" fill="#1D3B4D"/><text x="440" y="47" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">3</text><text x="440" y="78" font-size="15" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Pick a model</text><text x="440" y="96" font-size="12" fill="#57606A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">/model</text><path d="M508 42 H547" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#su-arrow)"/><circle cx="615" cy="42" r="18" fill="#1D3B4D"/><text x="615" y="47" font-size="15" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">4</text><text x="615" y="78" font-size="15" fill="#24292F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Check</text><text x="615" y="96" font-size="12" fill="#57606A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">/bedrock doctor</text><path d="M683 42 H722" fill="none" stroke="#57606A" stroke-width="2" marker-end="url(#su-arrow)"/><circle cx="790" cy="42" r="18" fill="#2E7D4F"/><path d="M782 42 l5 5 11 -11" fill="none" stroke="#FFFFFF" stroke-width="2.5"/><text x="790" y="78" font-size="15" fill="#2E7D4F" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" text-anchor="middle">Ready</text><text x="790" y="96" font-size="12" fill="#2E7D4F" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="middle">Bedrock is ready.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="140" viewBox="0 0 880 140" role="img" aria-label="Four steps install, sign in, pick a model and check lead through a line to a green ready chip." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<style>
+.canvas { fill: #ffffff; stroke: #e6e6e6; }
+text { fill: #17171a; }
+.box { fill: #ffffff; stroke: #c1c3cd; }
+.label { fill: #17171a; }
+.muted { fill: #6b6b70; }
+.accent { fill: #0e7c86; }
+.accent-stroke { stroke: #0e7c86; fill: none; }
+.line { stroke: #0e7c86; fill: none; }
+.branch { stroke: #c1c3cd; fill: none; }
+.return { stroke: #c1c3cd; fill: none; }
+.chip { fill: #ffffff; stroke: #c1c3cd; }
+.icon { stroke: #0e7c86; fill: none; }
+.marker-accent { fill: #0e7c86; }
+.marker-branch { fill: #c1c3cd; }
+.good { fill: #1a7f37; }
+.bad { fill: #cf222e; }
+.chip-good { fill: #ffffff; stroke: #1a7f37; }
+.chip-bad { fill: #ffffff; stroke: #cf222e; }
+.bar-neutral { fill: #c1c3cd; stroke: none; }
+.title { font-size: 15px; font-weight: 600; }
+.small { font-size: 12.5px; font-weight: 500; }
+.tiny { font-size: 12px; font-weight: 500; }
+.chip-text { font-size: 12.5px; font-weight: 500; }
+@media (prefers-color-scheme: dark) {
+  .canvas { fill: #0f1014; stroke: #30313a; }
+  text { fill: #f4f4f5; }
+  .box { fill: #15161b; stroke: #4a4c53; }
+  .label { fill: #f4f4f5; }
+  .muted { fill: #a1a1aa; }
+  .accent { fill: #4fd1c5; }
+  .accent-stroke { stroke: #4fd1c5; }
+  .line { stroke: #4fd1c5; }
+  .branch { stroke: #4a4c53; }
+  .return { stroke: #4a4c53; }
+  .chip { fill: #15161b; stroke: #4a4c53; }
+  .icon { stroke: #4fd1c5; }
+  .marker-accent { fill: #4fd1c5; }
+  .marker-branch { fill: #4a4c53; }
+  .good { fill: #3fb950; }
+  .bad { fill: #f85149; }
+  .chip-good { fill: #15161b; stroke: #3fb950; }
+  .chip-bad { fill: #15161b; stroke: #f85149; }
+  .bar-neutral { fill: #4a4c53; stroke: none; }
+}
+</style>
+<defs>
+<marker id="setup-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="marker-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="setup-branch" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="marker-branch" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="canvas" x="1" y="1" width="878" height="138" rx="14"/>
+<rect class="box" x="24" y="24" width="150" height="90" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M99 43 v10 M95 49 l4 4 4 -4 M93 57 h12"/></g><text class="small" x="99" y="86" text-anchor="middle">Install</text><text class="tiny muted" x="99" y="102" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">pi install</text><path class="line" d="M176 69 H212" stroke-width="2" marker-end="url(#setup-arrow)"/><rect class="box" x="214" y="24" width="150" height="90" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="286" cy="47" r="4"/><path d="M289 50 l7 7 M292 53 l3 -3 M295 56 l3 -3"/></g><text class="small" x="289" y="86" text-anchor="middle">Sign in</text><text class="tiny muted" x="289" y="102" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">/login</text><path class="line" d="M366 69 H402" stroke-width="2" marker-end="url(#setup-arrow)"/><rect class="box" x="404" y="24" width="150" height="90" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M474 45 h10 M474 50 h10 M474 55 h7"/><circle cx="472" cy="45" r="1" fill="currentColor"/><circle cx="472" cy="50" r="1" fill="currentColor"/><circle cx="472" cy="55" r="1" fill="currentColor"/></g><text class="small" x="479" y="86" text-anchor="middle">Pick model</text><text class="tiny muted" x="479" y="102" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">/model</text><path class="line" d="M556 69 H592" stroke-width="2" marker-end="url(#setup-arrow)"/><rect class="box" x="594" y="24" width="150" height="90" rx="14"/><g class="icon" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M663 50 l4 4 8 -9"/></g><text class="small" x="669" y="86" text-anchor="middle">Check</text><text class="tiny muted" x="669" y="102" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">/bedrock doctor</text><path class="line" d="M746 69 H782" stroke-width="2"/><rect class="chip-good" x="784" y="49" width="72" height="40" rx="20"/><text class="chip-text good" x="820" y="73" text-anchor="middle">ready</text>
 </svg>

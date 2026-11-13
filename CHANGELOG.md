@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-13
+
+- The diagrams are redrawn to read at a glance, in light and dark.
+
 ## [0.4.1] - 2026-11-12
 
 - The README says how to install and update jig-bedrock in Jig.
