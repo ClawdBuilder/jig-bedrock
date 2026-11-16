@@ -135,6 +135,45 @@ export const SETTING_EXAMPLES: Record<string, string> = {
 
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
+const LIST_SETTINGS = new Set([
+    "regions",
+    "profiles",
+    "spendCommand",
+    "ssoLoginCommand",
+    "converseModels",
+    "messagesModels",
+]);
+
+function settingValue(key: string, value: string): unknown {
+    if (LIST_SETTINGS.has(key))
+        return value
+            .split(",")
+            .map((part) => part.trim())
+            .filter((part) => part !== "");
+    if (key === "signInAtStart" || key === "debug") return ["true", "on", "yes"].includes(value.toLowerCase());
+    if (key === "monthlyBudgetUsd") return Number(value);
+    return value;
+}
+
+function tokenizeSetting(args: string): string[] {
+    const parts: string[] = [];
+    for (const match of args.trim().matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g))
+        parts.push(match[1] ?? match[2] ?? match[3] ?? "");
+    return parts;
+}
+
+function parseSettingPairs(args: string): Array<[string, string]> | undefined {
+    const parts = tokenizeSetting(args);
+    if (parts.length < 2) return undefined;
+    if (parts.length === 2) return [[parts[0]!, parts[1]!]];
+    if (parts.length % 2 === 0) {
+        const pairs: Array<[string, string]> = [];
+        for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i]!, parts[i + 1]!]);
+        return pairs;
+    }
+    return [[parts[0]!, parts.slice(1).join(" ")]];
+}
+
 export function registerBedrockCommands(
     pi: ExtensionAPI,
     sources: BedrockCommandSources,
@@ -1259,16 +1298,16 @@ export function registerBrokenCommands(
                     ]);
                     return;
                 }
-                const match = /^(\S+)\s+(.+)$/.exec(tail);
-                if (!match) {
+                const pairs = parseSettingPairs(tail);
+                if (pairs === undefined) {
                     emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
                     return;
                 }
-                const key = match[1] as string;
-                const value = match[2] as string;
-                if (!(FIELDS as readonly string[]).includes(key)) {
-                    emit(ctx, "Bedrock settings", [`${m.fail} Unknown setting ${clean(key, 60)}`]);
-                    return;
+                for (const [key] of pairs) {
+                    if (!(FIELDS as readonly string[]).includes(key)) {
+                        emit(ctx, "Bedrock settings", [`${m.fail} Unknown setting ${clean(key, 60)}`]);
+                        return;
+                    }
                 }
                 const doc = readSettingsDocument(options.env);
                 if ("error" in doc) {
@@ -1278,23 +1317,22 @@ export function registerBrokenCommands(
                     ]);
                     return;
                 }
-                doc.target[key] =
-                    key === "regions" || key === "profiles" || key === "spendCommand"
-                        ? value
-                              .split(",")
-                              .map((part) => part.trim())
-                              .filter(Boolean)
-                        : key === "signInAtStart"
-                          ? value === "true"
-                          : key === "monthlyBudgetUsd"
-                            ? Number(value)
-                            : value;
+                for (const [key, value] of pairs) {
+                    if ((key === "signInAtStart" || key === "debug") && !/^(true|false|on|off|yes|no)$/i.test(value)) {
+                        emit(ctx, "Bedrock settings", [
+                            `${m.fail} ${key} accepts true, false, on, off, yes or no; nothing was written.`,
+                        ]);
+                        return;
+                    }
+                    doc.target[key] = settingValue(key, value);
+                }
                 const candidate = loadConfig({ raw: doc.target, env: options.env });
                 const saved = writeSettingsDocument(options.env, doc.document);
-                const rows = saved.ok ? [`${m.ok} ${key} written.`] : [`${m.fail} ${saved.error}`];
-                if (saved.ok && !candidate.config) rows.push(`${m.fail} Still invalid: ${candidate.error}`);
-                if (saved.ok) rows.push(`${m.skip} Run /reload to use the repaired settings.`);
-                emit(ctx, "Bedrock settings", rows);
+                emit(ctx, "Bedrock settings", [
+                    saved.ok ? `${m.ok} ${pairs.map(([key]) => key).join(", ")} written.` : `${m.fail} ${saved.error}`,
+                    ...(saved.ok && !candidate.config ? [`${m.fail} Still invalid: ${candidate.error}`] : []),
+                    ...(saved.ok ? [`${m.skip} Run /reload to use the repaired settings.`] : []),
+                ]);
                 return;
             }
             case "help":

@@ -805,3 +805,36 @@ test("an invalid menu value followed by Escape writes nothing", async (t) => {
     await h.result.bedrock("", h.ctx as never);
     assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });
+
+test("broken settings repair writes typed multi-key values", async (t) => {
+    const h = harness(t, {});
+    const file = join(h.root, "bedrock.json");
+    writeFileSync(file, JSON.stringify({ regions: [] }));
+    const handler = registerBrokenCommands({ registerCommand() {} } as never, {
+        file,
+        error: "regions must contain 1-16 unique AWS region names.",
+        env: h.settings,
+    });
+    await handler("set tagKey Team tagValue fixture-team", h.ctx as never);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(saved.tagKey, "Team");
+    assert.equal(saved.tagValue, "fixture-team");
+    await handler("set converseModels claude-opus-5,claude-sonnet-5-5", h.ctx as never);
+    const list = JSON.parse(readFileSync(file, "utf8"));
+    assert.deepEqual(list.converseModels, ["claude-opus-5", "claude-sonnet-5-5"]);
+});
+
+test("broken settings repair refuses an unclear boolean without writing", async (t) => {
+    const h = harness(t, {});
+    const file = join(h.root, "bedrock.json");
+    writeFileSync(file, JSON.stringify({ regions: [] }));
+    const before = readFileSync(file, "utf8");
+    const handler = registerBrokenCommands({ registerCommand() {} } as never, {
+        file,
+        error: "regions must contain 1-16 unique AWS region names.",
+        env: h.settings,
+    });
+    await handler("set debug maybe", h.ctx as never);
+    assert.equal(readFileSync(file, "utf8"), before);
+    assert.match(h.notices.at(-1) ?? "", /accepts true, false, on, off, yes or no; nothing was written/);
+});
