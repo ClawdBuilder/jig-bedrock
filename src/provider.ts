@@ -17,6 +17,7 @@ import {
     awsConfigFile,
     checkedRecovery,
     isSsoProfile,
+    keysAdviceNext,
     profileProblem,
     ssoSignInTarget,
     type VerifyResult,
@@ -1033,12 +1034,12 @@ export function createBedrockProvider(
             if (context.hasUI) context.ui.notify(text, "info");
             else process.stdout.write(`${text}\n`);
         };
-        // /bedrock login renews an SSO session and nothing else, so its next step is offered only to a profile that has
-        // one. A keys or role profile is checked with the AWS CLI instead; /bedrock login would just refuse it.
+        // /bedrock login renews an SSO profile or a role over an SSO source_profile, and nothing else, so its next step
+        // is offered only where it can work. A keys profile or a role over keys is checked with the AWS CLI instead.
         const signInNext = (name: string): string =>
-            (isSsoProfile(name, profileEnv) ?? false)
+            "target" in ssoSignInTarget(name, profileEnv)
                 ? "Next: /bedrock login"
-                : `Next: check the keys or role for ${name} with "aws sts get-caller-identity --profile ${name}", or refresh the keys, then /bedrock doctor.`;
+                : keysAdviceNext(name, "/bedrock doctor.");
         const commands = registerBedrockCommands(pi, {
             config,
             spend,

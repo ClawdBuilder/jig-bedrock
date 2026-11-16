@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { discoveryHelp, partialDiscovery } from "./aws-discovery.ts";
+import { keysAdviceNext, signsInWithKeys } from "./aws-profile.ts";
 import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
 import { isObject } from "./check.ts";
@@ -699,11 +700,18 @@ export function registerBedrockCommands(
         } catch (error) {
             const raw = error instanceof Error ? error.message : String(error);
             const hint = raw.includes("No AWS profile is chosen") ? raw : recoveryHint(error);
+            const profile = sources.lastChoice?.().profile ?? config.profile;
+            // A keys profile (or a role over keys) is refused before the sign-in starts; running the same command
+            // again cannot change that, so the next step is the AWS CLI check instead.
+            const keys =
+                profile !== undefined && !hint.includes("No AWS profile is chosen") && signsInWithKeys(profile, env);
             emit(ctx, "Bedrock login", [
                 `${m.fail} ${clean(hint, 200)}`,
                 ...(hint.includes("No AWS profile is chosen")
                     ? ["Next: /login and choose Amazon Bedrock (jig-bedrock)."]
-                    : ["Next: fix the reason above, then run /bedrock login again."]),
+                    : keys
+                      ? [keysAdviceNext(profile, "/bedrock doctor.")]
+                      : ["Next: fix the reason above, then run /bedrock login again."]),
             ]);
         }
     };

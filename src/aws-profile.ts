@@ -85,7 +85,7 @@ export async function verifyAwsProfile(
 export function ssoSignInTarget(
     profile: string,
     env: NodeJS.ProcessEnv = process.env,
-): { target: string; via?: string } | { problem: string } {
+): { target: string; via?: string } | { problem: string; keys?: boolean } {
     const text = readConfig(env);
     if (text === undefined) return { problem: `${profile} is not in the AWS config.` };
     const sections = parseAwsConfig(text);
@@ -97,14 +97,30 @@ export function ssoSignInTarget(
     if (source === undefined || source === "")
         return {
             problem: `${profile} signs in with its own keys or role, not an IAM Identity Center (SSO) session. Check it with "aws sts get-caller-identity --profile ${profile}", or use /login to choose another AWS profile.`,
+            keys: true,
         };
     if (source === profile)
         return { problem: `${profile} names itself as source_profile; fix the loop in the AWS config.` };
     if (!isSsoProfile(source, env))
         return {
             problem: `${profile} uses source_profile ${source}, which is not an IAM Identity Center (SSO) profile. Fix the AWS config or use /login to choose another AWS profile.`,
+            keys: true,
         };
     return { target: source, via: profile };
+}
+
+/** Whether /bedrock login will refuse this profile: it signs in with keys, or a role over a keys source_profile. */
+export function signsInWithKeys(profile: string, env: NodeJS.ProcessEnv = process.env): boolean {
+    const target = ssoSignInTarget(profile, env);
+    return !("target" in target) && target.keys === true;
+}
+
+/**
+ * The one next step for a profile /bedrock login cannot renew. `then` is the command that checks the fixed profile, so the
+ * doctor and the login command say the same words.
+ */
+export function keysAdviceNext(profile: string, then: string): string {
+    return `Next: check the keys or role for ${profile} with "aws sts get-caller-identity --profile ${profile}", or refresh the keys, then ${then}`;
 }
 
 /** What is wrong with this profile for an SSO sign-in, or undefined when it is a listed SSO profile. */
