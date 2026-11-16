@@ -46,7 +46,9 @@ test("CI runs weekly, reports one scheduled issue, and actionlint is pinned in c
     assert.match(ci, /scheduled-issue:/);
     assert.match(ci, /issues: write/);
     assert.match(ci, /actionlint/);
-    assert.match(ci, /download-actionlint\.bash \| bash -s -- 1\.7\.7/);
+    assert.match(ci, /actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
+    assert.match(ci, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
+    assert.match(ci, /scripts\/scheduled-issue\.sh/);
     assert.match(ci, /needs: \[checks, pi-versions, packed-install, macos\]/);
 });
 
@@ -66,4 +68,71 @@ test("the root CONTRIBUTING points at the detailed page and AGENTS.md", () => {
     const text = read("CONTRIBUTING.md");
     assert.match(text, /docs\/contributing\.md/);
     assert.match(text, /AGENTS\.md/);
+});
+
+test("the scheduled-issue script creates or comments exactly once", async (t) => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { spawnSync } = await import("node:child_process");
+    const dir = mkdtempSync(join(tmpdir(), "scheduled-issue-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const log = join(dir, "gh.log");
+    const fake = join(dir, "gh");
+    writeFileSync(
+        fake,
+        `#!/bin/sh
+printf '%s\n' "$*" >> "$GH_LOG"
+if [ "$1 $2" = "issue list" ]; then
+  [ "$#" -eq 10 ] || exit 1
+  case "$FAKE_LIST" in
+    "[]") ;;
+    *'"title":"Scheduled CI failed"'*) echo 7 ;;
+    *) ;;
+  esac
+fi
+exit 0
+`,
+        { mode: 0o755 },
+    );
+    const run = (list: string) =>
+        spawnSync("bash", ["scripts/scheduled-issue.sh"], {
+            cwd: join(import.meta.dirname, ".."),
+            env: {
+                ...process.env,
+                PATH: `${dir}:${process.env.PATH}`,
+                GH_TOKEN: "x",
+                GH_LOG: log,
+                FAKE_LIST: list,
+                RUN_URL: "https://example.test/run",
+            },
+            encoding: "utf8",
+        });
+    const lines = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+
+    assert.equal(run("[]").status, 0);
+    assert.equal(lines().filter((line) => line.startsWith("issue create")).length, 1);
+    writeFileSync(log, "");
+    assert.equal(run('[{"number":7,"title":"Scheduled CI failed"}]').status, 0);
+    assert.deepEqual(
+        lines().filter((line) => line.startsWith("issue comment")),
+        ["issue comment 7 --body The scheduled run failed: https://example.test/run. Fix it before the next release."],
+    );
+    writeFileSync(log, "");
+    assert.equal(run('[{"number":8,"title":"Other"}]').status, 0);
+    assert.equal(lines().filter((line) => line.startsWith("issue create")).length, 1);
+
+    const old = spawnSync(
+        "bash",
+        [
+            "-c",
+            `title="Scheduled CI failed"; gh issue list --state open --search "\${title} in:title" --json number,title --jq ".[] | select(.title == "\${title}") | .number"`,
+        ],
+        {
+            cwd: join(import.meta.dirname, ".."),
+            env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_LOG: log, FAKE_LIST: "[]" },
+            encoding: "utf8",
+        },
+    );
+    assert.notEqual(old.status, 0, "the old quoting should fail against the fake gh");
 });

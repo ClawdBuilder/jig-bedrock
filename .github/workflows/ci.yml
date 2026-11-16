@@ -171,7 +171,9 @@ jobs:
         steps:
             - name: Check workflows with actionlint
               run: |
-                  curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- 1.7.7
+                  curl -sSfL -o actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+                  echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum -c -
+                  tar xzf actionlint.tar.gz
                   ./actionlint -color
             - name: Every job succeeded
               env:
@@ -194,12 +196,4 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: |
-                  title="Scheduled CI failed"
-                  body="The scheduled run failed: ${RUN_URL}. Fix it before the next release."
-                  number="$(gh issue list --state open --search "${title} in:title" --json number,title --jq ".[] | select(.title == "${title}") | .number" | head -n1)"
-                  if [ -n "${number}" ]; then
-                    gh issue comment "${number}" --body "${body}"
-                  else
-                    gh issue create --title "${title}" --body "${body}"
-                  fi
+              run: scripts/scheduled-issue.sh
