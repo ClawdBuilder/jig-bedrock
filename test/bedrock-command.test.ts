@@ -686,3 +686,33 @@ test("/bedrock login prints the recovery hint for a browser failure", async (t) 
     assert.match(text, /browser opener/);
     assert.doesNotMatch(text, /aws sso login --profile/);
 });
+
+test("the presets menu picks dev-eks, not the dev prefix", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [
+                { name: "dev", profile: "dev", mode: "AWS-defined", active: false },
+                { name: "dev-eks", profile: "dev-eks", mode: "AWS-defined", active: false },
+            ],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev-eks"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev-eks");
+});
+
+test("the models menu picks a model id that shares a prefix", async (t) => {
+    const a = { ...model, id: "claude-sonnet" };
+    const b = { ...model, id: "claude-sonnet-5-5" };
+    const h = harness(t, {}, { models: () => [a, b] });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Back"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    assert.match(calls[2]?.title ?? "", /^claude-sonnet-5-5/);
+});

@@ -813,44 +813,40 @@ export function registerBedrockCommands(
     };
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.presetList?.() ?? [];
-        const choice = await ctx.ui.select("Bedrock presets", [
-            ...list.map((entry) => {
-                const active = entry.active ? `${m.ok} ` : "";
-                const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
-                return `${active}${entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`;
-            }),
-            "Save current settings as a preset…",
-            "Remove a preset…",
-            "Back",
-        ]);
-        if (choice === undefined || choice === "Back") return;
-        if (choice.startsWith("Save current")) {
+        const actions = new Map<string, () => Promise<void> | void>();
+        for (const entry of list) {
+            const active = entry.active ? `${m.ok} ` : "";
+            const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
+            actions.set(
+                `${active}${entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`,
+                () => sources.usePreset?.(entry.name, ctx),
+            );
+        }
+        actions.set("Save current settings as a preset…", async () => {
             const name = await ctx.ui.input("Preset name", "work");
             if (name === undefined) return;
             if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
-                emitPresetRows(ctx, [
+                emit(ctx, "Bedrock presets", [
                     `${m.fail} ${clean(name, 40)} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
                 ]);
                 return;
             }
-            if (!sources.presetAdd) return;
-            await sources.presetAdd(name, ctx);
-            return;
-        }
-        if (choice.startsWith("Remove")) {
+            await sources.presetAdd?.(name, ctx);
+        });
+        actions.set("Remove a preset…", async () => {
             if (list.length === 0) return;
-            const selected = await ctx.ui.select("Remove preset", [...list.map((entry) => entry.name), "Back"]);
+            const choices = new Map(list.map((entry) => [entry.name, entry.name]));
+            const selected = await ctx.ui.select("Remove preset", [...choices.keys(), "Back"]);
             if (selected === undefined || selected === "Back") return;
-            const confirmed = await ctx.ui.confirm("Remove preset", `Remove ${selected}?`);
-            if (!confirmed || !sources.presetRemove) return;
-            await sources.presetRemove(selected, ctx);
-            return;
-        }
-        const entry = list.find((item) => choice.startsWith(`${item.active ? `${m.ok} ` : ""}${item.name} —`));
-        if (entry !== undefined) await sources.usePreset?.(entry.name, ctx);
-    };
-    const emitPresetRows = (ctx: ExtensionCommandContext, rows: string[]): void => {
-        emit(ctx, "Bedrock presets", rows);
+            const name = choices.get(selected);
+            if (name === undefined) return;
+            const confirmed = await ctx.ui.confirm("Remove preset", `Remove ${name}?`);
+            if (!confirmed) return;
+            await sources.presetRemove?.(name, ctx);
+        });
+        actions.set("Back", () => {});
+        const choice = await ctx.ui.select("Bedrock presets", [...actions.keys()]);
+        await actions.get(choice ?? "")?.();
     };
     const settingsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const doc = readSettingsDocument(env);
@@ -937,50 +933,48 @@ export function registerBedrockCommands(
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.models();
         const refused = sources.refused?.() ?? [];
-        if (list.length === 0 && refused.length === 0) {
+        const actions = new Map<string, () => Promise<void> | void>();
+        for (const model of list)
+            actions.set(`${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`, () => {
+                const region =
+                    /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(model.baseUrl)?.[1] ??
+                    model.arn.split(":")[3] ??
+                    "";
+                const details = [
+                    `${model.id}`,
+                    `${route(model, config)} route · ${routeReason(model, config)}`,
+                    `Region: ${region}`,
+                    `Price per million tokens: $${model.cost.input} in / $${model.cost.output} out`,
+                    `Inference profile: ${model.arn.slice(model.arn.lastIndexOf("/") + 1)}`,
+                    ctx.model?.provider === "jig-bedrock" && ctx.model.id === model.id
+                        ? "This is the session's model."
+                        : "Not the session's model.",
+                    "To keep it for every start: /model, select it, Ctrl+S.",
+                ].join("\n");
+                return ctx.ui.select(details, ["Use for this session", "Back"]).then(async (action) => {
+                    if (action !== "Use for this session") return;
+                    const target = ctx.modelRegistry.find("jig-bedrock", model.id);
+                    if (target !== undefined) await pi.setModel(target);
+                });
+            });
+        if (refused.length > 0) {
+            actions.set("Refused by AWS for your role", () => {});
+            for (const entry of refused)
+                actions.set(`${entry.id} · ${entry.date.slice(0, 10)}`, async () => {
+                    const action = await ctx.ui.select(
+                        `${entry.id}\nRefused ${entry.date.slice(0, 10)} by AWS for this role.`,
+                        ["Try again", "Back"],
+                    );
+                    if (action === "Try again") await refresh("", ctx);
+                });
+        }
+        actions.set("Back", () => {});
+        if (actions.size === 1) {
             emit(ctx, "Bedrock models", [`${m.warn} No models loaded.`]);
             return;
         }
-        const labels = list.map(
-            (model) => `${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`,
-        );
-        if (refused.length > 0) {
-            labels.push("Refused by AWS for your role");
-            for (const entry of refused) labels.push(`${entry.id} · ${entry.date.slice(0, 10)}`);
-        }
-        labels.push("Back");
-        const choice = await ctx.ui.select("Bedrock models", labels);
-        if (choice === undefined || choice === "Back" || choice === "Refused by AWS for your role") return;
-        const refusedEntry = refused.find((entry) => choice.startsWith(`${entry.id} ·`));
-        if (refusedEntry !== undefined) {
-            const action = await ctx.ui.select(
-                `${refusedEntry.id}\nRefused ${refusedEntry.date.slice(0, 10)} by AWS for this role.`,
-                ["Try again", "Back"],
-            );
-            if (action === "Try again") await refresh("", ctx);
-            return;
-        }
-        const selected = list.find((model) => choice.startsWith(`${model.id} —`));
-        if (selected === undefined) return;
-        const region =
-            /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(selected.baseUrl)?.[1] ??
-            selected.arn.split(":")[3] ??
-            "";
-        const details = [
-            `${selected.id}`,
-            `${route(selected, config)} route · ${routeReason(selected, config)}`,
-            `Region: ${region}`,
-            `Price per million tokens: $${selected.cost.input} in / $${selected.cost.output} out`,
-            `Inference profile: ${selected.arn.slice(selected.arn.lastIndexOf("/") + 1)}`,
-            ctx.model?.provider === "jig-bedrock" && ctx.model.id === selected.id
-                ? "This is the session's model."
-                : "Not the session's model.",
-            "To keep it for every start: /model, select it, Ctrl+S.",
-        ].join("\n");
-        const action = await ctx.ui.select(details, ["Use for this session", "Back"]);
-        if (action !== "Use for this session") return;
-        const model = ctx.modelRegistry.find("jig-bedrock", selected.id);
-        if (model !== undefined) await pi.setModel(model);
+        const choice = await ctx.ui.select("Bedrock models", [...actions.keys()]);
+        await actions.get(choice ?? "")?.();
     };
     const spendMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const period = await ctx.ui.select("Spend period", ["Month", "Week", "Day", "Back"]);
