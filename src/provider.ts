@@ -117,6 +117,8 @@ export interface BedrockOptions {
     selection?: { agentDir?: string; explicitSelection?: () => boolean };
     transformModels?: (models: BedrockModel[]) => BedrockModel[];
     backgroundRefresh?: boolean;
+    /** How long /login waits for its first refresh before saying the models are still loading. */
+    loginRefreshWaitMs?: number;
     preserveNativeAuth?: boolean;
     /** The AWS credentials of the Messages route; the SDK's default provider for the profile unless a test supplies them. */
     credentials?: () => Promise<AwsCredentials>;
@@ -638,6 +640,7 @@ export function createBedrockProvider(
             return refreshInFlight;
         };
         async function refreshForModelSelector(force: boolean): Promise<void> {
+            if (refreshInFlight !== undefined) return;
             const status = await refresh(force, false, true);
             if (status !== "ok") throw new Error(catalog.failure?.() ?? "Bedrock could not load models.");
         }
@@ -695,16 +698,31 @@ export function createBedrockProvider(
                 });
                 return;
             }
+            const updated = readModels().available;
+            if (updateModels(models, updated).changed && native) {
+                await registerBedrockProvider(
+                    pi,
+                    config.agentDir || "",
+                    native,
+                    models,
+                    catalog.load,
+                    identity,
+                    messages,
+                    signedFetch,
+                    (options) => refreshForModelSelector(options.force),
+                    refusalMessage,
+                );
+            }
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
                 const timer = setTimeout(() => {
                     settled = false;
                     resolve();
-                }, 20_000);
+                }, options.loginRefreshWaitMs ?? 20_000);
                 timer.unref();
             });
             await Promise.race([
-                refresh(true)
+                refresh(true, true)
                     .then(() => undefined)
                     .catch(() => undefined),
                 timeout,

@@ -276,10 +276,12 @@ test("/login uses its own long listing, not the short cached one", async () => {
     assert.deepEqual(credential, { type: "api_key", env: { AWS_PROFILE: "demo-sso" } });
 });
 
-test("the login outcome has three plain endings", () => {
+test("the login outcome never claims a count while the refresh is unfinished", () => {
     assert.equal(loginOutcomeMessage(2, true), "Bedrock models loaded: 2. Choose one with /model.");
     assert.match(loginOutcomeMessage(0, true), /not loaded yet; run \/bedrock login/);
-    assert.match(loginOutcomeMessage(0, false), /Loading Bedrock models; \/model lists them in a moment/);
+    const loading = loginOutcomeMessage(13, false);
+    assert.doesNotMatch(loading, /13|loaded:/);
+    assert.match(loading, /up to a minute/);
 });
 
 test("ambient credentials resolve without a profile and without a key", async () => {

@@ -26,7 +26,12 @@ function catalog(region: string): Catalog {
     };
 }
 
-async function harness(t: test.TestContext, raw: Record<string, unknown>, discoveryWorks = true) {
+async function harness(
+    t: test.TestContext,
+    raw: Record<string, unknown>,
+    discoveryWorks = true,
+    timing: { delayMs?: number; lateRegion?: string; failLate?: boolean; cached?: boolean } = {},
+) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-login-end-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const agent = join(dir, "agent");
@@ -36,13 +41,35 @@ async function harness(t: test.TestContext, raw: Record<string, unknown>, discov
     if (discoveryWorks) writeFileSync(join(agent, "bedrock.json"), JSON.stringify(raw));
     else mkdirSync(join(agent, "bedrock.json"));
     const source = {
-        load: () => catalog("us-east-1"),
+        load: () => {
+            if (timing.cached) {
+                try {
+                    const saved = JSON.parse(readFileSync(join(agent, "bedrock.json"), "utf8")) as {
+                        regions?: string[];
+                    };
+                    return catalog(saved.regions?.[0] ?? "us-east-1");
+                } catch {
+                    /* fall through */
+                }
+            }
+            return catalog("us-east-1");
+        },
         refresh: async () => {
-            const region = (raw.regions as string[] | undefined)?.[0] ?? "us-east-1";
+            if (timing.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, timing.delayMs));
+            if (timing.failLate) return "network" as const;
+            let region = timing.lateRegion ?? "us-east-1";
+            try {
+                const saved = JSON.parse(readFileSync(join(agent, "bedrock.json"), "utf8")) as any;
+                const body = saved.preset === undefined ? saved : (saved.presets?.[saved.preset] ?? saved);
+                region = body.regions?.[0] ?? region;
+            } catch {
+                /* keep */
+            }
             source.load = () => catalog(region);
             return "ok" as const;
         },
-        status: () => "ok" as const,
+        status: () => (timing.failLate ? ("network" as const) : ("ok" as const)),
+        failure: () => (timing.failLate ? "AWS could not be reached." : undefined),
     };
     const hooks = new Map<string, Array<(event: any, ctx: any) => unknown>>();
     const providers: any[] = [];
@@ -70,6 +97,7 @@ async function harness(t: test.TestContext, raw: Record<string, unknown>, discov
             platform: "linux",
         }),
         backgroundRefresh: false,
+        loginRefreshWaitMs: timing.delayMs === undefined ? undefined : 20,
     } as never)(pi as never);
     const notices: string[] = [];
     const ctx = {
@@ -136,4 +164,72 @@ test("login under an active preset saves into it and the session uses it", async
         models.some((model: any) => String(model.baseUrl).includes("eu-west-1")),
         JSON.stringify(models),
     );
+});
+
+async function login(s: Awaited<ReturnType<typeof harness>>) {
+    const provider = s.providers.find((entry: any) => entry?.id === "jig-bedrock");
+    await provider.auth.apiKey.login({
+        signal: new AbortController().signal,
+        prompt: async (prompt: any) => answers(prompt),
+        notify: () => {},
+    });
+}
+
+test("a slow login says the models are loading, then announces the late result", async (t) => {
+    const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+        delayMs: 120,
+        lateRegion: "eu-west-1",
+    });
+    await login(s);
+    const first = s.notices.filter((notice) => notice.includes("Bedrock models loaded")).join("\n");
+    assert.doesNotMatch(first, /loaded: \d/);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.match(s.notices.join("\n"), /Bedrock: 1 (new model|model left \/model)/);
+});
+
+test("Pi's refreshModels hook returns promptly while the login refresh runs", async (t) => {
+    const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+        delayMs: 400,
+        lateRegion: "eu-west-1",
+    });
+    await login(s);
+    const provider = s.providers.at(-1);
+    const started = Date.now();
+    await provider.refreshModels({
+        allowNetwork: true,
+        force: true,
+        signal: new AbortController().signal,
+        publish: async (value: any) => {
+            value.update();
+            return true;
+        },
+    });
+    assert.ok(Date.now() - started < 150, `hook took ${Date.now() - started} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+});
+
+test("a fresh cached catalog for the new settings is registered before the slow refresh", async (t) => {
+    const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+        delayMs: 400,
+        lateRegion: "eu-west-1",
+        cached: true,
+    });
+    const started = Date.now();
+    await login(s);
+    assert.ok(Date.now() - started < 200, `login took ${Date.now() - started} ms`);
+    const models = s.providers.at(-1)?.getModels?.() ?? [];
+    assert.ok(
+        models.some((entry: any) => String(entry.baseUrl).includes("eu-west-1")),
+        JSON.stringify(models),
+    );
+});
+
+test("a failed late refresh after login is reported", async (t) => {
+    const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+        delayMs: 120,
+        failLate: true,
+    });
+    await login(s);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.match(s.notices.join("\n"), /AWS could not be reached/);
 });
