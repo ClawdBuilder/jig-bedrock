@@ -69,42 +69,42 @@ adds a Claude model, run the second script for it before you trust the route rul
 
 ## Where the code goes
 
-| File                         | What it owns                                                           |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `src/aws-config-read.ts`     | Reads the AWS config and credentials files into sections.              |
-| `src/aws-config-write.ts`    | Adds the AWS profile chosen at /login, safely and with a backup.       |
-| `src/aws-api.ts`             | Signed HTTPS calls for discovery operations.                           |
-| `src/aws-discovery.ts`       | Finds inference profiles with the AWS CLI and keeps the catalog cache. |
-| `src/aws-profile.ts`         | Checks an AWS profile and verifies its STS identity.                   |
-| `src/bedrock-fetch.ts`       | Signs Bedrock requests with SigV4.                                     |
-| `src/cache.ts`               | Writes the catalog atomically and reads it back with checks.           |
-| `src/cache-root.ts`          | Resolves the private cache root and per-scope catalog paths.           |
-| `src/catalog.ts`             | Defines the model catalog, routes, prices and Pi registration.         |
-| `src/check.ts`               | Validates a settings object and names unknown keys.                    |
-| `src/commands.ts`            | Registers the command and every sub-command.                           |
-| `src/config.ts`              | Loads settings, presets, environment overrides and defaults.           |
-| `src/credential-provider.ts` | Uses the AWS SDK credential chain without reading secrets.             |
-| `src/debug-log.ts`           | Writes the private debug log with redaction.                           |
-| `src/doctor.ts`              | Checks Node and the AWS CLI at start-up.                               |
-| `src/identity.ts`            | Names the provider and recognises its models.                          |
-| `src/index.ts`               | The package entry point that creates the provider.                     |
-| `src/login.ts`               | Runs SSO recovery and its failures.                                    |
-| `src/login-flow.ts`          | The interactive /login flow and its prompts.                           |
-| `src/markers.ts`             | Chooses check marks or words for the terminal.                         |
-| `src/messages.ts`            | Formats the messages shared by commands and the provider.              |
-| `src/profile.ts`             | Resolves the AWS profile in one place.                                 |
-| `src/refusals.ts`            | Remembers AWS AccessDenied refusals for seven days.                    |
-| `src/regions.ts`             | Names the known AWS regions and checks a region setting.               |
-| `src/prompt-cache.ts`        | Calculates prompt-cache lifetimes and prices.                          |
-| `src/provider.ts`            | Wires the provider, commands, settings and sign-in together.           |
-| `src/settings-write.ts`      | Reads and writes bedrock.json.                                         |
-| `src/sigv4.ts`               | Signs an AWS request.                                                  |
-| `src/spend.ts`               | Records spend, budget and the footer.                                  |
-| `src/sso.ts`                 | Repairs an expired SSO sign-in.                                        |
-| `src/sso-check.ts`           | Checks whether an SSO session is still good.                           |
-| `src/start-sign-in.ts`       | Signs in at start when the setting asks.                               |
-| `src/switch-cost.ts`         | Costs a model switch and warns before it.                              |
-| `src/wsl.ts`                 | Finds the browser under WSL.                                           |
+| File                         | What it owns                                                     |
+| ---------------------------- | ---------------------------------------------------------------- |
+| `src/aws-config-read.ts`     | Reads the AWS config and credentials files into sections.        |
+| `src/aws-config-write.ts`    | Adds the AWS profile chosen at /login, safely and with a backup. |
+| `src/aws-api.ts`             | Signed HTTPS calls for discovery operations.                     |
+| `src/aws-discovery.ts`       | Finds inference profiles and keeps the catalog cache.            |
+| `src/aws-profile.ts`         | Checks an AWS profile and verifies its STS identity.             |
+| `src/bedrock-fetch.ts`       | Signs Bedrock requests with SigV4.                               |
+| `src/cache.ts`               | Writes the catalog atomically and reads it back with checks.     |
+| `src/cache-root.ts`          | Resolves the private cache root and per-scope catalog paths.     |
+| `src/catalog.ts`             | Defines the model catalog, routes, prices and Pi registration.   |
+| `src/check.ts`               | Validates a settings object and names unknown keys.              |
+| `src/commands.ts`            | Registers the command and every sub-command.                     |
+| `src/config.ts`              | Loads settings, presets, environment overrides and defaults.     |
+| `src/credential-provider.ts` | Uses the AWS SDK credential chain without reading secrets.       |
+| `src/debug-log.ts`           | Writes the private debug log with redaction.                     |
+| `src/doctor.ts`              | Checks Node and the AWS CLI at start-up.                         |
+| `src/identity.ts`            | Names the provider and recognises its models.                    |
+| `src/index.ts`               | The package entry point that creates the provider.               |
+| `src/login.ts`               | Runs SSO recovery and its failures.                              |
+| `src/login-flow.ts`          | The interactive /login flow and its prompts.                     |
+| `src/markers.ts`             | Chooses check marks or words for the terminal.                   |
+| `src/messages.ts`            | Formats the messages shared by commands and the provider.        |
+| `src/profile.ts`             | Resolves the AWS profile in one place.                           |
+| `src/refusals.ts`            | Remembers AWS AccessDenied refusals for seven days.              |
+| `src/regions.ts`             | Names the known AWS regions and checks a region setting.         |
+| `src/prompt-cache.ts`        | Calculates prompt-cache lifetimes and prices.                    |
+| `src/provider.ts`            | Wires the provider, commands, settings and sign-in together.     |
+| `src/settings-write.ts`      | Reads and writes bedrock.json.                                   |
+| `src/sigv4.ts`               | Signs an AWS request.                                            |
+| `src/spend.ts`               | Records spend, budget and the footer.                            |
+| `src/sso.ts`                 | Repairs an expired SSO sign-in.                                  |
+| `src/sso-check.ts`           | Checks whether an SSO session is still good.                     |
+| `src/start-sign-in.ts`       | Signs in at start when the setting asks.                         |
+| `src/switch-cost.ts`         | Costs a model switch and warns before it.                        |
+| `src/wsl.ts`                 | Finds the browser under WSL.                                     |
 
 ## How CI works
 

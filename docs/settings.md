@@ -10,7 +10,7 @@ The package reads `~/.pi/agent/bedrock.json` (or `PI_CODING_AGENT_DIR/bedrock.js
 { "profile": "my-profile", "regions": ["us-east-1"] }
 ```
 
-Edit the file, or run `/bedrock set <key> <value>` and `/bedrock unset <key>`. A save replaces the running settings at once, and a changed profile, region, tag or explicit list reloads the models. `unset` also takes effect at once. Lists are comma separated. An unknown key warns; a bad value stops the provider, but `/bedrock settings`, `set` and `unset` still work.
+Edit the file, or run `/bedrock set <key> <value>` and `/bedrock unset <key>`. A save replaces the running settings at once: a changed profile, region, tag or explicit list reloads the models, and `api`, `converseModels` or `messagesModels` re-route them. `unset` also takes effect at once. Lists are comma separated; a value with spaces is quoted (`/bedrock set tagValue "Cost Center"`); booleans take true/false, or on/off and yes/no. A region name is checked when it is set: a typo is refused with the nearest names. An unknown key warns; a bad value stops the provider, but `/bedrock settings`, `set` and `unset` still work.
 
 From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `bedrock.json`, once, and never overwrites.
 
@@ -46,7 +46,7 @@ A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `a
 
 When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
 
-A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again.
+A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again. The next prompt is not swallowed: choose another model with `/model`.
 
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 
@@ -60,9 +60,9 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 }
 ```
 
-`/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the current sign-in, and `/bedrock preset remove work` deletes it. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+`/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the settings in force as a preset and activates it, and `/bedrock preset remove work` deletes it. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The preset's footer shows its spend, including this month's spend from before presets existed, and `preset add` says so. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, not the top level.
+Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, and `set` writes there too, not the top level.
 
 ## Which AWS profile is used
 
@@ -91,19 +91,19 @@ An explicit choice never falls back when it is missing. `/bedrock doctor` names 
 
 ## Sign-in methods
 
-Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must work in both.
+Requests and discovery both use the AWS SDK credential chain, with the AWS profile's credentials. The AWS CLI is still needed for `aws sso login` and the AWS profile list (`aws configure list-profiles`).
 
-| You have                      | Requests and discovery | Repaired | Real AWS                                     |
-| ----------------------------- | ---------------------- | -------- | -------------------------------------------- |
-| SSO                           | yes                    | yes      | yes                                          |
-| Keys in an AWS profile        | yes                    | no       | yes                                          |
-| Keys in the environment       | yes                    | no       | yes                                          |
-| Assumed role                  | yes                    | no       | yes (2026-11-16: discovery 23 s, request OK) |
-| `credential_process`          | yes                    | no       | no                                           |
-| Web identity or instance role | requests only          | no       | no                                           |
-| Bedrock API key               | built-in provider only | no       | no                                           |
+| You have                      | Requests and discovery | Repaired      | Real AWS                                     |
+| ----------------------------- | ---------------------- | ------------- | -------------------------------------------- |
+| SSO                           | yes                    | yes           | yes                                          |
+| Keys in an AWS profile        | yes                    | no            | yes                                          |
+| Keys in the environment       | yes                    | no            | yes                                          |
+| Assumed role                  | yes                    | over SSO only | yes (2026-11-16: discovery 23 s, request OK) |
+| `credential_process`          | yes                    | no            | no                                           |
+| Web identity or instance role | requests only          | no            | no                                           |
+| Bedrock API key               | built-in provider only | no            | no                                           |
 
-“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it. Pi has no provider logout hook, so after `/logout` run `/bedrock unset profile`. For an assumed role, each AWS CLI call assumes the role again through `source_profile`.
+“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it. Pi has no provider logout hook, so after `/logout` run `/bedrock unset profile`. For an assumed role, the credential chain assumes the role again through `source_profile`; `/bedrock login` renews the SSO source profile, and a role over keys is not renewed.
 
 ## Other variables
 

@@ -28,7 +28,7 @@ The rule asks in order; the first answer wins:
 4. A known exception, today Opus 5? Converse.
 5. Pi lists the model and its entry says mid-session tool changes work? Messages. Otherwise Converse.
 
-A model newer than the installed Pi uses Converse until Pi is updated or the model is added to `messagesModels`. `/bedrock models` shows the reason: `Pi lists tool changes`, `not on the Messages route`, `your setting`, `known exception` or `this Pi does not know the model`.
+A model newer than the installed Pi uses Converse until Pi is updated or the model is added to `messagesModels`. `/bedrock models` shows the reason: `Pi lists tool changes`, `not on the Messages route`, `Pi has no Messages entry`, `your setting`, `known exception` or `not a Claude model`.
 
 | Model                                               | Route    | Result                  |
 | --------------------------------------------------- | -------- | ----------------------- |
@@ -52,7 +52,7 @@ Both routes stream the reply. Messages declares only the 5-minute cache lifetime
 
 ## How models are found
 
-![Three sources feed the AWS CLI: AWS-defined, by tag, or listed by hand. The CLI only reads and fills the catalog, kept for 24 hours, which fills /model.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/discovery.svg)
+![Three sources ask the AWS API: AWS-defined, by tag, or listed by hand. It only reads, fills the catalog, kept for 24 hours, which fills /model.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/discovery.svg)
 
 _Three sources; details in [How models are found](#how-models-are-found), [What runs when](#what-runs-when), and [Settings](settings.md#the-three-ways-models-are-found)._
 
@@ -62,9 +62,9 @@ The settings choose one way; there is no fallback.
 - **By tag:** reads application inference profiles with `tagKey` and `tagValue`; any model Pi knows is allowed.
 - **Listed by hand:** reads each ARN or id in `profiles`; application inference profiles may hold any model Pi knows, while an AWS-defined one is Claude only.
 
-Each way starts with `aws sts get-caller-identity`. A call may take 20 seconds; a run stops at 90 seconds. At most 256 inference profiles are kept. An inference profile that points at another is followed up to two levels. `GetFoundationModel` is never called.
+Each way starts with an STS account check, then reads Bedrock over HTTPS with the AWS profile's credentials; no `aws` program runs for discovery. (`aws sso login` and the AWS profile list still use the AWS CLI.) A call may take 20 seconds; a run stops at 90 seconds. At most 256 inference profiles are kept. An inference profile that points at another is followed up to two levels. `GetFoundationModel` is never called.
 
-The catalog is private, written by atomic rename, and records the AWS profile and settings. A changed setting discards it. An inference profile whose foundation model Pi does not know is not listed; update Pi. A model with no price is listed as `no price`, and its replies count as unpriced. `/bedrock models` names up to three rejected entries.
+The catalog is private, written by atomic rename, and records the AWS profile and settings. A changed setting discards it. A read that fails in one region keeps the other regions' models and says `N models loaded from X of Y regions`; the failed region is tried again at the next start or `/bedrock refresh`. A failed read says what went wrong — AWS throttled the call, AWS had a problem on its side, the credentials expired or are not valid, or AWS could not be reached — and gives its own next step. If the catalog cannot be written, the models still load for this session and the warning names the folder. An inference profile whose foundation model Pi does not know is not listed; `/bedrock refresh`, `/bedrock status` and `/bedrock models` say how many and name `update Pi`. A model with no price is listed as `no price`, and its replies count as unpriced. `/bedrock models` names up to three rejected entries, with `update Pi` when that is the cause.
 
 ## Model ids
 
@@ -78,13 +78,17 @@ A reply is recorded as `jig-bedrock/<short id>`; the ARN stays off the session l
 
 _One retry, never a third time; details in [Sign-in repair](#sign-in-repair) and [Settings](settings.md#sign-in-methods)._
 
-1. At session start, the saved SSO token's expiry is checked. An expired one gets a `/bedrock login` notice. With `signInAtStart: true` the sign-in starts at once; the default is false.
+1. At a real Pi start in a TUI or RPC session (not on `/reload`, `/new` or `/resume`), the saved SSO token's expiry is checked. An expired one gets a notice that says whether the saved models are loaded. With `signInAtStart: true` the sign-in starts at once; the default is false.
 2. If a request fails before any reply because the SSO session expired, `ssoLoginCommand` (`aws sso login --profile <name>`) runs, then the request is sent once more. Never a third time.
 3. `/bedrock login` runs the same sign-in. A role profile renews its SSO `source_profile`; a keys profile is not sent to `aws sso login`. One login runs at a time; a lock file separates two Pi processes.
 
 A browser opens for the sign-in. On WSL the package opens the Windows browser through `bin/windows-browser`; `browser` names another program. The package never stores a password or token; `/login` stores only the AWS profile name.
 
-Only SSO is repaired. Other sign-in methods: [Settings](settings.md#sign-in-methods).
+An SSO profile and a role over an SSO `source_profile` are repaired; keys, and a role over keys, are not. `/bedrock doctor` and `/bedrock login` give those the AWS CLI check (`aws sts get-caller-identity --profile <name>`) instead of the same command again. Other sign-in methods: [Settings](settings.md#sign-in-methods).
+
+## Menus
+
+`/bedrock` with no arguments opens a menu in a TUI. Back returns one level up (a sub-menu to the main menu), and Escape closes everything. With no presets the Presets menu says so and offers save and Back. The Models menu lists the models this Pi cannot use, with the reason, and says `price unknown` for a model Pi has no price for; choosing a model says which one is in use for the session or why Pi did not switch. The typed commands stay for scripts and agents.
 
 ## What runs when
 
@@ -96,17 +100,18 @@ Only SSO is repaired. Other sign-in methods: [Settings](settings.md#sign-in-meth
 | A reply ends                         | Spend is recorded; the footer updates; a budget notice may appear.               | No               |
 | You open `/model`                    | The saved list shows; a cache older than 24 hours refreshes in the background.   | Only the refresh |
 | `/bedrock refresh`, `/bedrock login` | Discovery runs now, whatever the cache age, or the sign-in runs.                 | Yes              |
-| `/bedrock doctor`                    | Local checks, then three free AWS calls; `offline` makes none.                   | Yes, free        |
+| `/bedrock doctor`                    | Local checks, then free AWS calls; `offline` makes none.                         | Yes, free        |
 
 Nothing waits for AWS at start.
 
 ## Spend and the footer
 
-- Every reply adds one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`; no prompt, ARN, account id or AWS profile name.
+- A reply that reports usage adds one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`; no prompt, ARN, account id or AWS profile name. A reply that ended in error or was aborted is counted when Pi reports tokens for it; a message with no usage adds nothing.
 - The first reply of a month imports earlier sessions from this agent folder once.
-- With a preset the footer starts with its name: `work · Nov $12.40 / $200`.
+- With a preset the footer starts with its name: `work · Nov $12.40 / $200`. A preset's figure includes this month's spend from before presets existed, and `preset add` says so.
 - The footer shows `Nov $12.40`, or `Nov $12.40 / $200` with a budget. A `+` means an unpriced reply.
-- Warning colour starts at 80%, error at 100%; the footer clears when another provider's model is selected.
+- Warning colour starts at 80%, error at 100%; the footer clears when another provider's model is selected. Each warning is announced once a month for one preset and budget amount; a raised budget or `/bedrock budget` can announce again.
+- `/bedrock usage week` counts the last 7 days, reading the previous month's file when they cross a month.
 - A `spendCommand` supplies the figure instead: [Spend command](spend-command.md).
 
 [Back to the README](../README.md).

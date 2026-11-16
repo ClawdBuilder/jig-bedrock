@@ -145,7 +145,7 @@ Named presets switch AWS profiles, model lists, budgets and spend; see [Presets]
 | `/bedrock spend`   | The same as `usage`.             |
 | `/bedrock use`     | List or switch presets.          |
 
-`/bedrock` opens a menu with Status, Check setup, Test one request, Models, Refresh models, Sign in again, Presets, Settings, Spend, Budget and Help. The typed forms in this table and `/bedrock help` stay for scripts and agents.
+`/bedrock` opens a menu with Status, Check setup, Test one request, Models, Refresh models, Sign in again, Presets, Settings, Spend, Budget and Help. Back goes up one menu; Escape closes it. Typed forms and `/bedrock help` stay for scripts and agents.
 
 ## When something is wrong
 
@@ -161,9 +161,9 @@ Named presets switch AWS profiles, model lists, budgets and spend; see [Presets]
 
 - Linux/WSL tested. macOS: unit tests in CI, not run against real AWS. No native Windows.
 - A Bedrock API key works through Pi's built-in provider, not this one.
-- Spend counts this machine's Pi sessions, unless a `spendCommand` is set.
+- Spend counts this machine's Pi sessions unless `spendCommand` is set.
 - The budget is a figure to compare with; it never blocks a request.
-- Only SSO sign-ins are renewed.
+- Only SSO sign-ins, and a role over SSO, are renewed.
 
 ## Update and uninstall
 
@@ -186,7 +186,7 @@ With Jig, `jig update` updates jig-bedrock (it is installed unpinned) and `jig r
 
 1. Run `pi install npm:@clawdbuilder/jig-bedrock`. Done when `pi list` shows it.
 2. Ask the person which AWS profile to use. For an SSO profile, ask them to run `aws sso login --profile <name>` in their terminal; a browser opens. Never read or print credentials.
-3. Write `~/.pi/agent/bedrock.json` as `{"profile": "<name>", "regions": ["us-east-1"]}`. Done when `pi -p "/bedrock settings"` shows that AWS profile from bedrock.json.
+3. Write `~/.pi/agent/bedrock.json` as `{"profile": "<name>", "regions": ["us-east-1"]}`. Done when `pi -p "/bedrock settings"` shows `profile: <name> (file)`.
 4. Run `pi -p "/bedrock refresh"`. Done when it reports more than 0 models.
 5. Run `pi -p --model jig-bedrock/claude-sonnet-5-5 "/bedrock doctor call"`; it sends one tiny request. Done when the last line is `Bedrock is ready.` If `/bedrock refresh` or `/bedrock models` does not list that id, use another non-Fable Claude model from it. A person does the same interactively with `/login`, `/model` and `/bedrock doctor call`.
 
