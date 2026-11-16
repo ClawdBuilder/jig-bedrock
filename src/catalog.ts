@@ -14,6 +14,7 @@ import type { BedrockApi } from "./config.ts";
 import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
+import { isRefusalError } from "./refusals.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Pi's model registry and session entries, checked field by field where they are used
 type Json = any;
@@ -589,7 +590,7 @@ export function bedrockStream(
                               for await (const event of target) {
                                   if (event?.type === "error" && onRefusal !== undefined) {
                                       const message = String(event.error?.errorMessage ?? "");
-                                      if (/AccessDenied|not authorized to perform bedrock:InvokeModel/i.test(message)) {
+                                      if (isRefusalError(message, physical.arn)) {
                                           const plain = onRefusal(physical, message);
                                           if (plain !== undefined) event.error.errorMessage = plain;
                                       }

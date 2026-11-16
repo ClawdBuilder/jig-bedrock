@@ -52,7 +52,7 @@ import {
     missingProfileNotice,
     ProfileResolver,
 } from "./profile.ts";
-import { isRefused, rememberRefusal } from "./refusals.ts";
+import { clearRefusals, isRefused, refusedModels, rememberRefusal } from "./refusals.ts";
 import {
     readSettingsDocument,
     saveDiscoverySettings,
@@ -431,7 +431,10 @@ export function createBedrockProvider(
         };
         const readModels = () => {
             const result = discoveredProfiles(catalog.load(), "", config);
-            result.available = result.available.filter((model) => !isRefused(profileEnv, config.profile, model.arn));
+            const account = catalog.load()?.account_id;
+            result.available = result.available.filter(
+                (model) => !isRefused(profileEnv, config.profile, account, model.arn),
+            );
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
         };
@@ -973,6 +976,8 @@ export function createBedrockProvider(
                 }
                 return rows;
             },
+            clearRefusals: () => clearRefusals(profileEnv, config.profile, catalog.load()?.account_id),
+            refused: () => refusedModels(profileEnv, config.profile, catalog.load()?.account_id),
             doctorCall: async (signal) => {
                 const current = ctx?.model;
                 const selected = models.find((model) => model.id === current?.id);
@@ -985,7 +990,7 @@ export function createBedrockProvider(
                     currentProfile,
                     signedFetch,
                     (_model, message) => {
-                        rememberRefusal(profileEnv, config.profile, _model.arn, _model.id);
+                        rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, _model.arn, _model.id);
                         return `AWS refused ${_model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
                     },
                 );

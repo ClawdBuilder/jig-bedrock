@@ -115,6 +115,8 @@ export interface BedrockCommandSources {
     doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
     discoveryStatus?: () => Status | undefined;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
+    clearRefusals?: () => number;
+    refused?: () => Array<{ arn: string; id: string; date: string }>;
 }
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
@@ -245,6 +247,11 @@ export function registerBedrockCommands(
                 `${m.skip} This Pi does not know the model: ${clean(entry.profile, 60)}, ${clean(entry.region, 20)}`,
             );
         if (rejected.length > 3) rows.push(`${m.skip} ... and ${rejected.length - 3} more`);
+        const refused = sources.refused?.() ?? [];
+        if (refused.length > 0) {
+            rows.push("Refused by AWS for your role");
+            for (const entry of refused) rows.push(`${m.warn} ${entry.id} · ${entry.date.slice(0, 10)}`);
+        }
         if (list.length === 0) rows.push(`${m.warn} No models loaded.`);
         emit(ctx, `Bedrock models · ${list.length} · price per million tokens, in / out`, rows);
     };
@@ -467,6 +474,7 @@ export function registerBedrockCommands(
         const before = new Set(sources.models().map((model) => model.id));
         const selectedBefore = ctx.model?.provider === "jig-bedrock" ? ctx.model.id : undefined;
         if (ctx.hasUI && !toStdout(ctx)) emit(ctx, "Bedrock refresh", [`${m.skip} Reading the models from AWS…`]);
+        const cleared = sources.clearRefusals?.() ?? 0;
         const status = await sources.refresh();
         const after = sources.models();
         const added = after.filter((model) => !before.has(model.id)).length;
@@ -489,6 +497,7 @@ export function registerBedrockCommands(
         }
         const rows = [
             `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
+            ...(cleared > 0 ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`] : []),
         ];
         if (selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore))
             rows.push("Choose /model if your selection was removed.");
