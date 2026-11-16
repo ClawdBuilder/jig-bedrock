@@ -6,7 +6,7 @@ import test from "node:test";
 import type { Catalog } from "../src/catalog.ts";
 import { jigBedrock } from "../src/index.ts";
 
-function catalog(region: string): Catalog {
+function catalog(region: string, id = "claude-sonnet-5-5"): Catalog {
     return {
         schema: 1,
         mode: "system",
@@ -16,9 +16,9 @@ function catalog(region: string): Catalog {
         fetched_at: Math.floor(Date.now() / 1000),
         profiles: [
             {
-                arn: `arn:aws:bedrock:${region}:123456789012:inference-profile/global.anthropic.claude-sonnet-5-5`,
-                profile_name: "Sonnet",
-                foundation_model_id: "anthropic.claude-sonnet-5-5",
+                arn: `arn:aws:bedrock:${region}:123456789012:inference-profile/global.anthropic.${id}`,
+                profile_name: id,
+                foundation_model_id: `anthropic.${id}`,
                 region,
                 kind: "system",
             },
@@ -30,7 +30,7 @@ async function harness(
     t: test.TestContext,
     raw: Record<string, unknown>,
     discoveryWorks = true,
-    timing: { delayMs?: number; lateRegion?: string; failLate?: boolean; cached?: boolean } = {},
+    timing: { delayMs?: number; lateRegion?: string; lateId?: string; failLate?: boolean; cached?: boolean } = {},
 ) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-login-end-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -65,7 +65,7 @@ async function harness(
             } catch {
                 /* keep */
             }
-            source.load = () => catalog(region);
+            source.load = () => catalog(region, timing.lateId);
             return "ok" as const;
         },
         status: () => (timing.failLate ? ("network" as const) : ("ok" as const)),
@@ -232,4 +232,24 @@ test("a failed late refresh after login is reported", async (t) => {
     await login(s);
     await new Promise((resolve) => setTimeout(resolve, 500));
     assert.match(s.notices.join("\n"), /AWS could not be reached/);
+});
+
+test("a login that drops the session model gives one new-settings notice and the count", async (t) => {
+    const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+        delayMs: 120,
+        lateRegion: "eu-west-1",
+        lateId: "claude-haiku-5-5",
+    });
+    s.ctx.model = {
+        id: "claude-sonnet-5-5",
+        provider: "jig-bedrock",
+        baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    } as never;
+    await login(s);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const text = s.notices.join("\n");
+    assert.match(text, /not in the list for the new settings/);
+    assert.match(text, /Bedrock now has \d+ models/);
+    assert.doesNotMatch(text, /no longer in your account/);
+    assert.doesNotMatch(text, /Saved Bedrock model is unavailable/);
 });

@@ -760,8 +760,14 @@ export function registerBedrockSelectionGuard(
         /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
         discoverySlow?: () => boolean;
     } = {},
-): { blockUntilChoice(): void; unresolved(): boolean; restoreSaved(ctx: ExtensionContext): Promise<void> } {
+): {
+    blockUntilChoice(): void;
+    unresolved(): boolean;
+    restoreSaved(ctx: ExtensionContext): Promise<void>;
+    suppressWarnings(): void;
+} {
     let unresolvedSavedSelection = false;
+    let suppressWarnings = false;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
@@ -833,14 +839,17 @@ export function registerBedrockSelectionGuard(
     };
     pi.on("session_start", restore);
     pi.on("model_select", (event, ctx) => {
-        if (event.source === "set" || event.source === "cycle") unresolvedSavedSelection = false;
-        if (unsupported(ctx)) ctx.ui.notify(warning(), "warning");
+        if (event.source === "set" || event.source === "cycle") {
+            unresolvedSavedSelection = false;
+            suppressWarnings = false;
+        }
+        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
-        ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
         return { action: "handled" };
     });
     return {
@@ -849,5 +858,8 @@ export function registerBedrockSelectionGuard(
         },
         unresolved: () => unresolvedSavedSelection,
         restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
+        suppressWarnings: () => {
+            suppressWarnings = true;
+        },
     };
 }

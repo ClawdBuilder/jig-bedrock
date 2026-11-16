@@ -588,7 +588,8 @@ export function createBedrockProvider(
                     }
                 }
                 const change = updateModels(models, updated);
-                if (change.changed && guard?.unresolved() && ctx !== undefined) await guard.restoreSaved(ctx);
+                if (change.changed && guard?.unresolved() && ctx !== undefined && !settingsChanged)
+                    await guard.restoreSaved(ctx);
                 const current = catalog.load();
                 const problems = current?.errors ?? [];
                 const warnings = current?.warnings ?? [];
@@ -598,22 +599,26 @@ export function createBedrockProvider(
                     ctx &&
                     (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    if (selectedGone && selected !== undefined && (updated.length > 0 || !settingsChanged)) {
+                    if (change.added > 0) {
                         ctx.ui.notify(
-                            `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
-                            "warning",
-                        );
-                    } else if (change.added > 0) {
-                        ctx.ui.notify(
-                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model.`,
+                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model. Bedrock now has ${models.length} models (${change.removed} left).`,
                             "info",
                         );
                     } else if (change.removed > 0) {
                         ctx.ui.notify(
-                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model.`,
+                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model. Bedrock now has ${models.length} models.`,
                             "info",
                         );
-                    } else {
+                    }
+                    if (selectedGone && selected !== undefined) {
+                        if (settingsChanged) guard.suppressWarnings();
+                        ctx.ui.notify(
+                            settingsChanged
+                                ? `Bedrock: ${selected.id} is not in the list for the new settings; choose another with /model.`
+                                : `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
+                            "warning",
+                        );
+                    } else if (change.added === 0 && change.removed === 0) {
                         ctx.ui.notify(
                             [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
                                 .filter((part): part is string => part !== undefined)
@@ -696,6 +701,7 @@ export function createBedrockProvider(
             if (updateModels(models, updated).changed && native) {
                 await register();
             }
+            settingsChanged = true;
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
                 const timer = setTimeout(() => {
