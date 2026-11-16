@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-16
+
+- Fixed: A saved default model is now restored when the models arrive after start-up (0.6.0 said this was fixed; it was not).
+
 ## [0.6.0] - 2026-11-16
 
 - Added: a `/bedrock` menu for status, setup, models, sign-in, presets, settings, spend and budget; `/bedrock models` shows model details and can use a model for this session.

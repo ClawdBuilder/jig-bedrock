@@ -27,7 +27,7 @@ test("a saved model restored after a late refresh is selected and announced", as
             mode: "rpc",
             hasUI: true,
             sessionManager: { getBranch: () => [] },
-            modelRegistry: { find: () => model },
+            modelRegistry: { find: (_provider: string, id: string) => models.find((entry) => entry.id === id) },
             ui: { notify: (text: string) => notices.push(text), setEditorText() {} },
         };
         const guard = registerBedrockSelectionGuard(pi as never, models as never, { agentDir: dir });

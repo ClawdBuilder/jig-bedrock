@@ -594,6 +594,7 @@ export function createBedrockProvider(
                 const beforeCount = settingsBaseline ?? models.length;
                 settingsBaseline = undefined;
                 const change = updateModels(models, updated);
+                if (change.changed && native) await register();
                 if (change.changed && guard?.unresolved() && ctx !== undefined && !settingsChanged)
                     await guard.restoreSaved(ctx);
                 const current = catalog.load();
@@ -639,9 +640,6 @@ export function createBedrockProvider(
                     }
                 }
                 settingsChanged = false;
-                if (change.changed && native) {
-                    await register();
-                }
                 return status;
             })().finally(() => {
                 refreshInFlight = undefined;
