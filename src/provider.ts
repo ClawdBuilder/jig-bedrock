@@ -314,8 +314,9 @@ export function createBedrockProvider(
             if (health.aws.status !== "ready") {
                 const message =
                     'jig-bedrock needs AWS CLI v2 for sign-in and listing models. Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html — or choose "Use a Bedrock API key with Pi\'s own provider".';
-                interaction.notify({ type: "info", message });
-                throw new Error("AWS CLI v2 is required.");
+                throw new Error(
+                    "AWS CLI v2 is required: install it from https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html, then run /login again.",
+                );
             }
             return runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,

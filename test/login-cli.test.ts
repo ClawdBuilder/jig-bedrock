@@ -51,11 +51,10 @@ async function loginWithCli(status: "missing" | "old", method: "existing" | "sso
             },
             notify: (event: any) => notices.push(event.message ?? ""),
         }),
-        /AWS CLI v2 is required/,
+        /AWS CLI v2 is required: install it from https:\/\/docs\.aws\.amazon\.com\/cli\/latest\/userguide\/getting-started-install\.html/,
     );
     assert.equal(prompts, 0, "no question is asked");
-    assert.match(notices.join("\n"), /needs AWS CLI v2 for sign-in and listing models/);
-    assert.match(notices.join("\n"), /Use a Bedrock API key with Pi's own provider/);
+    assert.doesNotMatch(notices.join("\n"), /needs AWS CLI v2/);
     assert.equal(existsSync(join(env.PI_CODING_AGENT_DIR, "bedrock.json")), false);
     assert.equal(readFileSync(env.AWS_CONFIG_FILE, "utf8"), before, "the AWS config is untouched");
     rmSync(dir, { recursive: true, force: true });

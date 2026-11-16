@@ -70,8 +70,7 @@ async function askProfile(
                 ? await interaction.prompt({ type: "text", message: "AWS profile name", placeholder: "my-profile" })
                 : answer.replace(/^profile:/, "");
     } else {
-        if (listed === undefined)
-            interaction.notify({ type: "info", message: "Could not list your AWS profiles; type the name." });
+        if (listed === undefined) say(interaction, "Could not list your AWS profiles; type the name.");
         name = await interaction.prompt({
             type: "text",
             message: "AWS profile name (aws configure sso or aws configure makes one)",
@@ -81,11 +80,11 @@ async function askProfile(
     interaction.signal.throwIfAborted();
     name = name.trim();
     if (!profilePattern.test(name)) {
-        interaction.notify({ type: "info", message: "That is not an AWS profile name; choose or type another." });
+        say(interaction, "That is not an AWS profile name; choose or type another.");
         return askProfile(interaction, listed, message);
     }
     if (listed !== undefined && !listed.includes(name))
-        interaction.notify({ type: "info", message: `${name} is not in aws configure list-profiles yet.` });
+        say(interaction, `${name} is not in aws configure list-profiles yet.`);
     return name;
 }
 
@@ -98,7 +97,7 @@ async function requiredText(
         const value = (await interaction.prompt({ type: "text", message, placeholder })).trim();
         interaction.signal.throwIfAborted();
         if (value !== "") return value;
-        interaction.notify({ type: "info", message: "A value is required." });
+        say(interaction, "A value is required.");
     }
     throw new Error("No value entered.");
 }
@@ -107,8 +106,10 @@ const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d$/;
 const roleNamePattern = /^[\w+=,.@-]{1,64}$/;
 const roleArnPattern = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
+let noteSink: ((message: string) => void) | undefined;
 function say(interaction: ProviderAuthInteraction, message: string): void {
-    interaction.notify({ type: "info", message });
+    if (noteSink !== undefined) noteSink(message);
+    else interaction.notify({ type: "info", message });
 }
 
 async function askName(interaction: ProviderAuthInteraction, message: string, placeholder = "my-profile") {
@@ -211,10 +212,10 @@ async function askDiscovery(
                 interaction.signal,
             );
         } catch (error) {
-            say(
-                interaction,
-                `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`,
-            );
+            interaction.notify({
+                type: "info",
+                message: `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`,
+            });
         }
         const counts = new Map<string, Map<string, number>>();
         for (const tags of matches)
@@ -263,6 +264,9 @@ export async function runLoginFlow(
     interaction.notify({ type: "progress", message: "Looking up your AWS profiles…" });
     let listed = await options.listProfiles(interaction.signal);
     let note = "";
+    noteSink = (message) => {
+        note = message;
+    };
     for (let attempt = 0; attempt < 10; attempt++) {
         interaction.signal.throwIfAborted();
         const method = (await interaction.prompt({
@@ -281,7 +285,7 @@ export async function runLoginFlow(
             interaction.notify({ type: "progress", message: "Checking the AWS credential chain…" });
             const check = await options.verify(undefined, interaction.signal);
             if (!check.ok) {
-                interaction.notify({ type: "info", message: check.message });
+                say(interaction, check.message);
                 continue;
             }
             await askDiscovery(interaction, options);
@@ -311,19 +315,15 @@ export async function runLoginFlow(
             const ssoListed =
                 listed === undefined ? undefined : listed.filter((profile) => options.isSso?.(profile) ?? false);
             if (ssoListed !== undefined && ssoListed.length === 0) {
-                interaction.notify({
-                    type: "info",
-                    message:
-                        "No IAM Identity Center (SSO) profiles are configured. Run aws configure sso in a terminal, then try again.",
-                });
+                say(
+                    interaction,
+                    "No IAM Identity Center (SSO) profiles are configured. Run aws configure sso in a terminal, then try again.",
+                );
                 continue;
             }
             const name = await askProfile(interaction, ssoListed, "Which AWS SSO profile do you want to sign in to?");
             if (!(options.isSso?.(name) ?? false)) {
-                interaction.notify({
-                    type: "info",
-                    message: `${name} is not an IAM Identity Center (SSO) profile.`,
-                });
+                say(interaction, `${name} is not an IAM Identity Center (SSO) profile.`);
                 continue;
             }
             interaction.notify({
@@ -333,13 +333,13 @@ export async function runLoginFlow(
             try {
                 await options.signIn?.(name, interaction.signal);
             } catch (error) {
-                interaction.notify({ type: "info", message: recoveryHint(error) });
+                say(interaction, recoveryHint(error));
                 continue;
             }
             interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
             const check = await options.verify(name, interaction.signal);
             if (!check.ok) {
-                interaction.notify({ type: "info", message: check.message });
+                say(interaction, check.message);
                 continue;
             }
             await askDiscovery(interaction, options, name);
@@ -438,7 +438,7 @@ export async function runLoginFlow(
             try {
                 await options.signIn?.(profile, interaction.signal);
             } catch (error) {
-                interaction.notify({ type: "info", message: recoveryHint(error) });
+                say(interaction, recoveryHint(error));
                 continue;
             }
             interaction.notify({ type: "progress", message: `Checking ${profile} with AWS…` });
@@ -558,15 +558,15 @@ export async function runLoginFlow(
                 interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
                 check = await options.verify(name, interaction.signal);
             } catch (error) {
-                interaction.notify({
-                    type: "info",
-                    message: `Sign-in expired for ${name}: ${error instanceof Error ? error.message : String(error)}`,
-                });
+                say(
+                    interaction,
+                    `Sign-in expired for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+                );
                 continue;
             }
         }
         if (!check.ok) {
-            interaction.notify({ type: "info", message: check.message });
+            say(interaction, check.message);
             continue;
         }
         await askDiscovery(interaction, options, name);
