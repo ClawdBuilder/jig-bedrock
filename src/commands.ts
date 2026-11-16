@@ -348,11 +348,11 @@ export function registerBedrockCommands(
         if (key === "monthlyBudgetUsd") return Number(value);
         return value;
     };
-    const set = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
+    const set = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<boolean> => {
         const parts = args.trim().split(/\s+/);
         if (parts.length < 2 || parts.length % 2 !== 0) {
             emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
-            return;
+            return false;
         }
         const pairs: Array<[string, string]> = [];
         for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i] as string, parts[i + 1] as string]);
@@ -363,7 +363,7 @@ export function registerBedrockCommands(
                     `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
                     `Usage: /bedrock ${usageFor("set")}`,
                 ]);
-                return;
+                return false;
             }
         }
         const doc = readSettingsDocument(env);
@@ -372,13 +372,13 @@ export function registerBedrockCommands(
                 `${m.fail} Settings file is not valid JSON.`,
                 `${m.skip} File: ${displayPath(doc.file, env)}`,
             ]);
-            return;
+            return false;
         }
         for (const [key, value] of pairs) {
             const parsed = parseSetting(key, value);
             if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
                 emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
-                return;
+                return false;
             }
             doc.target[key] = parsed;
         }
@@ -387,39 +387,36 @@ export function registerBedrockCommands(
             const error = candidate.error ?? "The settings are not valid.";
             const pair = /activeTagKey and activeTagValue|tagKey and tagValue/.exec(error);
             emit(ctx, "Bedrock settings", [
-                `${m.fail} ${pair ? `${pair[0]} go together: /bedrock set ${pair[0] === "activeTagKey and activeTagValue" ? "activeTagKey <key> activeTagValue <value>" : "tagKey <key> tagValue <value>"}` : error}`,
-                `Usage: /bedrock ${usageFor("set")}`,
+                `${m.fail} ${
+                    fromMenu
+                        ? `${pairs[0]?.[0] ?? "Value"}: value not accepted.`
+                        : pair
+                          ? `${pair[0]} go together: /bedrock set ${pair[0] === "activeTagKey and activeTagValue" ? "activeTagKey <key> activeTagValue <value>" : "tagKey <key> tagValue <value>"}`
+                          : error
+                }`,
+                ...(fromMenu ? [] : [`Usage: /bedrock ${usageFor("set")}`]),
             ]);
-            return;
+            return false;
         }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
-            return;
+            return false;
         }
         Object.assign(config, candidate.config);
         sources.apply?.();
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const needsRefresh = pairs.some(([key]) =>
-            [
-                "profile",
-                "regions",
-                "tagKey",
-                "tagValue",
-                "activeTagKey",
-                "activeTagValue",
-                "profiles",
-                "api",
-                "converseModels",
-                "messagesModels",
-            ].includes(key),
+            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
+                key,
+            ),
         );
         emit(ctx, "Bedrock settings", [
             `${m.ok} ${shown} (saved to bedrock.json)`,
-            ...(needsRefresh && fromMenu ? ["Saved. Loading models for the new settings…"] : []),
-            ...(needsRefresh && !fromMenu ? ["Next: /bedrock refresh"] : []),
+            ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh && fromMenu) await refresh("", ctx);
+        if (needsRefresh) await refresh("", ctx);
+        return true;
     };
     const unset = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
         const keys = args.trim().split(/\s+/).filter(Boolean);
@@ -462,25 +459,15 @@ export function registerBedrockCommands(
         Object.assign(config, candidate.config);
         sources.apply?.();
         const needsRefresh = keys.some((key) =>
-            [
-                "profile",
-                "regions",
-                "tagKey",
-                "tagValue",
-                "activeTagKey",
-                "activeTagValue",
-                "profiles",
-                "api",
-                "converseModels",
-                "messagesModels",
-            ].includes(key),
+            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
+                key,
+            ),
         );
         emit(ctx, "Bedrock settings", [
             `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
-            ...(needsRefresh && fromMenu ? ["Saved. Loading models for the new settings…"] : []),
-            ...(needsRefresh && !fromMenu ? ["Next: /bedrock refresh"] : []),
+            ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh && fromMenu) await refresh("", ctx);
+        if (needsRefresh) await refresh("", ctx);
     };
     const refresh = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (args.trim() !== "") {
@@ -942,15 +929,23 @@ export function registerBedrockCommands(
             ssoLoginCommand: "aws sso login --profile {profile}",
             browser: "/usr/bin/xdg-open",
         };
-        const answer = await ctx.ui.input(
-            `${key} · now: ${Array.isArray(current) ? current.join(",") : (current ?? "not set")} · e.g. ${examples[key] ?? "value"} · empty keeps it · Unset removes it`,
+        const format =
+            key === "regions" ? "comma separated, e.g. us-east-1,us-west-2" : `e.g. ${examples[key] ?? "value"}`;
+        let answer = await ctx.ui.input(
+            `${key}: ${format} · now: ${Array.isArray(current) ? current.join(",") : (current ?? "not set")} · empty keeps it · Unset removes it`,
             current === undefined
                 ? (examples[key] ?? "value")
                 : Array.isArray(current)
                   ? current.join(",")
                   : String(current),
         );
-        if (answer !== undefined && answer !== "") await set(`${key} ${answer}`, ctx, true);
+        while (answer !== undefined && answer !== "") {
+            if (await set(`${key} ${answer}`, ctx, true)) return;
+            answer = await ctx.ui.input(
+                `${key}: value not accepted · ${format} · Escape leaves it unchanged`,
+                String(answer),
+            );
+        }
     };
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.models();

@@ -380,7 +380,7 @@ test("the settings menu refuses an invalid value and writes nothing", async (t) 
     const h = harness(t, {});
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
     await h.result.bedrock("", h.ctx as never);
-    assert.match(h.notices.join("\n"), /regions must contain 1-16 unique AWS region names/);
+    assert.match(h.notices.join("\n"), /value not accepted/);
     assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });
 
@@ -757,4 +757,51 @@ test("the budget input title shows the current value, example and clear rule", a
     assert.match(title, /now: (\$100|none)/, JSON.stringify(calls));
     assert.match(title, /e\.g\. 200/);
     assert.match(title, /0 or off clears/);
+});
+
+test("a typed discovery change refreshes, and api does not", async (t) => {
+    let refreshes = 0;
+    const regions = harness(
+        t,
+        {},
+        {
+            refresh: async () => {
+                refreshes++;
+                return "ok";
+            },
+        },
+    );
+    await regions.result.bedrock("set regions us-west-2", regions.ctx as never);
+    assert.equal(refreshes, 1);
+    assert.match(regions.notices.join("\n"), /Saved\. Loading models for the new settings/);
+    const api = harness(
+        t,
+        {},
+        {
+            refresh: async () => {
+                refreshes++;
+                return "ok";
+            },
+        },
+    );
+    refreshes = 0;
+    await api.result.bedrock("set api converse", api.ctx as never);
+    assert.equal(refreshes, 0);
+});
+
+test("an invalid menu value reopens the input, then a valid one saves once", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1", "us-east-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.deepEqual(saved.regions, ["us-east-1"]);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    assert.ok(calls.some((call) => /value not accepted/.test(call.title)));
+});
+
+test("an invalid menu value followed by Escape writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });
