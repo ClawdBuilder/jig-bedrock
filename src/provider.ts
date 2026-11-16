@@ -392,7 +392,7 @@ export function createBedrockProvider(
             return credential;
         };
         const auth = createProfileAuth(profiles, loginListProfiles, {
-            unavailable: () => autoProfileFailed,
+            unavailable: () => autoProfileFailed && models.length === 0,
             guided,
             afterLogin: (profile, interaction, signal) =>
                 afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
@@ -1073,7 +1073,10 @@ export function createBedrockProvider(
                             options.verifyProfile ??
                             ((profile, sig) => verifyAwsProfile(profile, { env: profileEnv, signal: sig }))
                         )(choice, signal);
-                        const expired = !check.ok && (isSsoProfile(choice, profileEnv) ?? false);
+                        const expired =
+                            !check.ok &&
+                            (isSsoProfile(choice, profileEnv) ?? false) &&
+                            /expired|token|sso|sign-in/i.test(check.message ?? "");
                         rows.push({
                             ok: check.ok,
                             check: "sign-in",

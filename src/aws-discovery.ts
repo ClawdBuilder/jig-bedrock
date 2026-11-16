@@ -292,7 +292,8 @@ export function createAwsDiscovery(
         try {
             if (!force && !invalidAccount) {
                 const cached = readCurrent();
-                if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
+                const incomplete = (cached?.warnings ?? []).some((warning) => /did not answer/.test(warning));
+                if (cached && !incomplete && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
             const account = (await step("check the AWS account", sts)).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
@@ -547,7 +548,7 @@ export function createAwsDiscovery(
                         hint = ` ${count} have ${actualKey}=${actualValue}. Run /bedrock set ${field} ${field === "tagKey" ? actualKey : actualValue}.`;
                 }
                 warnings.push(
-                    `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.${hint}`,
+                    `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue${activeKey === undefined ? "" : " and the second tag"}.${hint}`,
                 );
             }
             if (mode === "system" && profiles.length === 0 && regionFailures.length < config.regions.length)
