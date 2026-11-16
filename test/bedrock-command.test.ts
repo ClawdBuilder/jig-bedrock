@@ -318,3 +318,62 @@ test("a tag pair can be set and unset in one command", async (t) => {
     assert.equal("activeTagKey" in saved, false);
     assert.equal("activeTagValue" in saved, false);
 });
+
+function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string[] = []) {
+    let selectCalls = 0;
+    h.ctx.ui.select = async () => {
+        selectCalls++;
+        return selects.shift();
+    };
+    h.ctx.ui.input = async () => inputs.shift();
+    return () => selectCalls;
+}
+
+test("/bedrock alone opens the action menu", async (t) => {
+    const h = harness(t, {});
+    const calls = withUi(h, ["Help"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(calls(), 1);
+});
+
+test("the settings menu edits a tag pair in one step", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "activeTagKey", "Set"], ["Active true"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.activeTagKey, "Active");
+    assert.equal(saved.activeTagValue, "true");
+});
+
+test("the presets menu lists presets and switches", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev — dev"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev");
+});
+
+test("the spend and budget menus ask before running", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Budget"], ["250"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /Budget set to \$250/);
+    withUi(h, ["Spend"], []);
+    const calls = h.ctx.ui.select as (...args: never[]) => Promise<string | undefined>;
+    assert.ok(calls);
+});
+
+test("an explicit refresh reports how many refused models came back", async (t) => {
+    const h = harness(t, {}, { clearRefusals: () => 3 });
+    await h.result.bedrock("refresh", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /3 refused models offered again/);
+});

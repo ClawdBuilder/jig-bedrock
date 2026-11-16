@@ -121,7 +121,7 @@ export interface BedrockCommandSources {
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
 export function registerBedrockCommands(
-    _pi: ExtensionAPI,
+    pi: ExtensionAPI,
     sources: BedrockCommandSources,
 ): { bedrock: BedrockCommand; completions: (prefix: string) => Array<{ value: string; label: string }> } {
     const { config, spend } = sources;
@@ -767,13 +767,136 @@ export function registerBedrockCommands(
         }
         return distance <= 2 ? best : undefined;
     };
+    const menu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const choice = await ctx.ui.select("Bedrock", [
+            "Status — profile, models, spend",
+            "Check setup — doctor",
+            "Test one request — doctor call",
+            "Models — routes and prices",
+            "Refresh models",
+            "Sign in again",
+            "Presets",
+            "Settings",
+            "Spend",
+            "Budget",
+            "Help",
+        ]);
+        if (choice === undefined) return;
+        if (choice.startsWith("Status")) return status(ctx);
+        if (choice.startsWith("Check setup")) return doctor("", ctx);
+        if (choice.startsWith("Test one request")) return doctor("call", ctx);
+        if (choice.startsWith("Models")) return modelsMenu(ctx);
+        if (choice.startsWith("Refresh")) return refresh("", ctx);
+        if (choice.startsWith("Sign in")) return login(ctx);
+        if (choice.startsWith("Presets")) return presetsMenu(ctx);
+        if (choice.startsWith("Settings")) return settingsMenu(ctx);
+        if (choice.startsWith("Spend")) return spendMenu(ctx);
+        if (choice.startsWith("Budget")) return budgetMenu(ctx);
+        return help("", ctx);
+    };
+    const presetsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const list = sources.presetList?.() ?? [];
+        const choice = await ctx.ui.select("Bedrock presets", [
+            ...list.map(
+                (entry) => `${entry.active ? `${m.ok} ` : ""}${entry.name} — ${entry.profile ?? "no AWS profile"}`,
+            ),
+            "Save current settings as a preset…",
+            "Remove a preset…",
+            "Back",
+        ]);
+        if (choice === undefined || choice === "Back") return;
+        if (choice.startsWith("Save current")) {
+            const name = await ctx.ui.input("Preset name", "work");
+            if (name !== undefined && name !== "") await sources.presetAdd?.(name, ctx);
+            return;
+        }
+        if (choice.startsWith("Remove")) {
+            const name = await ctx.ui.input("Preset to remove", list[0]?.name ?? "work");
+            if (name !== undefined && name !== "") await sources.presetRemove?.(name, ctx);
+            return;
+        }
+        const name = list.find((entry) => choice.startsWith(`${entry.active ? `${m.ok} ` : ""}${entry.name} —`))?.name;
+        if (name !== undefined) await sources.usePreset?.(name, ctx);
+    };
+    const settingsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const choice = await ctx.ui.select("Bedrock settings", [...FIELDS.filter((key) => key !== "presets"), "Back"]);
+        if (choice === undefined || choice === "Back") return;
+        const key = choice;
+        const action = await ctx.ui.select(`${key}`, ["Set", "Unset", "Back"]);
+        if (action === undefined || action === "Back") return;
+        if (action === "Unset") {
+            await unset(key, ctx);
+            return;
+        }
+        const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
+        if (pair !== undefined) {
+            const answer = await ctx.ui.input(`${key} and ${pair}`, "Team my-team");
+            const [left, right] = (answer ?? "").trim().split(/\s+/);
+            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx);
+            return;
+        }
+        if (key === "api") {
+            const answer = await ctx.ui.select("api", ["messages", "converse"]);
+            if (answer !== undefined) await set(`api ${answer}`, ctx);
+            return;
+        }
+        if (key === "signInAtStart" || key === "debug") {
+            const answer = await ctx.ui.select(key, ["true", "false"]);
+            if (answer !== undefined) await set(`${key} ${answer}`, ctx);
+            return;
+        }
+        const current = (config as unknown as Record<string, unknown>)[key];
+        const answer = await ctx.ui.input(key, current === undefined ? "value" : String(current));
+        if (answer !== undefined && answer !== "") await set(`${key} ${answer}`, ctx);
+    };
+    const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const list = sources.models();
+        if (list.length === 0) {
+            await models("", ctx);
+            return;
+        }
+        const choice = await ctx.ui.select("Bedrock models", [
+            ...list.map(
+                (model) => `${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`,
+            ),
+            "Back",
+        ]);
+        if (choice === undefined || choice === "Back") return;
+        const selected = list.find((model) => choice.startsWith(`${model.id} —`));
+        if (selected === undefined) return;
+        const action = await ctx.ui.select(
+            `${selected.id}\n${route(selected, config)} route · ${selected.arn.split(":")[3] ?? ""} · $${selected.cost.input}/$${selected.cost.output}\nInference profile: ${selected.arn.slice(selected.arn.lastIndexOf("/") + 1)}\nTo keep it for every start: /model, select it, Ctrl+S.`,
+            ["Use for this session", "Back"],
+        );
+        if (action !== "Use for this session") return;
+        const model = ctx.modelRegistry.find("jig-bedrock", selected.id);
+        if (model !== undefined) await pi.setModel(model);
+    };
+    const spendMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const period = await ctx.ui.select("Spend period", ["Month", "Week", "Day", "Back"]);
+        if (period === undefined || period === "Back") return;
+        await usage(period.toLowerCase(), ctx);
+    };
+    const budgetMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const answer = await ctx.ui.input(
+            "Monthly budget in USD",
+            config.monthlyBudgetUsd === undefined ? "200" : String(config.monthlyBudgetUsd),
+        );
+        if (answer !== undefined && answer !== "") await budget(answer, ctx);
+    };
     const full: BedrockCommand = async (args, ctx) => {
         const [command = "", ...rest] = args.trim().split(/\s+/);
         const tail = rest.join(" ");
         switch (command) {
             case "":
+                if (ctx.hasUI && !toStdout(ctx) && tail === "") {
+                    await menu(ctx);
+                    return;
+                }
+                await status(ctx);
+                return;
             case "status":
-                if (command !== "" && tail !== "") {
+                if (tail !== "") {
                     emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("status")}`]);
                     return;
                 }

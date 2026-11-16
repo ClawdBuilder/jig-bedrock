@@ -429,9 +429,11 @@ export function createBedrockProvider(
             if (context.hasUI) context.ui.notify(line, "info");
             else process.stdout.write(`${line}\n`);
         };
+        let refusalAccount: string | undefined;
         const readModels = () => {
             const result = discoveredProfiles(catalog.load(), "", config);
             const account = catalog.load()?.account_id;
+            refusalAccount = account;
             result.available = result.available.filter(
                 (model) => !isRefused(profileEnv, config.profile, account, model.arn),
             );
@@ -976,8 +978,8 @@ export function createBedrockProvider(
                 }
                 return rows;
             },
-            clearRefusals: () => clearRefusals(profileEnv, config.profile, catalog.load()?.account_id),
-            refused: () => refusedModels(profileEnv, config.profile, catalog.load()?.account_id),
+            clearRefusals: () => clearRefusals(profileEnv, config.profile, refusalAccount),
+            refused: () => refusedModels(profileEnv, config.profile, refusalAccount),
             doctorCall: async (signal) => {
                 const current = ctx?.model;
                 const selected = models.find((model) => model.id === current?.id);

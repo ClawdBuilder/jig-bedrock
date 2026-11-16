@@ -357,7 +357,7 @@ async function main() {
         // 4. Pi starts and the extension is there.
         const result = await rpc(pi, env, project, [
             { id: "commands", type: "get_commands" },
-            { id: "bedrock", type: "prompt", message: "/bedrock" },
+            { id: "bedrock", type: "prompt", message: "/bedrock status" },
             { id: "doctor", type: "prompt", message: "/bedrock doctor offline" },
             { id: "settings", type: "prompt", message: "/bedrock settings" },
         ]);
