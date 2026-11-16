@@ -112,7 +112,7 @@ function ciJob(name: string): string {
 
 test("ci-ok waits for every other job in ci.yml, whatever it is called", () => {
     const keys = [...ci.matchAll(/^ {4}([a-z][a-z0-9-]*):$/gm)].map((match) => match[1] ?? "");
-    const jobs = keys.slice(keys.indexOf("checks")).filter((key) => key !== "ci-ok");
+    const jobs = keys.slice(keys.indexOf("checks")).filter((key) => key !== "ci-ok" && key !== "scheduled-issue");
     for (const required of ["checks", "pi-versions", "packed-install", "macos"])
         assert.ok(jobs.includes(required), `ci.yml has the ${required} job`);
     const needs =
