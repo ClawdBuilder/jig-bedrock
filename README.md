@@ -66,7 +66,7 @@ Done when the last line is `Bedrock models loaded:` with a number above 0.
 
 **3. Pick a model**
 
-Run `/model`, type `sonnet-5-5`, choose with the arrow keys and Enter.
+Run `/model`, type `sonnet-5-5`, then Enter uses it for this session; Ctrl+S also keeps it as the default for every start.
 
 ```text
 > sonnet-5-5
