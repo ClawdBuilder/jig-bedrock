@@ -39,7 +39,7 @@ jobs:
                   npm --version
 
             - name: Install dependencies
-              run: npm ci
+              run: npm ci --ignore-scripts
 
             - name: Commit email guard
               # The private word list is a repository secret. Fork pull requests get no secrets, so they stay warn-only.
@@ -85,7 +85,7 @@ jobs:
                   cache: npm
 
             - name: Install dependencies
-              run: npm ci
+              run: npm ci --ignore-scripts
 
             - name: Install Pi ${{ matrix.pi }} over the pinned one
               run: node scripts/install-pi.mjs "${{ matrix.pi }}"
@@ -117,7 +117,7 @@ jobs:
                   cache: npm
 
             - name: Install dependencies
-              run: npm ci
+              run: npm ci --ignore-scripts
 
             - name: Install Pi ${{ matrix.pi }} over the pinned one
               run: node scripts/install-pi.mjs "${{ matrix.pi }}"
@@ -148,7 +148,7 @@ jobs:
                   npm --version
 
             - name: Install dependencies
-              run: npm ci
+              run: npm ci --ignore-scripts
 
             - name: Types and Biome
               run: npm run check

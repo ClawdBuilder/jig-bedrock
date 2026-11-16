@@ -5,6 +5,7 @@ import { writeSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
+import { discoveryHelp } from "./aws-discovery.ts";
 import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
 import { isObject } from "./check.ts";
@@ -113,6 +114,7 @@ export interface BedrockCommandSources {
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
     doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
+    discoveryStatus?: () => Status | undefined;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
 }
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
@@ -437,9 +439,10 @@ export function registerBedrockCommands(
         const added = after.filter((model) => !before.has(model.id)).length;
         const removed = [...before].filter((id) => !after.some((model) => model.id === id)).length;
         if (status !== "ok") {
+            const advice = sources.discoveryStatus?.() ?? status;
             emit(ctx, "Bedrock refresh", [
                 `✗ ${sources.failure?.() ?? "The models could not be read from AWS."}`,
-                "Next: /bedrock doctor",
+                `Next: ${discoveryHelp(advice)}`,
             ]);
             return;
         }
@@ -458,11 +461,14 @@ export function registerBedrockCommands(
         try {
             await sources.login();
             emit(ctx, "Bedrock login", ["✓ Sign-in finished. Models will refresh in the background."]);
-        } catch {
-            const profile = config.profile ?? "my-profile";
+        } catch (error) {
+            const cause = error instanceof Error ? error.message : String(error);
+            const profile = config.profile;
             emit(ctx, "Bedrock login", [
-                "✗ Sign-in did not finish.",
-                `Next: run "aws sso login --profile ${profile}" in a terminal, then /bedrock refresh.`,
+                `✗ Sign-in did not finish: ${clean(cause, 140)}`,
+                profile === undefined
+                    ? "Next: choose an AWS profile with /login."
+                    : `Next: run "aws sso login --profile ${profile}" in a terminal, then /bedrock refresh.`,
             ]);
         }
     };
@@ -549,11 +555,13 @@ export function registerBedrockCommands(
             `${config.spendCommand === undefined ? m.skip : spendStatus.startsWith("ok") ? m.ok : m.fail} Spend command: ${spendStatus}`,
         );
         if (debugEnabled(env, config)) rows.push(`${m.skip} Debug log: ${debugLogPath(env)}`);
+        let requestOk = false;
         if (call) {
-            if (!sources.doctorCall) rows.push(`${m.skip} Request: not available in this install`);
+            if (!sources.doctorCall) rows.push(`${m.fail} Request: not available in this install`);
             else {
                 try {
                     const result = await sources.doctorCall(ctx.signal ?? new AbortController().signal);
+                    requestOk = true;
                     rows.push(
                         `${m.ok} Request: ${result.route} route · ${(result.ms / 1000).toFixed(1)} s · cache read ${result.cacheRead}, wrote ${result.cacheWrite}`,
                     );
@@ -572,13 +580,21 @@ export function registerBedrockCommands(
             if (failed.includes("Sign-in")) return "Next: /bedrock login";
             if (failed.includes("inference profile"))
                 return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
-            if (failed.includes("Models"))
-                return "Next: /bedrock refresh; ask your AWS administrator for bedrock:ListInferenceProfiles";
+            if (failed.includes("Models")) {
+                const status = sources.discoveryStatus?.();
+                return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status)}`;
+            }
             if (failed.includes("Spend command")) return "Next: see docs/spend-command.md";
-            if (failed.includes("Request")) return "Next: /bedrock doctor";
+            if (failed.includes("Request")) return "Next: fix the request failure above, then /bedrock doctor call";
             return "Next: /bedrock doctor";
         })();
-        rows.push(problems === 0 ? "Bedrock is ready." : `${problems} problem${problems === 1 ? "" : "s"}.`);
+        if (problems === 0)
+            rows.push(
+                call && requestOk
+                    ? "Bedrock is ready."
+                    : "Setup looks right; no request was sent. /bedrock doctor call sends one.",
+            );
+        else rows.push(`${problems} problem${problems === 1 ? "" : "s"}.`);
         if (problems > 0) rows.push(next);
         emit(ctx, "Bedrock doctor", rows);
     };

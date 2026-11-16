@@ -1,7 +1,7 @@
 /* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // Every failure the doctor must name in plain words, with stubbed AWS answers so no call leaves the machine.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,6 +31,19 @@ async function doctor(
         models?: unknown[];
         spendCommand?: string[];
         profile?: string;
+        status?:
+            | "ok"
+            | "timeout"
+            | "sso_expired"
+            | "permission_denied"
+            | "configuration"
+            | "credentials"
+            | "network"
+            | "unavailable";
+        call?:
+            | { ok: true; route: string; ms: number; cacheRead: number; cacheWrite: number }
+            | { ok: false; error: string };
+        args?: string;
     } = {},
 ) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-case-"));
@@ -55,9 +68,18 @@ async function doctor(
         lastChoice: () => (options.last ?? { profile: "fixture", exists: true }) as never,
         unavailable: () => [],
         doctorAws: async () => options.aws ?? [],
+        discoveryStatus: options.status === undefined ? undefined : () => options.status,
+        doctorCall:
+            options.call === undefined
+                ? undefined
+                : async () => {
+                      if (!options.call.ok) throw new Error(options.call.error);
+                      const { ok: _ok, ...value } = options.call;
+                      return value;
+                  },
     });
     const notices: string[] = [];
-    await result.bedrock("doctor", {
+    await result.bedrock(options.args ?? "doctor", {
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
@@ -86,9 +108,12 @@ test("sign-in expired", async (t) => {
     assert.match(text, /Next: \/bedrock login/);
 });
 test("access denied while listing", async (t) => {
-    const text = await doctor(t, { aws: [{ ok: false, text: "Inference profiles: access denied while listing" }] });
+    const text = await doctor(t, {
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Inference profiles: access denied while listing" }],
+    });
     assert.match(text, /access denied while listing/);
-    assert.match(text, /Next: \/bedrock refresh/);
+    assert.match(text, /bedrock:ListInferenceProfiles/);
 });
 test("access denied on one profile", async (t) => {
     const text = await doctor(t, { aws: [{ ok: false, text: "One profile: access denied" }] });
@@ -133,4 +158,63 @@ test("an AWS CLI version timeout is not a problem and never says install", async
     const text = await doctor(t, { check: { ...ready, aws: { status: "timeout" as never } } });
     assert.match(text, /– AWS CLI: could not check/);
     assert.doesNotMatch(text, /install AWS CLI|✗ AWS CLI/);
+});
+
+test("plain doctor says no request was sent, and call gives its own verdict", async (t) => {
+    const plain = await doctor(t);
+    assert.doesNotMatch(plain, /Bedrock is ready/);
+    assert.match(plain, /Setup looks right; no request was sent\. \/bedrock doctor call sends one\./);
+    const bad = await doctor(t, { args: "doctor call", call: { ok: false, error: "request timed out" } });
+    assert.doesNotMatch(bad, /Bedrock is ready/);
+    assert.match(bad, /✗ Request: request timed out/);
+    assert.match(bad, /Next: fix the request failure above, then \/bedrock doctor call/);
+    const good = await doctor(t, {
+        args: "doctor call",
+        call: { ok: true, route: "Messages", ms: 900, cacheRead: 0, cacheWrite: 120 },
+    });
+    assert.match(good, /Bedrock is ready\./);
+});
+
+test("each discovery failure gets its own next step", async (t) => {
+    const timeout = await doctor(t, { status: "timeout", aws: [{ ok: false, text: "Inference profiles: timed out" }] });
+    assert.match(timeout, /timed out; check network access/);
+    assert.doesNotMatch(timeout, /ListInferenceProfiles/);
+    const expired = await doctor(t, {
+        status: "sso_expired",
+        aws: [{ ok: false, text: "Inference profiles: sign-in expired" }],
+    });
+    assert.match(expired, /\/bedrock login/);
+    assert.doesNotMatch(expired, /ListInferenceProfiles/);
+    const denied = await doctor(t, {
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Inference profiles: access denied while listing" }],
+    });
+    assert.match(denied, /bedrock:ListInferenceProfiles/);
+    const none = await doctor(t, { status: "ok", aws: [{ ok: false, text: "Inference profiles: no Claude models" }] });
+    assert.match(none, /check regions and the tag or explicit list/);
+    assert.doesNotMatch(none, /ListInferenceProfiles/);
+});
+
+test("every doctor block in troubleshooting.md is the block the code prints", async (t) => {
+    const page = readFileSync(join(import.meta.dirname, "..", "docs", "troubleshooting.md"), "utf8");
+    const block = (text: string): string => {
+        const lines = text.split("\n");
+        const first = lines.find((line) => line.startsWith("✗ "));
+        const next = lines.find((line) => line.startsWith("Next: "));
+        assert.ok(first, text);
+        assert.ok(next, text);
+        return `${first}\n${next}`;
+    };
+    const signIn = await doctor(t, { aws: [{ ok: false, text: "AWS identity: sign-in expired" }] });
+    assert.ok(page.includes(block(signIn)), block(signIn));
+    const denied = await doctor(t, {
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Inference profiles: access denied while listing" }],
+    });
+    assert.ok(page.includes(block(denied)), block(denied));
+    const none = await doctor(t, {
+        status: "ok",
+        aws: [{ ok: false, text: "Inference profiles: no Claude models in eu-north-1" }],
+    });
+    assert.ok(page.includes(block(none)), block(none));
 });

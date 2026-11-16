@@ -329,7 +329,7 @@ export async function registerBedrockSsoRecovery(
                 return;
             }
             if (!profilePattern.test(profile)) {
-                ctx.ui.notify("Use /bedrock login [AWS profile name].", "warning");
+                ctx.ui.notify("Use /bedrock login.", "warning");
                 return;
             }
             const problem = await check?.(profile, ctx.signal);

@@ -80,8 +80,10 @@ Done when the footer shows the chosen id and `Nov $0.00`.
 **4. Check**
 
 ```text
-/bedrock doctor
+/bedrock doctor call
 ```
+
+This sends one tiny request (a fraction of a cent).
 
 ```text
 Bedrock doctor
@@ -93,6 +95,7 @@ Bedrock doctor
 ✓ Models: 31 found in us-east-1 (AWS-defined)
 ✓ Selected model: claude-sonnet-5-5 · Messages route
 – Spend command: not set
+✓ Request: Messages route · 0.9 s · cache read 0, wrote 120
 Bedrock is ready.
 ```
 
@@ -185,7 +188,7 @@ With Jig, `jig update` updates jig-bedrock (it is installed unpinned) and `jig r
 
 ## For an agent setting this up
 
-Do the four steps in order. Step 2 opens a browser: ask the user to finish. Never read or print credentials. Done when the doctor says `Bedrock is ready.`
+Do the four steps in order. Step 2 opens a browser: ask the user to finish. Never read or print credentials. Done when `/bedrock doctor call` says `Bedrock is ready.`
 
 ## Licence
 

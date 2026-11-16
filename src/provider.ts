@@ -790,6 +790,7 @@ export function createBedrockProvider(
             migrate: migration,
             refresh: () => refresh(true, true, true),
             failure: () => catalog.failure?.(),
+            discoveryStatus: () => catalog.status?.(),
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
@@ -857,7 +858,7 @@ export function createBedrockProvider(
                                     ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
                                     : `Models: no Claude models in ${config.regions.join(", ")}`
                                 : `Models: ${models.length} found in ${config.regions.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`
-                            : `Models: ${reason ?? "could not list"}; ask your AWS administrator for bedrock:ListInferenceProfiles`,
+                            : `Models: ${reason ?? "could not list"}`,
                 });
                 const errors = catalog.load()?.errors ?? [];
                 if (errors.length > 0) {
