@@ -1009,7 +1009,7 @@ export function createBedrockProvider(
             spend.updateFooter(context);
             emitPreset(context, [
                 `${m.ok} Preset ${name} saved and active; models reloaded.`,
-                `The footer now counts ${name} from here.`,
+                `The footer now shows ${name}'s spend, including this month's spend from before presets.`,
             ]);
         };
         const removePreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {

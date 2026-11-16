@@ -633,7 +633,11 @@ test("adding a preset keeps the spend the footer showed and says what it counts"
     assert.ok(command, "the /bedrock command is registered");
     await command.handler("preset add work", context);
     assert.match(notices.join("\n"), /Preset work saved and active/, notices.join("\n"));
-    assert.match(notices.join("\n"), /The footer now counts work from here\./, notices.join("\n"));
+    assert.match(
+        notices.join("\n"),
+        /The footer now shows work's spend, including this month's spend from before presets\./,
+        notices.join("\n"),
+    );
     assert.match(tracker.footerText(), /^work · Nov \$120/, tracker.footerText());
     assert.doesNotMatch(tracker.footerText(), /\$0\.00/);
     assert.ok(
