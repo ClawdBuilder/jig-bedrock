@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import test from "node:test";
-import { BEDROCK_SUBCOMMANDS } from "../src/commands.ts";
+import { BEDROCK_COMMANDS, BEDROCK_SUBCOMMANDS } from "../src/commands.ts";
 import { FIELDS } from "../src/config.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -200,12 +200,10 @@ test("every /bedrock sub-command the pages name exists, and help names every sub
             assert.ok(names.has(name ?? ""), `${page} names /bedrock ${name}, which src/commands.ts does not have`);
         }
     }
-    const source = read("src/commands.ts");
-    const help =
-        /const HELP: Record<\(typeof BEDROCK_SUBCOMMANDS\)\[number\], string> = \{([\s\S]*?)^\};/m.exec(source)?.[1] ??
-        "";
-    for (const name of names)
-        assert.match(help, new RegExp(`^    ${name}:`, "m"), `the /bedrock help text does not name ${name}`);
+    for (const command of BEDROCK_COMMANDS) {
+        assert.ok(names.has(command.name), `help does not name ${command.name}`);
+        assert.ok(command.usage.length > 0 && command.summary.length > 0, command.name);
+    }
 });
 
 test("the gallery card names an extension with a published cover and a plain description", () => {
@@ -254,4 +252,12 @@ test("AGENTS.md is a short agent guide, and CI installs with scripts off", () =>
     const ci = read(".github/workflows/ci.yml");
     assert.doesNotMatch(ci, /run: npm ci(?! --ignore-scripts)/m);
     assert.match(ci, /npm ci --ignore-scripts/);
+});
+
+test("the agent route runs headless and the presets section points at settings", () => {
+    const readme = read("README.md");
+    assert.match(readme, /pi -p --model jig-bedrock\/claude-sonnet-5-5 "\/bedrock doctor call"/);
+    assert.match(readme, /pi -p "\/bedrock refresh"/);
+    assert.match(readme, /## Several AWS profiles\n\nNamed presets[^\n]*\[Presets\]\(docs\/settings\.md#presets\)/);
+    assert.match(read("docs/settings.md"), /"presets": \{/);
 });

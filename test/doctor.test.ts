@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { checkLocalDependencies, dependencyLines } from "../src/doctor.ts";
 
-const config = {
+const _config = {
     team: "Fixture",
     profile: "fixture",
     regions: ["us-east-1"],

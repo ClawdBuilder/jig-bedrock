@@ -39,7 +39,7 @@ async function scenario(signInAtStart: boolean, uiMode = "tui") {
         mode: uiMode,
         ui: { notify: (text: string) => notices.push(text) },
     };
-    await hooks.get("session_start")!({ reason: "startup" }, ctx);
+    await hooks.get("session_start")?.({ reason: "startup" }, ctx);
     await settle();
     return { checked, recovered, refreshed, notices };
 }

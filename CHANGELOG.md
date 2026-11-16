@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-16
+
+- `/bedrock help`, usage lines, completions and the typo guard come from one command table; unknown commands print one notice.
+- Setting messages use the file's key names, include an example, and name the nearest setting, preset or period.
+- Long notifications wrap instead of being cut at 100 characters.
+- Check and warning markers follow the TERM=dumb word fallback everywhere.
+- The README's agent route shows the headless `pi -p` commands and their real output.
+- The README links presets to Settings, uses one product sentence and lists `/bedrock spend` as a name for `usage`.
+- Removed: `/bedrock-doctor`, `/bedrock-refresh`, `/bedrock-usage`, `/bedrock-stats`, `/bedrock-profiles`, `/aws-login`; use `/bedrock doctor`, `refresh`, `usage`, `models`, `login`.
+
 ## [0.4.4] - 2026-11-16
 
 - Plain `/bedrock doctor` says no request was sent; `/bedrock doctor call` sends one and ends at `Bedrock is ready.`

@@ -1,6 +1,6 @@
 # jig-bedrock
 
-Claude on AWS Bedrock for Pi, using your AWS profile.
+Claude and other Bedrock models in Pi, signed in with your AWS profile.
 
 ![Pi sends a request to jig-bedrock, which signs it for Amazon Bedrock. jig-bedrock finds your models, renews an expired SSO sign-in, keeps the prompt cache and shows spend in the footer.](https://raw.githubusercontent.com/ClawdBuilder/jig-bedrock/main/docs/img/overview.svg)
 
@@ -123,19 +123,7 @@ Done when the last line is `Bedrock is ready.`
 
 ## Several AWS profiles
 
-Presets are named settings.
-
-```json
-{
-    "presets": {
-        "work": { "profile": "company-profile", "team": "my-team", "monthlyBudgetUsd": 200 },
-        "personal": { "profile": "my-profile", "regions": ["us-west-2"] }
-    },
-    "preset": "work"
-}
-```
-
-`/bedrock use` lists them. `/bedrock use personal` switches this session; a fresh saved list loads at once, otherwise the models are read in the background. `/bedrock preset add work` saves the current sign-in as a preset. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+Named presets switch AWS profiles, model lists, budgets and spend; see [Presets](docs/settings.md#presets).
 
 ## Commands
 
@@ -147,6 +135,7 @@ Presets are named settings.
 | `/bedrock refresh` | Reads models now, any cache age. |
 | `/bedrock login`   | Renews the AWS sign-in.          |
 | `/bedrock usage`   | Spend by model and period.       |
+| `/bedrock spend`   | The same as `usage`.             |
 | `/bedrock use`     | List or switch presets.          |
 
 `/bedrock help` lists every command, including `settings`, `set` and `budget`.
@@ -188,7 +177,25 @@ With Jig, `jig update` updates jig-bedrock (it is installed unpinned) and `jig r
 
 ## For an agent setting this up
 
-Do the four steps in order. Step 2 opens a browser: ask the user to finish. Never read or print credentials. Done when `/bedrock doctor call` says `Bedrock is ready.`
+1. Run `pi install npm:@clawdbuilder/jig-bedrock`. Done when `pi list` shows it.
+2. Ask the person which AWS profile to use. For an SSO profile, ask them to run `aws sso login --profile <name>` in their terminal; a browser opens. Never read or print credentials.
+3. Write `~/.pi/agent/bedrock.json` as `{"profile": "<name>", "regions": ["us-east-1"]}`. Done when `pi -p "/bedrock settings"` shows that AWS profile from bedrock.json.
+4. Run `pi -p "/bedrock refresh"`. Done when it reports more than 0 models.
+5. Run `pi -p --model jig-bedrock/claude-sonnet-5-5 "/bedrock doctor call"`; it sends one tiny request. Done when the last line is `Bedrock is ready.` If `/bedrock refresh` or `/bedrock models` does not list that id, use another non-Fable Claude model from it. A person does the same interactively with `/login`, `/model` and `/bedrock doctor call`.
+
+```text
+Bedrock doctor
+✓ Node 26.13.0
+✓ AWS CLI 2.34.46
+✓ Settings: ~/.pi/agent/bedrock.json
+✓ AWS profile: my-profile (from bedrock.json)
+✓ Sign-in: AWS answered
+✓ Models: 31 found in us-east-1 (AWS-defined)
+✓ Selected model: claude-sonnet-5-5 · Messages route
+– Spend command: not set
+✓ Request: Messages route · 3.9 s · cache read 0, wrote 0
+Bedrock is ready.
+```
 
 ## Licence
 

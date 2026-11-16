@@ -65,7 +65,7 @@ test("the migration notice appears once and /bedrock migrate copies generic keys
     const h = await harness(dir);
     assert.ok(
         h.notices.includes(
-            "Your Bedrock settings are in jig.json. This version reads bedrock.json only. Run /bedrock migrate to copy them.",
+            "Your Bedrock settings are in jig.json. This version reads bedrock.json only. Run /bedrock migrate to copy them; this stays until 0.6.0.",
         ),
         h.notices.join("\n"),
     );

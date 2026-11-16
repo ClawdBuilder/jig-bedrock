@@ -114,7 +114,7 @@ test("on with JIG_BEDROCK_DEBUG=1 or the debug setting, and the setting is check
     assert.equal(loadConfig({ raw: {}, env: {} }).config?.debug, false);
     assert.equal(loadConfig({ raw: { debug: true }, env: {} }).config?.debug, true);
     assert.equal(loadConfig({ raw: {}, env: { JIG_BEDROCK_DEBUG: "1" } }).config?.debug, true);
-    assert.deepEqual(validateBedrock({ debug: "yes" }), ["bedrock.debug must be true or false"]);
+    assert.deepEqual(validateBedrock({ debug: "yes" }), ["debug must be true or false"]);
     assert.deepEqual(validateBedrock({ debug: false }), []);
 });
 
