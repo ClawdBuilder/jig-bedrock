@@ -762,13 +762,16 @@ export function registerBedrockSelectionGuard(
         /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
         discoverySlow?: () => boolean;
     } = {},
-): { blockUntilChoice(): void } {
+): { blockUntilChoice(): void; unresolved(): boolean; restoreSaved(ctx: ExtensionContext): Promise<void> } {
     let unresolvedSavedSelection = false;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
         "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
-    const warning = () => (options.discoverySlow?.() === true ? slowWarning : unavailableWarning);
+    const loadingWarning =
+        "Saved Bedrock model is not loaded yet; the models are still arriving. Choose one with /model after they appear.";
+    const warning = () =>
+        options.discoverySlow?.() === true || models.length === 0 ? loadingWarning : unavailableWarning;
     // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
     // built-in model and must be left alone.
     const oldRecorded = (model: { provider?: string; id?: string } | undefined) =>
@@ -777,7 +780,7 @@ export function registerBedrockSelectionGuard(
     const unsupported = (ctx: ExtensionContext) =>
         unresolvedSavedSelection ||
         (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
-    const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext) => {
+    const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
         // Pi 1.2 reports a session switch as session_start with reason new, resume or fork.
         const switched =
             event.type === "session_start" &&
@@ -816,12 +819,15 @@ export function registerBedrockSelectionGuard(
                     ctx.ui.notify(warning(), "warning");
                     warned = true;
                 }
-            } else if (ctx.model?.provider !== target.provider || ctx.model.id !== target.id) {
+            } else if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
                     ctx.ui.notify(warning(), "warning");
                     warned = true;
-                } else unresolvedSavedSelection = false;
+                } else {
+                    unresolvedSavedSelection = false;
+                    if (announce) ctx.ui.notify(`Bedrock: restored ${target.id}.`, "info");
+                }
             }
         }
         if (!warned && options.deferStartupWarning?.() !== true && unsupported(ctx))
@@ -843,5 +849,7 @@ export function registerBedrockSelectionGuard(
         blockUntilChoice: () => {
             unresolvedSavedSelection = true;
         },
+        unresolved: () => unresolvedSavedSelection,
+        restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
     };
 }

@@ -554,6 +554,7 @@ export function createBedrockProvider(
                     }
                 }
                 const change = updateModels(models, updated);
+                if (change.changed && guard?.unresolved() && ctx !== undefined) await guard.restoreSaved(ctx);
                 const current = catalog.load();
                 const problems = current?.errors ?? [];
                 const warnings = current?.warnings ?? [];

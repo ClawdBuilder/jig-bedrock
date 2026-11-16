@@ -428,8 +428,8 @@ test("saved default comes from the active Pi home and warns once when unavailabl
     };
     await hooks.get("session_start")?.({}, ctx);
     assert.equal(notices.length, 1);
-    assert.match(notices[0]!, /Saved Bedrock model is unavailable/);
-    assert.match(notices[0]!, /for your profiles/);
+    assert.match(notices[0]!, /Saved Bedrock model is not loaded yet/);
+    assert.match(notices[0]!, /models are still arriving/);
     assert.doesNotMatch(notices[0]!, /\bteam\b/i);
 });
 
