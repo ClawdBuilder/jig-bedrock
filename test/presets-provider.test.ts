@@ -329,3 +329,33 @@ test("the presets menu labels a preset with the mode it really runs", async (t) 
     assert.match(row ?? "", /personal — personal · by tag/, JSON.stringify(presets.options));
     assert.doesNotMatch(row ?? "", /AWS-defined/, JSON.stringify(presets.options));
 });
+
+test("the presets menu shows the profile a preset would really use", async (t) => {
+    const s = await start(t, {
+        settings: {
+            profile: "work",
+            tagKey: "Team",
+            tagValue: "fixture",
+            regions: [region],
+            presets: { inherited: { regions: [region] }, personal: { profile: "personal" } },
+            preset: "work",
+        },
+    });
+    const calls: Array<{ title: string; options: string[] }> = [];
+    const script: Array<string | undefined> = ["Presets", undefined];
+    s.ctx.mode = "tui";
+    (s.ctx.ui as unknown as Record<string, unknown>).select = async (title: string, options: string[] = []) => {
+        calls.push({ title, options });
+        const next = script.shift();
+        return next === undefined
+            ? undefined
+            : (options.find((option) => option === next || option.startsWith(next)) ?? next);
+    };
+    await s.commands.get("bedrock")?.handler("", s.ctx);
+    const presets = calls.find((call) => call.title.startsWith("Bedrock presets"));
+    assert.ok(presets, JSON.stringify(calls));
+    const inherited = presets.options.find((option) => option.startsWith("inherited"));
+    assert.match(inherited ?? "", /^inherited — work · by tag/, JSON.stringify(presets.options));
+    const personal = presets.options.find((option) => option.startsWith("personal"));
+    assert.match(personal ?? "", /^personal — personal · by tag/, JSON.stringify(presets.options));
+});
