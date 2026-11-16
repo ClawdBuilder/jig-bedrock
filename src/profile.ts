@@ -84,8 +84,9 @@ export function createListProfiles(
 }
 
 /** What /login says after discovery ran, or when it did not finish within the bound. */
-export function loginOutcomeMessage(modelCount: number, settled: boolean): string {
+export function loginOutcomeMessage(modelCount: number, settled: boolean, warning?: string): string {
     if (modelCount > 0) return `Bedrock models loaded: ${modelCount}. Choose one with /model.`;
+    if (warning !== undefined && warning !== "") return warning;
     return settled
         ? "Bedrock models are not loaded yet; run /bedrock login, then /bedrock refresh."
         : "Loading Bedrock models; /model lists them in a moment.";

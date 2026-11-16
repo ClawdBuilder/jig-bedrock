@@ -272,3 +272,17 @@ test("the README discovery labels are the labels the login menu shows", () => {
     const flow = read("src/login-flow.ts");
     for (const label of labels) assert.ok(flow.includes(label), `login-flow.ts does not show ${label}`);
 });
+
+test("the README has a no-AWS-setup route through the SSO login choice", () => {
+    const readme = read("README.md");
+    assert.match(readme, /## No AWS setup yet\?/);
+    assert.match(readme, /Create an IAM Identity Center \(SSO\) profile/);
+    for (const value of ["start URL", "SSO region", "account ID", "role name"])
+        assert.ok(readme.includes(value), value);
+});
+
+test("the README and settings say how to clear the profile written at login", () => {
+    assert.match(read("README.md"), /\/bedrock unset profile/);
+    assert.match(read("docs/settings.md"), /\/bedrock unset profile/);
+    assert.match(read("docs/settings.md"), /chosen at `\/login`/);
+});

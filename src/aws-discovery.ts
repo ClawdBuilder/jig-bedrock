@@ -439,8 +439,57 @@ export function createAwsDiscovery(
             const failed = profiles.length === 0 && explicitErrors.length > 0;
             if (mode === "tag" && profiles.length === 0) {
                 const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
+                const key = tagKeyFor();
+                const value = tagValueFor();
+                let hint = "";
+                if (key !== undefined) {
+                    let count = 0;
+                    let actualKey = key;
+                    let actualValue = value ?? "";
+                    let field: "tagKey" | "tagValue" = "tagKey";
+                    for (const region of config.regions) {
+                        try {
+                            const result = await step("find a tag with different case", () =>
+                                aws([
+                                    "resourcegroupstaggingapi",
+                                    "get-resources",
+                                    "--region",
+                                    region,
+                                    "--resource-type-filters",
+                                    "bedrock:application-inference-profile",
+                                    "--no-paginate",
+                                ]),
+                            );
+                            const rows = result.ResourceTagMappingList;
+                            if (!Array.isArray(rows)) continue;
+                            for (const row of rows) {
+                                if (!Array.isArray(row?.Tags)) continue;
+                                const tag = row.Tags.find(
+                                    (entry: Json) =>
+                                        typeof entry?.Key === "string" && entry.Key.toLowerCase() === key.toLowerCase(),
+                                );
+                                if (!tag) continue;
+                                const keyMismatch = tag.Value === value && tag.Key !== key;
+                                const valueMismatch =
+                                    tag.Key === key &&
+                                    typeof value === "string" &&
+                                    tag.Value !== value &&
+                                    tag.Value.toLowerCase() === value.toLowerCase();
+                                if (!keyMismatch && !valueMismatch) continue;
+                                count++;
+                                actualKey = tag.Key;
+                                actualValue = tag.Value;
+                                field = keyMismatch ? "tagKey" : "tagValue";
+                            }
+                        } catch {
+                            // The hint is best effort; the original warning remains.
+                        }
+                    }
+                    if (count > 0)
+                        hint = ` ${count} have ${actualKey}=${actualValue}. Run /bedrock set ${field} ${field === "tagKey" ? actualKey : actualValue}.`;
+                }
                 warnings.push(
-                    `No application inference profiles matched ${tagKeyFor()}=${tagValueFor()}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.`,
+                    `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.${hint}`,
                 );
             }
             if (mode === "system" && profiles.length === 0)

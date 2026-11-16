@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-16
+
+- `/login` checks for AWS CLI v2 before the first question, and a missing `aws` command is reported as missing.
+- The README has a route for a person with no AWS setup yet.
+- The first-start notice says the models appear in `/model` in a few seconds.
+
 ## [0.5.1] - 2026-11-16
 
 - The discovery chosen at `/login` is used at once, not after a restart.

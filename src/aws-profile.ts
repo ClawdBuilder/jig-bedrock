@@ -37,7 +37,7 @@ export type StsRun = (
 ) => Promise<boolean>;
 
 export const runStsIdentity: StsRun = (profile, env, timeoutMs, signal) =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
         execFile(
             "aws",
             [
@@ -48,7 +48,8 @@ export const runStsIdentity: StsRun = (profile, env, timeoutMs, signal) =>
                 ...(profile === undefined ? [] : ["--profile", profile]),
             ],
             { encoding: "utf8", timeout: timeoutMs, maxBuffer: 65_536, env, signal },
-            (error) => resolve(error === null),
+            (error) =>
+                (error as NodeJS.ErrnoException | null)?.code === "ENOENT" ? reject(error) : resolve(error === null),
         );
     });
 
@@ -62,12 +63,18 @@ export async function verifyAwsProfile(
     const env = options.env ?? process.env;
     const run = options.run ?? runStsIdentity;
     let ok = false;
+    let missing = false;
     try {
         ok = await run(profile, env, options.timeoutMs ?? 15_000, options.signal);
-    } catch {
-        ok = false;
+    } catch (error) {
+        missing = (error as NodeJS.ErrnoException)?.code === "ENOENT";
     }
     if (ok) return { ok: true };
+    if (missing)
+        return {
+            ok: false,
+            message: "the aws command was not found. Install AWS CLI v2, then try again.",
+        };
     return {
         ok: false,
         message: `AWS did not answer for ${profile === undefined ? "the credential chain" : profile}. Check the profile and your network access, then try again.`,
