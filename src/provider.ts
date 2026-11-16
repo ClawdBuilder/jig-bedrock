@@ -664,6 +664,7 @@ export function createBedrockProvider(
             loadConfig({
                 raw: userSettings(options.env ?? process.env),
                 env: options.env ?? process.env,
+                ...(config.preset === undefined ? {} : { presetOverride: config.preset }),
             });
         const replaceConfig = (next: ResolvedConfig): void => {
             for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
@@ -689,15 +690,6 @@ export function createBedrockProvider(
             profiles.stored = profile;
             lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
-            // A profile setting still wins over the profile just chosen, as it does everywhere else.
-            if (profile !== undefined && ctx) {
-                const resolved = await resolveProfile(ctx);
-                if (resolved.profile !== undefined && resolved.profile !== profile)
-                    interaction.notify({
-                        type: "info",
-                        message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
-                    });
-            }
             if (profile !== undefined) {
                 const savedProfile = saveProfileSetting(profileEnv, profile, config.preset);
                 if (!savedProfile.ok)
@@ -713,6 +705,14 @@ export function createBedrockProvider(
                     message: `Bedrock settings could not be loaded: ${loaded.error ?? "unknown error"}. Not refreshing the models.`,
                 });
                 return;
+            }
+            if (profile !== undefined && ctx) {
+                const resolved = await resolveProfile(ctx);
+                if (resolved.profile !== undefined && resolved.profile !== profile)
+                    interaction.notify({
+                        type: "info",
+                        message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
+                    });
             }
             settingsBaseline = models.length;
             const updated = readModels().available;
@@ -891,11 +891,28 @@ export function createBedrockProvider(
                 return;
             }
             const body: Record<string, unknown> = {};
+            const envNames: Record<string, string> = {
+                profile: "JIG_BEDROCK_PROFILE",
+                regions: "JIG_BEDROCK_REGIONS",
+                tagKey: "JIG_BEDROCK_TAG_KEY",
+                tagValue: "JIG_BEDROCK_TAG_VALUE",
+                team: "JIG_BEDROCK_TEAM",
+            };
+            const activePreset =
+                isObject(document.target.presets) &&
+                config.preset !== undefined &&
+                isObject(document.target.presets[config.preset])
+                    ? (document.target.presets[config.preset] as Record<string, unknown>)
+                    : {};
             for (const key of PRESET_FIELDS) {
+                const explicit =
+                    Object.hasOwn(document.target, key) ||
+                    Object.hasOwn(activePreset, key) ||
+                    (envNames[key] !== undefined && profileEnv[envNames[key] as string] !== undefined);
+                if (!explicit) continue;
                 const value = (config as unknown as Record<string, unknown>)[key];
                 if (value !== undefined) body[key] = value;
             }
-            if (config.profile !== undefined) body.profile = config.profile;
             presets[name] = body;
             document.target.presets = presets;
             document.target.preset = name;
@@ -911,7 +928,9 @@ export function createBedrockProvider(
             }
             applyConfig(next.config);
             lastChoice = { profile: config.profile, source: "preset", exists: true };
-            emitPreset(context, [`${m.ok} Preset ${name} saved and active.`]);
+            const updated = readModels().available;
+            if (updateModels(models, updated).changed && native) await register();
+            emitPreset(context, [`${m.ok} Preset ${name} saved and active; models reloaded.`]);
         };
         const removePreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
             const document = readSettingsDocument(profileEnv);
@@ -934,7 +953,14 @@ export function createBedrockProvider(
             }
             const next = reloadForPreset(undefined);
             if (next.config) applyConfig(next.config);
-            emitPreset(context, [`${m.ok} Preset ${name} removed.`]);
+            const updated = readModels().available;
+            if (updateModels(models, updated).changed && native) await register();
+            emitPreset(context, [
+                `${m.ok} Preset ${name} removed.`,
+                config.preset === undefined
+                    ? "Top-level settings are active; models reloaded."
+                    : `Preset ${config.preset} is active; models reloaded.`,
+            ]);
         };
         const emitPreset = (context: ExtensionCommandContext, rows: string[]): void => {
             const text = ["Bedrock presets", ...rows].join("\n");
@@ -977,6 +1003,14 @@ export function createBedrockProvider(
             apply: async () => {
                 const next = reloadSettings();
                 if (!applyResolved(next)) return;
+                if (config.profile !== undefined && options.listProfiles !== undefined) {
+                    const listed = await options.listProfiles(undefined);
+                    lastChoice = {
+                        profile: config.profile,
+                        source: config.profileSource === "env" ? "env" : "setting",
+                        exists: listed === undefined ? true : listed.includes(config.profile),
+                    };
+                }
                 settingsChanged = true;
                 settingsBaseline = models.length;
                 if (ctx) spend.updateFooter(ctx);

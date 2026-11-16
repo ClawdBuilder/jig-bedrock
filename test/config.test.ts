@@ -172,3 +172,16 @@ describe("converseModels and messagesModels", () => {
         );
     });
 });
+
+test("a preset's own mode keys do not inherit conflicting top-level mode keys", () => {
+    const resolved = loadConfig({
+        raw: {
+            profiles: ["arn:top"],
+            presets: { system: { regions: ["eu-west-1"] } },
+            preset: "system",
+        },
+        env: {},
+    });
+    assert.ok(resolved.config);
+    assert.equal(resolved.config.profiles, undefined);
+});

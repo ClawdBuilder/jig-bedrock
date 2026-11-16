@@ -185,9 +185,11 @@ export function registerBedrockCommands(
             return;
         }
         config.monthlyBudgetUsd = amount;
-        const saved = saveBudgetSetting(env, amount);
+        const saved = saveBudgetSetting(env, amount, config.preset);
         emit(ctx, "Bedrock budget", [
-            saved.ok ? `${m.ok} Budget set to ${money(amount)}.` : `${m.fail} ${saved.error}`,
+            saved.ok
+                ? `${m.ok} Budget set to ${money(amount)}${config.preset === undefined ? "" : ` in preset ${config.preset}`}.`
+                : `${m.fail} ${saved.error}`,
             `${m.warn} Not an AWS limit; no request is blocked.`,
         ]);
         spend.updateFooter(ctx);
@@ -209,7 +211,9 @@ export function registerBedrockCommands(
             rows.push(`${m.fail} AWS profile: none chosen`);
             problems++;
         } else if (last.exists === false) {
-            rows.push(`${m.fail} AWS profile: ${clean(last.profile)} is not in ~/.aws/config`);
+            rows.push(
+                `${m.fail} AWS profile: ${clean(last.profile)} is not in the AWS config; run /login to choose another.`,
+            );
             problems++;
         } else {
             rows.push(
@@ -399,6 +403,16 @@ export function registerBedrockCommands(
             ]);
             return false;
         }
+        const presetTarget =
+            config.preset === undefined
+                ? undefined
+                : isObject(doc.target.presets) && isObject(doc.target.presets[config.preset])
+                  ? (doc.target.presets[config.preset] as Record<string, unknown>)
+                  : undefined;
+        if (config.preset !== undefined && presetTarget === undefined) {
+            emit(ctx, "Bedrock settings", [`${m.fail} Preset ${config.preset} is not defined.`]);
+            return false;
+        }
         for (const [key, value] of pairs) {
             if (key === "signInAtStart" || key === "debug") {
                 if (!/^(true|false|on|off|yes|no)$/i.test(value)) {
@@ -420,7 +434,7 @@ export function registerBedrockCommands(
                 emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
                 return false;
             }
-            doc.target[key] = parsed;
+            (presetTarget ?? doc.target)[key] = parsed;
         }
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
@@ -450,8 +464,26 @@ export function registerBedrockCommands(
                 key,
             ),
         );
+        const savedWhere = config.preset === undefined ? "saved to bedrock.json" : `saved to preset ${config.preset}`;
+        const overridden = pairs
+            .map(([key]) => {
+                const envName: Record<string, string> = {
+                    regions: "JIG_BEDROCK_REGIONS",
+                    profile: "JIG_BEDROCK_PROFILE",
+                    tagKey: "JIG_BEDROCK_TAG_KEY",
+                    tagValue: "JIG_BEDROCK_TAG_VALUE",
+                    debug: "JIG_BEDROCK_DEBUG",
+                    preset: "JIG_BEDROCK_PRESET",
+                };
+                const name = envName[key];
+                return name !== undefined && env[name] !== undefined ? `${name}=${env[name]}` : undefined;
+            })
+            .filter((value): value is string => value !== undefined);
         emit(ctx, "Bedrock settings", [
-            `${m.ok} ${shown} (saved to bedrock.json)`,
+            `${m.ok} ${shown} (${savedWhere})`,
+            ...(overridden.length > 0
+                ? [`${m.warn} Saved, but ${overridden.join(", ")} is in use for this session.`]
+                : []),
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
         if (needsRefresh) await refresh("", ctx);
@@ -668,7 +700,8 @@ export function registerBedrockCommands(
         );
         if (config.spendCommand !== undefined && !spendStatus.startsWith("ok"))
             nextSteps.push("Next: see docs/spend-command.md");
-        if (debugEnabled(env, config)) rows.push(`${m.skip} Debug log: ${debugLogPath(env)}`);
+        if (debugEnabled(env, config))
+            rows.push(`${m.skip} Debug log: ${debugLogPath(env)} (takes effect after restart)`);
         let requestOk = false;
         let requestError = "";
         if (call) {

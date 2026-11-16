@@ -201,3 +201,37 @@ test("every settings-menu example is a value its own key accepts", async (t) => 
         }
     }
 });
+
+test("a set under an active preset writes into the preset", async (t) => {
+    const s = await start({ preset: "work", presets: { work: { profile: "old" } }, regions: ["us-east-1"] });
+    try {
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.regions, ["us-east-1"]);
+        assert.match(s.notices.join("\n"), /saved to preset work/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("setting a profile that is not in the AWS config shows it in status", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("set profile ghost", s.ctx);
+        await s.commands.get("bedrock").handler("status", s.ctx);
+        assert.match(s.notices.join("\n"), /ghost is not in the AWS config/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("preset add announces the active preset and reloads models", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("preset add extra", s.ctx);
+        assert.match(s.notices.join("\n"), /Preset extra saved and active; models reloaded/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});

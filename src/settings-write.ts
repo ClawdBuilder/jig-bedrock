@@ -100,6 +100,7 @@ export function saveDiscoverySettings(
 export function saveBudgetSetting(
     env: NodeJS.ProcessEnv,
     value: number | undefined,
+    preset?: string,
 ): { ok: boolean; file: string; error?: string } {
     const file = bedrockFile(env);
     let document: Record<string, unknown> = {};
@@ -111,7 +112,14 @@ export function saveBudgetSetting(
         if ((error as NodeJS.ErrnoException).code !== "ENOENT")
             return { ok: false, file, error: `${file} could not be read as JSON; fix it, then try again.` };
     }
-    const target = isObject(document.bedrock) ? document.bedrock : document;
+    const top = isObject(document.bedrock) ? document.bedrock : document;
+    const target =
+        preset === undefined
+            ? top
+            : isObject(top.presets) && isObject(top.presets[preset])
+              ? (top.presets[preset] as Record<string, unknown>)
+              : undefined;
+    if (target === undefined) return { ok: false, file, error: `Preset ${preset} is not defined.` };
     if (value === undefined) delete target.monthlyBudgetUsd;
     else target.monthlyBudgetUsd = value;
     try {
