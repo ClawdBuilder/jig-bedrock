@@ -42,16 +42,18 @@ export const runFile: Runner = (program, args, options) =>
     });
 export function category(error: unknown): Status {
     const m = String(error).toLowerCase();
-    return /access.?denied|not authorized to perform|unauthorizedoperation/.test(m)
+    return /access.?denied|not authorized to perform|unauthorizedoperation|security token.*invalid|unrecognizedclientexception/.test(
+        m,
+    )
         ? "permission_denied"
-        : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
-                m,
-            )
-          ? "credentials"
-          : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
-            ? "configuration"
-            : /sso|token/.test(m) && /expired|invalid|login|unauthorized|does not exist/.test(m)
-              ? "sso_expired"
+        : /aws sso login|sso session|token for .* has expired|sso token/i.test(String(error))
+          ? "sso_expired"
+          : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
+                  m,
+              )
+            ? "credentials"
+            : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
+              ? "configuration"
               : /timeout|timed out/.test(m)
                 ? "timeout"
                 : /network|connect|dns|resolve|unreachable|proxy/.test(m)
