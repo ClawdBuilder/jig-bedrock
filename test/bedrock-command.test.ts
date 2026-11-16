@@ -301,3 +301,20 @@ test("print-mode doctor omits the progress line", async (t) => {
     }
     assert.doesNotMatch(writes.join(""), /Checking AWS/);
 });
+
+test("a tag pair can be set and unset in one command", async (t) => {
+    const h = harness(t, {});
+    await h.result.bedrock("set activeTagKey Active", h.ctx as never);
+    assert.match(
+        h.notices.at(-1) ?? "",
+        /activeTagKey and activeTagValue go together: \/bedrock set activeTagKey <key> activeTagValue <value>/,
+    );
+    await h.result.bedrock("set activeTagKey Active activeTagValue true", h.ctx as never);
+    let saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.activeTagKey, "Active");
+    assert.equal(saved.activeTagValue, "true");
+    await h.result.bedrock("unset activeTagKey activeTagValue", h.ctx as never);
+    saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal("activeTagKey" in saved, false);
+    assert.equal("activeTagValue" in saved, false);
+});

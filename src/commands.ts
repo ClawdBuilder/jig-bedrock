@@ -326,40 +326,49 @@ export function registerBedrockCommands(
         return value;
     };
     const set = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-        const match = /^(\S+)\s+(.+)$/.exec(args.trim());
-        if (!match) {
+        const parts = args.trim().split(/\s+/);
+        if (parts.length < 2 || parts.length % 2 !== 0) {
             emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
             return;
         }
-        const key = match[1] as string;
-        const value = match[2] as string;
-        if (!(FIELDS as readonly string[]).includes(key)) {
-            const near = closest(key, FIELDS);
+        const pairs: Array<[string, string]> = [];
+        for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i] as string, parts[i + 1] as string]);
+        for (const [key] of pairs) {
+            if (!(FIELDS as readonly string[]).includes(key)) {
+                const near = closest(key, FIELDS);
+                emit(ctx, "Bedrock settings", [
+                    `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                    `Usage: /bedrock ${usageFor("set")}`,
+                ]);
+                return;
+            }
+        }
+        const doc = readSettingsDocument(env);
+        if ("error" in doc) {
             emit(ctx, "Bedrock settings", [
-                `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                `${m.fail} Settings file is not valid JSON.`,
+                `${m.skip} File: ${displayPath(doc.file, env)}`,
+            ]);
+            return;
+        }
+        for (const [key, value] of pairs) {
+            const parsed = parseSetting(key, value);
+            if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
+                emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
+                return;
+            }
+            doc.target[key] = parsed;
+        }
+        const candidate = loadConfig({ raw: doc.target, env });
+        if (!candidate.config) {
+            const error = candidate.error ?? "The settings are not valid.";
+            const pair = /activeTagKey and activeTagValue|tagKey and tagValue/.exec(error);
+            emit(ctx, "Bedrock settings", [
+                `${m.fail} ${pair ? `${pair[0]} go together: /bedrock set ${pair[0] === "activeTagKey and activeTagValue" ? "activeTagKey <key> activeTagValue <value>" : "tagKey <key> tagValue <value>"}` : error}`,
                 `Usage: /bedrock ${usageFor("set")}`,
             ]);
             return;
         }
-        const doc = readSettingsDocument(env);
-        if ("error" in doc) {
-            emit(ctx, "Bedrock settings", [
-                `${m.fail} Settings file is not valid JSON.`,
-                `${m.skip} File: ${displayPath(doc.file, env)}`,
-            ]);
-            return;
-        }
-        const parsed = parseSetting(key, value);
-        if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
-            emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
-            return;
-        }
-        doc.target[key] = parsed;
-        const candidate = loadConfig({ raw: doc.target, env });
-        if (!candidate.config) {
-            emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
-            return;
-        }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
@@ -367,35 +376,44 @@ export function registerBedrockCommands(
         }
         Object.assign(config, candidate.config);
         sources.apply?.();
-        const shown = Array.isArray(parsed) ? parsed.join(", ") : String(parsed);
-        const needsRefresh = [
-            "profile",
-            "regions",
-            "tagKey",
-            "tagValue",
-            "activeTagKey",
-            "activeTagValue",
-            "profiles",
-            "api",
-            "converseModels",
-            "messagesModels",
-        ].includes(key);
+        const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
+        const needsRefresh = pairs.some(([key]) =>
+            [
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+                "api",
+                "converseModels",
+                "messagesModels",
+            ].includes(key),
+        );
         emit(ctx, "Bedrock settings", [
-            `${m.ok} ${key}: ${clean(shown, 55)} (saved to bedrock.json)`,
+            `${m.ok} ${shown} (saved to bedrock.json)`,
             ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
         ]);
     };
     const unset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-        const key = args.trim();
-        if (!(FIELDS as readonly string[]).includes(key)) {
-            const near = key === "" ? undefined : closest(key, FIELDS);
+        const keys = args.trim().split(/\s+/).filter(Boolean);
+        if (keys.length === 0) {
             emit(ctx, "Bedrock settings", [
-                key === ""
-                    ? `${m.fail} Usage: /bedrock ${usageFor("unset")}`
-                    : `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
-                ...(key === "" ? [] : [`Usage: /bedrock ${usageFor("unset")}`]),
+                `${m.fail} Usage: /bedrock ${usageFor("unset")}`,
+                "Usage: /bedrock unset <key> [key...]",
             ]);
             return;
+        }
+        for (const key of keys) {
+            if (!(FIELDS as readonly string[]).includes(key)) {
+                const near = closest(key, FIELDS);
+                emit(ctx, "Bedrock settings", [
+                    `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                    `Usage: /bedrock unset <key> [key...]`,
+                ]);
+                return;
+            }
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
@@ -405,7 +423,7 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        delete doc.target[key];
+        for (const key of keys) delete doc.target[key];
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
             emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
@@ -418,20 +436,22 @@ export function registerBedrockCommands(
         }
         Object.assign(config, candidate.config);
         sources.apply?.();
-        const needsRefresh = [
-            "profile",
-            "regions",
-            "tagKey",
-            "tagValue",
-            "activeTagKey",
-            "activeTagValue",
-            "profiles",
-            "api",
-            "converseModels",
-            "messagesModels",
-        ].includes(key);
+        const needsRefresh = keys.some((key) =>
+            [
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+                "api",
+                "converseModels",
+                "messagesModels",
+            ].includes(key),
+        );
         emit(ctx, "Bedrock settings", [
-            `${m.ok} ${key}: unset (saved to bedrock.json)`,
+            `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
             ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
         ]);
     };

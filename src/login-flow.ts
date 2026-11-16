@@ -24,6 +24,12 @@ export interface LoginFlowOptions {
     configFile?: string;
     /** Append the confirmed sections; without it the create-a-profile methods are unavailable. */
     writeConfig?: (sections: ConfigSection[]) => ConfigWriteResult;
+    /** The tags of the application profiles matching the chosen tag, for choosing a second filter. */
+    tagMatches?: (
+        tagKey: string,
+        tagValue: string,
+        signal: AbortSignal,
+    ) => Promise<Array<Array<{ Key: string; Value: string }>>>;
 }
 
 const methods = [
@@ -183,6 +189,44 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
         .filter((value) => value !== "");
     interaction.signal.throwIfAborted();
     if (regions.length > 0) settings.regions = regions;
+    if (
+        settings.mode === "tag" &&
+        settings.tagKey !== undefined &&
+        settings.tagValue !== undefined &&
+        options.tagMatches
+    ) {
+        const matches = await options.tagMatches(settings.tagKey, settings.tagValue, interaction.signal);
+        const counts = new Map<string, Map<string, number>>();
+        for (const tags of matches)
+            for (const key of new Set(tags.map((tag) => tag.Key))) {
+                if (key === settings.tagKey) continue;
+                const value = tags.find((tag) => tag.Key === key)?.Value ?? "";
+                const values = counts.get(key) ?? new Map<string, number>();
+                values.set(value, (values.get(value) ?? 0) + 1);
+                counts.set(key, values);
+            }
+        const split = [...counts.entries()]
+            .filter(([, values]) => values.size > 1)
+            .sort((a, b) => a[1].size - b[1].size)[0];
+        if (split !== undefined) {
+            const [key, values] = split;
+            const choice = await interaction.prompt({
+                type: "select",
+                message: `This tag also splits by ${key}; narrow the list?`,
+                options: [
+                    ...[...values.entries()].map(([value, count]) => ({
+                        id: `tag:${value}`,
+                        label: `Only the ${count} with ${key}=${value || "(none)"}`,
+                    })),
+                    { id: "all", label: `List all ${matches.length}` },
+                ],
+            });
+            if (choice.startsWith("tag:")) {
+                settings.activeTagKey = key;
+                settings.activeTagValue = choice.slice(4);
+            }
+        }
+    }
     const save = options.saveDiscovery?.(settings);
     if (save === undefined) return;
     if (!save.written)

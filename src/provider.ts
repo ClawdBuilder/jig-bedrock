@@ -10,7 +10,7 @@ import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
+import { createAwsDiscovery, discoveryHelp, problemSummary, runFile } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -52,6 +52,7 @@ import {
     missingProfileNotice,
     ProfileResolver,
 } from "./profile.ts";
+import { isRefused, rememberRefusal } from "./refusals.ts";
 import {
     readSettingsDocument,
     saveDiscoverySettings,
@@ -327,6 +328,42 @@ export function createBedrockProvider(
                 regions: config.regions,
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
+                tagMatches: async (key, value, signal) => {
+                    const all: Array<Array<{ Key: string; Value: string }>> = [];
+                    for (const region of config.regions) {
+                        const text = await runFile(
+                            "aws",
+                            [
+                                "resourcegroupstaggingapi",
+                                "get-resources",
+                                "--region",
+                                region,
+                                "--resource-type-filters",
+                                "bedrock:application-inference-profile",
+                                "--tag-filters",
+                                JSON.stringify([{ Key: key, Values: [value] }]),
+                                "--no-paginate",
+                                "--output",
+                                "json",
+                                ...(config.profile === undefined ? [] : ["--profile", config.profile]),
+                            ],
+                            { timeout: 20_000, maxBuffer: 4_194_304 },
+                        );
+                        const parsed = JSON.parse(text) as { ResourceTagMappingList?: Array<{ Tags?: unknown }> };
+                        for (const row of parsed.ResourceTagMappingList ?? [])
+                            if (Array.isArray(row.Tags))
+                                all.push(
+                                    row.Tags.filter(
+                                        (tag): tag is { Key: string; Value: string } =>
+                                            typeof tag === "object" &&
+                                            tag !== null &&
+                                            typeof (tag as { Key?: unknown }).Key === "string" &&
+                                            typeof (tag as { Value?: unknown }).Value === "string",
+                                    ),
+                                );
+                    }
+                    return all;
+                },
             });
         };
         const auth = createProfileAuth(profiles, loginListProfiles, {
@@ -394,6 +431,7 @@ export function createBedrockProvider(
         };
         const readModels = () => {
             const result = discoveredProfiles(catalog.load(), "", config);
+            result.available = result.available.filter((model) => !isRefused(profileEnv, config.profile, model.arn));
             if (options.transformModels) result.available = options.transformModels(result.available);
             return result;
         };
@@ -946,6 +984,10 @@ export function createBedrockProvider(
                     catalog.load,
                     currentProfile,
                     signedFetch,
+                    (_model, message) => {
+                        rememberRefusal(profileEnv, config.profile, _model.arn, _model.id);
+                        return `AWS refused ${_model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
+                    },
                 );
                 let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {};
                 let failure: string | undefined;

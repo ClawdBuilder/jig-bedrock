@@ -38,11 +38,15 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 | `browser`          | string                       | unset                               | none                    | Program that opens the sign-in address.                                |
 | `debug`            | boolean                      | `false`                             | `JIG_BEDROCK_DEBUG=1`   | One private JSON line per request, discovery or repair.                |
 
-`set` and `unset` change one key at a time. A model cannot be in both `converseModels` and `messagesModels`.
+`set` accepts several key-value pairs and `unset` several keys in one command, so `activeTagKey` and `activeTagValue` can be set together. A model cannot be in both `converseModels` and `messagesModels`.
 
 ## Presets
 
 A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
+
+When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
+
+A model AWS refuses with AccessDenied is remembered for seven days for that AWS profile and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date.
 
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 

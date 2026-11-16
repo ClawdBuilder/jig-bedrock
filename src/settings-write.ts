@@ -9,6 +9,8 @@ export interface DiscoverySettings {
     regions: string[];
     tagKey?: string;
     tagValue?: string;
+    activeTagKey?: string;
+    activeTagValue?: string;
     profiles?: string[];
 }
 
@@ -60,6 +62,8 @@ export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: Discover
     if (settings.mode === "tag") {
         target.tagKey = settings.tagKey;
         target.tagValue = settings.tagValue;
+        if (settings.activeTagKey !== undefined) target.activeTagKey = settings.activeTagKey;
+        if (settings.activeTagValue !== undefined) target.activeTagValue = settings.activeTagValue;
     } else if (settings.mode === "explicit") {
         target.profiles = settings.profiles;
     }

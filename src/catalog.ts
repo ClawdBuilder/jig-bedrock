@@ -538,6 +538,7 @@ export function bedrockStream(
     load: () => Catalog | undefined,
     profile: () => string | undefined,
     signedFetch?: typeof globalThis.fetch,
+    onRefusal?: (model: BedrockModel, message: string) => string | undefined,
 ): Stream {
     const approved = [...models];
     return (model, context, options) => {
@@ -575,26 +576,51 @@ export function bedrockStream(
         // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
         // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
         const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
+        const guard = (stream: ReturnType<typeof streams.converse>) =>
+            typeof stream !== "object" || stream === null
+                ? stream
+                : (new Proxy(stream as never, {
+                      get(target: any, property) {
+                          if (property !== Symbol.asyncIterator) {
+                              const value = Reflect.get(target, property, target);
+                              return typeof value === "function" ? value.bind(target) : value;
+                          }
+                          return async function* () {
+                              for await (const event of target) {
+                                  if (event?.type === "error" && onRefusal !== undefined) {
+                                      const message = String(event.error?.errorMessage ?? "");
+                                      if (/AccessDenied|not authorized to perform bedrock:InvokeModel/i.test(message)) {
+                                          const plain = onRefusal(physical, message);
+                                          if (plain !== undefined) event.error.errorMessage = plain;
+                                      }
+                                  }
+                                  yield event;
+                              }
+                          };
+                      },
+                  }) as never);
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
             if (!messages || !signedFetch) throw new Error("The Bedrock Messages route is not available; reload Pi.");
             const previous = (options as Json)?.onPayload as
                 | ((payload: unknown, selected: unknown) => unknown)
                 | undefined;
-            return messages({ ...logical, api: "anthropic-messages" }, context, {
-                ...scoped,
-                // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
-                // fetch removes both this and any Authorization header before signing.
-                apiKey: "bedrock-sigv4",
-                fetch: signedFetch,
-                // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
-                // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
-                onPayload: async (payload: unknown, selected: unknown) => {
-                    const next = previous === undefined ? payload : await previous(payload, selected);
-                    const value = { ...((next ?? payload) as Record<string, unknown>), model: physical.arn };
-                    return rewriteThinkingOff(value, physical.foundationModelId);
-                },
-            } as typeof options);
+            return guard(
+                messages({ ...logical, api: "anthropic-messages" }, context, {
+                    ...scoped,
+                    // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
+                    // fetch removes both this and any Authorization header before signing.
+                    apiKey: "bedrock-sigv4",
+                    fetch: signedFetch,
+                    // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
+                    // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
+                    onPayload: async (payload: unknown, selected: unknown) => {
+                        const next = previous === undefined ? payload : await previous(payload, selected);
+                        const value = { ...((next ?? payload) as Record<string, unknown>), model: physical.arn };
+                        return rewriteThinkingOff(value, physical.foundationModelId);
+                    },
+                } as typeof options),
+            );
         }
         const previous = (options as Json)?.onPayload as ((payload: unknown, selected: unknown) => unknown) | undefined;
         // Pi's Converse client reads AWS_BEARER_TOKEN_BEDROCK through getProviderEnvValue, where an empty scoped value
@@ -632,12 +658,12 @@ export function bedrockStream(
             restore();
             throw error;
         }
-        if (!hadBearer) return stream;
+        if (!hadBearer) return guard(stream);
         // The SDK reads the variable after the factory returns. Hold the old environment until the stream ends, then
         // restore it. A proxy keeps the object's methods bound to the real stream.
         const timer = setTimeout(restore, 60_000);
         timer.unref?.();
-        return new Proxy(stream, {
+        return new Proxy(guard(stream) as any, {
             get(target, property) {
                 if (property === Symbol.asyncIterator)
                     return async function* () {
