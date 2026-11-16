@@ -1148,31 +1148,34 @@ export function createBedrockProvider(
                 }
                 const status = await refresh(true, false, true);
                 const reason = catalog.failure?.();
-                const partial = status === "ok" ? partialDiscovery(catalog.load()) : undefined;
-                const partialText =
-                    partial === undefined
-                        ? undefined
-                        : `Models: ${[`${partial.line}.`, partial.errors, ...partial.warnings]
-                              .filter((part): part is string => part !== undefined)
-                              .join(" ")}`;
+                const current = catalog.load();
+                const partial = status === "ok" ? partialDiscovery(current) : undefined;
+                const errors = current?.errors ?? [];
+                const failedRegions = new Set(
+                    (current?.warnings ?? [])
+                        .filter((warning) => /^[a-z0-9-]+ did not answer:/.test(warning))
+                        .map((warning) => warning.slice(0, warning.indexOf(" "))),
+                );
+                const answered = config.regions.filter((region) => !failedRegions.has(region));
                 rows.push({
-                    ok: partial === undefined && status === "ok" && models.length > 0,
+                    ok: errors.length === 0 && status === "ok" && models.length > 0,
                     check: "models",
-                    ...(partial === undefined
+                    ...(errors.length === 0 || partial === undefined
                         ? {}
                         : {
                               warn: true,
-                              next: "Next: check the failed profile or region in /bedrock settings, then /bedrock refresh.",
+                              next: "Next: check the failed profile in /bedrock settings, then /bedrock refresh.",
                           }),
                     text:
-                        partialText ??
-                        (status === "ok"
-                            ? models.length === 0
-                                ? config.mode === "tag"
-                                    ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
-                                    : `Models: no Claude models in ${config.regions.join(", ")}`
-                                : `Models: ${models.length} found in ${config.regions.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`
-                            : `Models: ${reason ?? "could not list"}`),
+                        status !== "ok"
+                            ? `Models: ${reason ?? "could not list"}`
+                            : models.length === 0
+                              ? config.mode === "tag"
+                                  ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
+                                  : `Models: no Claude models in ${config.regions.join(", ")}`
+                              : errors.length > 0 && partial !== undefined
+                                ? `Models: ${partial.line}. ${partial.errors}`
+                                : `Models: ${models.length} found in ${answered.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`,
                 });
                 const save = catalog.saveFailure?.();
                 if (save !== undefined)

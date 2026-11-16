@@ -165,12 +165,14 @@ test("a region that did not answer is named beside the models that did", async (
         { mode: "system", regions: ["us-east-1", "eu-west-1"] },
         "ok",
     );
-    for (const text of [startText, refreshText, doctorText]) {
+    for (const text of [startText, refreshText]) {
         assert.match(text, /1 model loaded from 1 of 2 regions/);
         assert.match(text, /eu-west-1 did not answer: AWS had a problem on its side/);
-        assert.doesNotMatch(text, /2 found in us-east-1, eu-west-1/);
     }
-    assert.match(doctorText, /! Models: 1 model loaded from 1 of 2 regions/);
+    assert.match(doctorText, /Models: 1 found in us-east-1/);
+    assert.match(doctorText, /! eu-west-1 did not answer: AWS had a problem on its side/);
+    assert.doesNotMatch(doctorText, /Models: .*eu-west-1/);
+    assert.doesNotMatch(doctorText, /2 found in us-east-1, eu-west-1/);
 });
 
 for (const [name, failureType, cause, permission] of [

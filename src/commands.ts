@@ -763,9 +763,7 @@ export function registerBedrockCommands(
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
         else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
-        const modelsWarning = awsRows.some((row) => row.check === "models" && row.warn === true);
-        if (!offline && !modelsWarning)
-            for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
+        if (!offline) for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
         for (const check of awsRows) {
             const text = check.text
                 .replace(/^AWS identity: /, "Sign-in: ")
@@ -831,7 +829,11 @@ export function registerBedrockCommands(
         }
         const problems = rows.filter((row) => row.startsWith(m.fail)).length;
         const warningRows = rows.filter((row) => row.startsWith(m.warn)).length;
-        const next = nextSteps[0] ?? "Next: /bedrock doctor";
+        const next =
+            nextSteps[0] ??
+            (warningRows > 0
+                ? "Next: check the region or tag in /bedrock settings, then /bedrock refresh."
+                : "Next: /bedrock doctor");
         if (problems === 0 && warningRows === 0)
             rows.push(
                 call && requestOk
