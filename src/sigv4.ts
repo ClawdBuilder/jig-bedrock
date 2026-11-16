@@ -43,6 +43,16 @@ function canonicalQuery(search: string): string {
         .join("&");
 }
 
+/** The SigV4 canonical URI: each path segment is URI-encoded again, so an ARN's `%3A` becomes `%253A`. */
+export function canonicalUri(url: URL): string {
+    return url.pathname === ""
+        ? "/"
+        : url.pathname
+              .split("/")
+              .map((segment) => encode(segment))
+              .join("/");
+}
+
 /**
  * The headers that carry the signature: `authorization`, `x-amz-date`, and the session token when the credentials have one.
  * Every header given is signed, apart from the auth headers this replaces; `host` is taken from the URL.
@@ -70,7 +80,7 @@ export function signRequest(input: SignInput): Record<string, string> {
     const canonicalHeaders = names.map((name) => `${name}:${headers.get(name)}\n`).join("");
     const canonicalRequest = [
         input.method.toUpperCase(),
-        url.pathname === "" ? "/" : url.pathname,
+        canonicalUri(url),
         canonicalQuery(url.search),
         canonicalHeaders,
         signedHeaders,

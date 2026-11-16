@@ -26,7 +26,7 @@ async function call(
     region: string,
     method: string,
     path: string,
-    body: string,
+    body: string | undefined,
     headers: Record<string, string>,
     options: AwsApiOptions,
 ): Promise<Response> {
@@ -35,7 +35,7 @@ async function call(
         method,
         url,
         headers,
-        body,
+        body: body ?? "",
         region,
         service,
         credentials: options.credentials,
@@ -46,13 +46,16 @@ async function call(
         response = await (options.fetch ?? globalThis.fetch)(url, {
             method,
             headers: { ...headers, ...signed },
-            body,
+            ...(body === undefined ? {} : { body }),
             signal: timeout(options),
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/abort|timeout|timed out/i.test(message)) throw new Error("timeout");
-        throw new Error(`network: ${message}`);
+        const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
+        if (error instanceof TypeError && (cause !== undefined || /fetch failed/i.test(message)))
+            throw new Error(`network: ${message}`);
+        throw error;
     }
     if (!response.ok) {
         let message = "";
@@ -131,7 +134,7 @@ export async function listInferenceProfiles(
 ): Promise<any> {
     const query = new URLSearchParams({ typeEquals: "SYSTEM_DEFINED" });
     if (input.nextToken !== undefined) query.set("nextToken", input.nextToken);
-    const response = await call("bedrock", region, "GET", `/inference-profiles?${query}`, "", {}, options);
+    const response = await call("bedrock", region, "GET", `/inference-profiles?${query}`, undefined, {}, options);
     return (await response.json()) as never;
 }
 
@@ -141,7 +144,7 @@ export async function getInferenceProfile(region: string, identifier: string, op
         region,
         "GET",
         `/inference-profiles/${encodeURIComponent(identifier)}`,
-        "",
+        undefined,
         {},
         options,
     );

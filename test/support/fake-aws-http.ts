@@ -45,6 +45,7 @@ export function fakeAwsHttp(options: FakeAwsOptions = {}) {
     ];
     const calls: Array<{ url: string; body: string; target: string }> = [];
     const fetch = async (url: string | URL | Request, init?: RequestInit) => {
+        new Request(url, init);
         const text = String(url);
         const target = String((init?.headers as Record<string, string> | undefined)?.["x-amz-target"] ?? "");
         const body = String(init?.body ?? "");

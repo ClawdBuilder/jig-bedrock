@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { SignatureV4 } from "@smithy/signature-v4";
 import { getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "../src/aws-api.ts";
 import { category } from "../src/aws-discovery.ts";
+import { signRequest } from "../src/sigv4.ts";
 
 const credentials = { accessKeyId: "AKIAFIXTURE", secretAccessKey: "secret", sessionToken: "token" };
 
 function recorder(response: () => Response) {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetch = async (url: string | URL | Request, init?: RequestInit) => {
+        new Request(url, init);
         calls.push({ url: String(url), init: init ?? {} });
         return response();
     };
@@ -118,7 +122,7 @@ test("network and timeout failures are classified", async () => {
             {
                 credentials,
                 fetch: async () => {
-                    throw new Error("fetch failed: getaddrinfo ENOTFOUND");
+                    throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
                 },
             },
         ),
@@ -136,5 +140,36 @@ test("network and timeout failures are classified", async () => {
             },
         ),
         (error: unknown) => category(error) === "timeout",
+    );
+});
+
+test("the canonical URI double-encodes an ARN segment", async () => {
+    const { canonicalUri } = await import("../src/sigv4.ts");
+    const identifier = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123example";
+    const url = new URL(`https://bedrock.us-east-1.amazonaws.com/inference-profiles/${encodeURIComponent(identifier)}`);
+    assert.equal(
+        canonicalUri(url),
+        "/inference-profiles/arn%253Aaws%253Abedrock%253Aus-east-1%253A123456789012%253Aapplication-inference-profile%252Fabc123example",
+    );
+});
+
+test("a request-building TypeError is not reported as a network failure", async () => {
+    await assert.rejects(
+        listInferenceProfiles(
+            "us-east-1",
+            {},
+            {
+                credentials,
+                fetch: async () => {
+                    throw new TypeError("Request with GET/HEAD method cannot have body.");
+                },
+            },
+        ),
+        (error: unknown) => {
+            assert.match((error as Error).message, /GET\/HEAD method cannot have body/);
+            assert.doesNotMatch((error as Error).message, /AWS could not be reached/);
+            assert.equal(category(error), "unavailable");
+            return true;
+        },
     );
 });
