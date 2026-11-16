@@ -1004,7 +1004,12 @@ export function createBedrockProvider(
             lastChoice = { profile: config.profile, source: "preset", exists: true };
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) await register();
-            emitPreset(context, [`${m.ok} Preset ${name} saved and active; models reloaded.`]);
+            // The footer is the active scope's figure; it must not restart at $0 just because a preset now exists.
+            spend.updateFooter(context);
+            emitPreset(context, [
+                `${m.ok} Preset ${name} saved and active; models reloaded.`,
+                `The footer now counts ${name} from here.`,
+            ]);
         };
         const removePreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
             const document = readSettingsDocument(profileEnv);

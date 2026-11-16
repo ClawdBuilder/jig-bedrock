@@ -291,16 +291,25 @@ export function localView(
     now = Date.now(),
     preset?: string | null,
 ): SpendView {
-    const all = readMonth(env, month);
+    // A week can start in the month before; read that file too or the first days of a month undercount.
+    const months = period === "week" ? [...new Set([month, monthOf(now - 7 * 86_400_000)])] : [month];
+    const all = months.flatMap((each) => readMonth(env, each));
     const today = new Date(now).toISOString().slice(0, 10);
     const timed =
         period === "day"
             ? all.filter((reply) => reply.at.slice(0, 10) === today)
             : period === "week"
-              ? all.filter((reply) => now - Date.parse(reply.at) <= 7 * 86_400_000)
+              ? all.filter((reply) => {
+                    const age = now - Date.parse(reply.at);
+                    return age >= 0 && age <= 7 * 86_400_000;
+                })
               : all;
+    // Replies recorded before any preset existed are the spend a preset was added from, so they count in
+    // every scope's footer instead of making a new preset restart at $0.
     const replies =
-        preset === undefined || preset === null ? timed : timed.filter((reply) => (reply.preset ?? "") === preset);
+        preset === undefined || preset === null
+            ? timed
+            : timed.filter((reply) => reply.preset === undefined || reply.preset === preset);
     const groups = new Map<string, SpendReply[]>();
     for (const reply of timed) groups.set(reply.preset ?? "", [...(groups.get(reply.preset ?? "") ?? []), reply]);
     return {
@@ -377,19 +386,24 @@ export function runSpendCommand(
 
 interface BudgetState {
     month: string;
-    warned80: boolean;
-    warned100: boolean;
+    /** One `<preset>|<budget>|<threshold>` claim per announcement this month. */
+    claims: string[];
 }
 function statePath(env: NodeJS.ProcessEnv): string {
     return join(spendFolder(env), "state.json");
 }
 function readState(env: NodeJS.ProcessEnv, month: string): BudgetState {
     try {
-        const value = JSON.parse(readFileSync(statePath(env), "utf8")) as Partial<BudgetState>;
-        if (value.month === month)
-            return { month, warned80: value.warned80 === true, warned100: value.warned100 === true };
+        const value = JSON.parse(readFileSync(statePath(env), "utf8")) as Partial<BudgetState> & {
+            warned80?: unknown;
+            warned100?: unknown;
+        };
+        if (value.month === month && Array.isArray(value.claims))
+            return { month, claims: value.claims.filter((claim): claim is string => typeof claim === "string") };
+        // A file from before claims were keyed belongs to that month's single budget; let it stand again.
+        if (value.month === month) return { month, claims: [] };
     } catch {}
-    return { month, warned80: false, warned100: false };
+    return { month, claims: [] };
 }
 function writeState(env: NodeJS.ProcessEnv, state: BudgetState): void {
     try {
@@ -402,27 +416,59 @@ function writeState(env: NodeJS.ProcessEnv, state: BudgetState): void {
         renameSync(temporary, file);
     } catch {}
 }
-/** Claim one threshold once per machine and month, with a lock folder so two Pi processes cannot both announce it. */
-function claim(env: NodeJS.ProcessEnv, month: string, threshold: "warned80" | "warned100"): boolean {
+/** Run one budget-state change under the lock folder, so two Pi processes cannot both announce a claim. */
+function withBudgetLock<T>(env: NodeJS.ProcessEnv, change: () => T, missed: T): T {
     const folder = spendFolder(env);
     const lock = join(folder, "budget.lock");
     try {
         ensureFolder(folder);
         mkdirSync(lock);
     } catch {
-        return false;
+        return missed;
     }
     try {
-        const state = readState(env, month);
-        if (state[threshold]) return false;
-        state[threshold] = true;
-        writeState(env, state);
-        return true;
+        return change();
     } finally {
         try {
             rmSync(lock, { recursive: true, force: true });
         } catch {}
     }
+}
+const claimKey = (preset: string | undefined, budget: number, threshold: "warned80" | "warned100"): string =>
+    `${preset ?? ""}|${budget}|${threshold}`;
+/** Claim one threshold once per month, preset and budget, with a lock folder so two Pi processes cannot both announce it. */
+function claim(
+    env: NodeJS.ProcessEnv,
+    month: string,
+    preset: string | undefined,
+    budget: number,
+    threshold: "warned80" | "warned100",
+): boolean {
+    return withBudgetLock(
+        env,
+        () => {
+            const state = readState(env, month);
+            const key = claimKey(preset, budget, threshold);
+            if (state.claims.includes(key)) return false;
+            state.claims.push(key);
+            writeState(env, state);
+            return true;
+        },
+        false,
+    );
+}
+/** Forget this month's claims for one preset, so a budget change can announce its thresholds again. */
+function resetClaims(env: NodeJS.ProcessEnv, month: string, preset: string | undefined): void {
+    withBudgetLock(
+        env,
+        () => {
+            const state = readState(env, month);
+            const prefix = `${preset ?? ""}|`;
+            state.claims = state.claims.filter((claim) => !claim.startsWith(prefix));
+            writeState(env, state);
+        },
+        undefined,
+    );
 }
 
 export class SpendTracker {
@@ -460,6 +506,10 @@ export class SpendTracker {
             return { ...view, command, spentUsd: command.spentUsd, unpriced: false, commandError: this.commandError };
         }
         return { ...view, commandError: this.commandError };
+    }
+    /** /bedrock budget calls this: the new budget may announce its thresholds again. */
+    resetBudgetClaims(): void {
+        resetClaims(this.env, monthOf(this.now()), this.config.preset);
     }
     async refresh(force = false): Promise<SpendView> {
         if (this.config.spendCommand !== undefined && (force || this.now() - this.commandAt >= 600_000)) {
@@ -506,14 +556,18 @@ export class SpendTracker {
         model: BedrockModel | undefined,
     ): { reply?: SpendReply; error?: string } | undefined {
         if (message.role !== "assistant" || message.provider !== "jig-bedrock") return undefined;
-        if (message.stopReason === "error" || message.stopReason === "aborted") return undefined;
         const usage = (message.usage ?? {}) as Json;
         const route = message.api === "anthropic-messages" ? "messages" : "converse";
         const cost = usage.cost && (usage.cost as Json).total;
-        const priced =
-            model !== undefined
-                ? model.rateSource === "Pi registry"
-                : typeof cost === "number" && Number.isFinite(cost) && cost > 0;
+        const spent = typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : 0;
+        const input = number(usage.input);
+        const output = number(usage.output);
+        const cacheRead = number(usage.cacheRead);
+        const cacheWrite = number(usage.cacheWrite);
+        // A reply that ended in error or was aborted may still carry billed tokens, so the stop reason is not a
+        // filter here: whatever usage Pi reports is counted, and a message with no usage at all adds nothing.
+        if (input + output + cacheRead + cacheWrite === 0 && spent === 0) return undefined;
+        const priced = model !== undefined ? model.rateSource === "Pi registry" : typeof cost === "number" && spent > 0;
         const reply: SpendReply = {
             type: "reply",
             ...(this.config.preset === undefined ? {} : { preset: this.config.preset }),
@@ -522,11 +576,11 @@ export class SpendTracker {
             model: typeof message.model === "string" ? message.model : (model?.id ?? "unknown"),
             region: regionOf(model?.baseUrl ?? ""),
             route,
-            input: number(usage.input),
-            output: number(usage.output),
-            cacheRead: number(usage.cacheRead),
-            cacheWrite: number(usage.cacheWrite),
-            costUsd: priced ? Number((cost as number).toFixed(8)) : 0,
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            costUsd: priced ? Number(spent.toFixed(8)) : 0,
             priced,
         };
         const result = appendReply(this.env, reply);
@@ -585,17 +639,21 @@ export class SpendTracker {
         const month = monthOf(this.now());
         if (atStart && view.spentUsd > limit) {
             // One line per session while over budget; mark the 100% threshold so a later reply does not repeat it.
-            claim(this.env, month, "warned100");
+            claim(this.env, month, this.config.preset, limit, "warned100");
             context.ui.notify(
                 `Bedrock spend is over the ${money(limit)} monthly budget: ${money(view.spentUsd)}. This is a display figure, not an AWS limit; requests are not blocked.`,
                 "warning",
             );
-        } else if (view.spentUsd >= limit && claim(this.env, month, "warned100")) {
+        } else if (view.spentUsd >= limit && claim(this.env, month, this.config.preset, limit, "warned100")) {
             context.ui.notify(
                 `Bedrock spend is over the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit; requests are not blocked.`,
                 "warning",
             );
-        } else if (view.spentUsd >= limit * 0.8 && view.spentUsd < limit && claim(this.env, month, "warned80")) {
+        } else if (
+            view.spentUsd >= limit * 0.8 &&
+            view.spentUsd < limit &&
+            claim(this.env, month, this.config.preset, limit, "warned80")
+        ) {
             context.ui.notify(
                 `Bedrock spend is at ${Math.floor((view.spentUsd / limit) * 100)}% of the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit.`,
                 "warning",

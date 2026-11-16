@@ -15,6 +15,8 @@ import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerBedrockCommands } from "../src/commands.ts";
+import { loadConfig } from "../src/config.ts";
+import { createBedrockProvider } from "../src/provider.ts";
 import {
     appendReply,
     importEarlier,
@@ -517,4 +519,211 @@ test("spend lines carry the active preset, and the footer and usage separate it"
     const plain = new SpendTracker({ ...config, preset: undefined }, env, () => now);
     assert.equal(plain.local().spentUsd, 0);
     assert.equal(plain.machine().spentUsd, 0.01);
+});
+
+test("a raised budget and another preset can announce their own thresholds in the same month", (t) => {
+    const root = folder(t);
+    const env = { XDG_STATE_HOME: root };
+    appendReply(env, reply({ costUsd: 85 }));
+    const first = new SpendTracker(config, env, () => now);
+    const a = ctx();
+    first.notice(a.value);
+    assert.equal(a.notices.length, 1);
+    assert.match(a.notices[0] ?? "", /85%/);
+    // The same figure under another preset is its own claim.
+    const work = new SpendTracker({ ...config, preset: "work" }, env, () => now);
+    const b = ctx();
+    work.notice(b.value);
+    assert.equal(b.notices.length, 1, "another preset announces its own 80%");
+    assert.match(b.notices[0] ?? "", /85%/);
+    // A raised budget is its own claim too, even though the old one was announced.
+    appendReply(env, reply({ costUsd: 80 }));
+    const raised = new SpendTracker({ ...config, monthlyBudgetUsd: 200 }, env, () => now);
+    const c = ctx();
+    raised.notice(c.value);
+    assert.equal(c.notices.length, 1, "a raised budget announces its own 80%");
+    assert.match(c.notices[0] ?? "", /82%/);
+    const again = ctx();
+    raised.notice(again.value);
+    assert.equal(again.notices.length, 0, "the same budget and preset does not repeat");
+});
+
+test("/bedrock budget resets the month's claims so the same budget can announce again", async (t) => {
+    const root = folder(t);
+    const env = { HOME: root, PI_CODING_AGENT_DIR: root, XDG_STATE_HOME: root, LANG: "C.UTF-8" };
+    appendReply(env, reply({ costUsd: 85 }));
+    const settings = { ...config, agentDir: root };
+    const tracker = new SpendTracker(settings, env, () => now);
+    const first = ctx();
+    tracker.notice(first.value);
+    assert.equal(first.notices.length, 1);
+    const quiet = ctx();
+    tracker.notice(quiet.value);
+    assert.equal(quiet.notices.length, 0);
+    const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
+    const result = registerBedrockCommands(
+        {
+            registerCommand(
+                name: string,
+                value: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
+            ) {
+                commands.set(name, value);
+            },
+        } as never,
+        {
+            config: settings,
+            spend: tracker,
+            catalog: { load: () => undefined, refresh: async () => "ok" },
+            models: () => [model as never],
+            env,
+        },
+    );
+    await result.bedrock("budget 100", ctx().value as never);
+    const again = ctx();
+    tracker.notice(again.value);
+    assert.equal(again.notices.length, 1, "a budget change can announce the same threshold again");
+    assert.match(again.notices[0] ?? "", /85%/);
+});
+
+test("adding a preset keeps the spend the footer showed and says what it counts", async (t) => {
+    const root = folder(t);
+    const env = { HOME: root, PI_CODING_AGENT_DIR: root, XDG_STATE_HOME: root, LANG: "C.UTF-8" };
+    const raw = { profile: "fixture", regions: ["us-east-1"] };
+    writeFileSync(join(root, "bedrock.json"), JSON.stringify(raw));
+    const resolved = loadConfig({ raw, env, agentDir: root });
+    assert.ok(resolved.config);
+    appendReply(env, reply({ costUsd: 120 }));
+    const tracker = new SpendTracker(resolved.config, env, () => now);
+    const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+    const pi = {
+        on() {},
+        registerProvider() {},
+        registerCommand(name: string, value: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+            commands.set(name, value);
+        },
+        events: { emit() {} },
+        setModel: async () => true,
+    };
+    await createBedrockProvider({
+        env,
+        config: resolved.config,
+        catalog: { load: () => undefined, refresh: async () => "ok", status: () => "ok" },
+        spend: tracker,
+        listProfiles: async () => ["fixture"],
+        ssoRecover: async () => {},
+        budget: { load: () => undefined, refresh: async () => {} },
+        backgroundRefresh: false,
+        usageEvents: false,
+    } as never)(pi as never);
+    const notices: string[] = [];
+    const statuses: Array<string | undefined> = [];
+    const context = {
+        hasUI: true,
+        mode: "rpc",
+        signal: new AbortController().signal,
+        model: { provider: "jig-bedrock", id: model.id },
+        ui: {
+            notify: (text: string) => notices.push(text),
+            setStatus: (_key: string, text: string | undefined) => statuses.push(text),
+        },
+        sessionManager: { getSessionId: () => "s", getBranch: () => [] },
+        modelRegistry: { find: () => undefined },
+    };
+    const command = commands.get("bedrock");
+    assert.ok(command, "the /bedrock command is registered");
+    await command.handler("preset add work", context);
+    assert.match(notices.join("\n"), /Preset work saved and active/, notices.join("\n"));
+    assert.match(notices.join("\n"), /The footer now counts work from here\./, notices.join("\n"));
+    assert.match(tracker.footerText(), /^work · Nov \$120/, tracker.footerText());
+    assert.doesNotMatch(tracker.footerText(), /\$0\.00/);
+    assert.ok(
+        statuses.some((status) => status?.startsWith("work · Nov $120")),
+        JSON.stringify(statuses),
+    );
+});
+
+test("the week view reads the previous month's file when the 7 days cross a month", (t) => {
+    const root = folder(t);
+    const env = { XDG_STATE_HOME: root };
+    appendReply(env, reply({ at: "2026-10-30T12:00:00.000Z", costUsd: 5 }));
+    appendReply(env, reply({ at: "2026-11-02T12:00:00.000Z", costUsd: 5 }));
+    appendReply(env, reply({ at: "2026-11-14T12:00:00.000Z", costUsd: 2 }));
+    const early = new SpendTracker(config, env, () => Date.UTC(2026, 10, 3, 12));
+    assert.equal(early.machine("week").spentUsd, 10, "the week spans October and November");
+    assert.equal(early.machine("month").spentUsd, 7, "the month view still reads only its own month");
+    const later = new SpendTracker(config, env, () => Date.UTC(2026, 10, 20, 12));
+    assert.equal(later.machine("week").spentUsd, 2, "a week inside one month reads one file");
+    assert.equal(later.machine("month").spentUsd, 7);
+});
+
+test("a reply that ended in error is counted when Pi reports its usage", async (t) => {
+    const root = folder(t);
+    const env = { HOME: root, PI_CODING_AGENT_DIR: root, XDG_STATE_HOME: root, LANG: "C.UTF-8" };
+    const raw = { profile: "fixture", regions: ["us-east-1"] };
+    writeFileSync(join(root, "bedrock.json"), JSON.stringify(raw));
+    const resolved = loadConfig({ raw, env, agentDir: root });
+    assert.ok(resolved.config);
+    const tracker = new SpendTracker(resolved.config, env, () => now);
+    const hooks = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
+    const pi = {
+        on(name: string, hook: (event: unknown, ctx: unknown) => unknown) {
+            hooks.set(name, [...(hooks.get(name) ?? []), hook]);
+        },
+        registerProvider() {},
+        registerCommand() {},
+        events: { emit() {} },
+        setModel: async () => true,
+    };
+    await createBedrockProvider({
+        env,
+        config: resolved.config,
+        catalog: { load: () => undefined, refresh: async () => "ok", status: () => "ok" },
+        spend: tracker,
+        listProfiles: async () => ["fixture"],
+        ssoRecover: async () => {},
+        budget: { load: () => undefined, refresh: async () => {} },
+        backgroundRefresh: false,
+        usageEvents: false,
+    } as never)(pi as never);
+    const context = {
+        hasUI: true,
+        mode: "rpc",
+        signal: new AbortController().signal,
+        model: undefined,
+        ui: { notify() {}, setStatus() {} },
+        sessionManager: { getSessionId: () => "s", getBranch: () => [] },
+        modelRegistry: { find: () => undefined },
+    };
+    const end = async (message: Record<string, unknown>): Promise<void> => {
+        for (const hook of hooks.get("message_end") ?? []) await hook({ message }, context);
+    };
+    const base = {
+        role: "assistant",
+        provider: "jig-bedrock",
+        api: "anthropic-messages",
+        model: model.id,
+    };
+    await end({
+        ...base,
+        stopReason: "error",
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.25 } },
+    });
+    let lines = readMonth(env, "2026-11");
+    assert.equal(lines.length, 1, "an error reply with tokens is recorded");
+    assert.equal(lines[0]?.costUsd, 0.25);
+    assert.equal(tracker.footerText(), "Nov $0.25");
+    await end({
+        ...base,
+        stopReason: "aborted",
+        usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.1 } },
+    });
+    lines = readMonth(env, "2026-11");
+    assert.equal(lines.length, 2, "an aborted reply with tokens is recorded");
+    assert.equal(tracker.footerText(), "Nov $0.35");
+    await end({
+        ...base,
+        stopReason: "error",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+    });
+    assert.equal(readMonth(env, "2026-11").length, 2, "a message with no usage adds nothing");
 });

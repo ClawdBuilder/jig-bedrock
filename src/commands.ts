@@ -221,6 +221,8 @@ export function registerBedrockCommands(
         if (value === "off") {
             config.monthlyBudgetUsd = undefined;
             const saved = saveBudgetSetting(env, undefined);
+            // A changed budget may announce its thresholds again in this month.
+            spend.resetBudgetClaims();
             emit(ctx, "Bedrock budget", [
                 saved.ok ? `${m.ok} Budget removed.` : `${m.fail} ${saved.error}`,
                 `${m.warn} Not an AWS limit; no request is blocked.`,
@@ -235,6 +237,7 @@ export function registerBedrockCommands(
         }
         config.monthlyBudgetUsd = amount;
         const saved = saveBudgetSetting(env, amount, config.preset);
+        spend.resetBudgetClaims();
         emit(ctx, "Bedrock budget", [
             saved.ok
                 ? `${m.ok} Budget set to ${money(amount)}${config.preset === undefined ? "" : ` in preset ${config.preset}`}.`
