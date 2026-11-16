@@ -1,7 +1,7 @@
 /* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The one command: every sub-command, the completions, the old names and the always-present broken settings path.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -321,9 +321,11 @@ test("a tag pair can be set and unset in one command", async (t) => {
 
 function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string[] = []) {
     let selectCalls = 0;
-    h.ctx.ui.select = async () => {
+    h.ctx.ui.select = async (_title: string, options: string[] = []) => {
         selectCalls++;
-        return selects.shift();
+        const wanted = selects.shift();
+        if (wanted === undefined) return undefined;
+        return options.find((option) => option === wanted || option.startsWith(`${wanted}:`)) ?? wanted;
     };
     h.ctx.ui.input = async () => inputs.shift();
     return () => selectCalls;
@@ -345,6 +347,44 @@ test("the settings menu edits a tag pair in one step", async (t) => {
     assert.equal(saved.activeTagValue, "true");
 });
 
+test("the settings menu saves a fixed choice and a comma-separated list", async (t) => {
+    const api = harness(t, {});
+    withUi(api, ["Settings", "api", "Set", "converse"]);
+    await api.result.bedrock("", api.ctx as never);
+    assert.equal(JSON.parse(readFileSync(join(api.root, "bedrock.json"), "utf8")).api, "converse");
+    const regions = harness(t, {});
+    withUi(regions, ["Settings", "regions", "Set"], ["us-east-1,us-west-2"]);
+    await regions.result.bedrock("", regions.ctx as never);
+    assert.deepEqual(JSON.parse(readFileSync(join(regions.root, "bedrock.json"), "utf8")).regions, [
+        "us-east-1",
+        "us-west-2",
+    ]);
+});
+
+test("the settings menu refuses an invalid value and writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /regions must contain 1-16 unique AWS region names/);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
+});
+
+test("the settings menu unsets both halves of a pair", async (t) => {
+    const h = harness(t, {});
+    writeFileSync(join(h.root, "bedrock.json"), JSON.stringify({ activeTagKey: "Active", activeTagValue: "true" }));
+    withUi(h, ["Settings", "activeTagKey", "Unset"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal("activeTagKey" in saved, false);
+    assert.equal("activeTagValue" in saved, false);
+});
+
+test("the settings menu Escape writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
+});
 test("the presets menu lists presets and switches", async (t) => {
     let used = "";
     const h = harness(

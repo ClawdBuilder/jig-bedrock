@@ -819,34 +819,85 @@ export function registerBedrockCommands(
         if (name !== undefined) await sources.usePreset?.(name, ctx);
     };
     const settingsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
-        const choice = await ctx.ui.select("Bedrock settings", [...FIELDS.filter((key) => key !== "presets"), "Back"]);
+        const doc = readSettingsDocument(env);
+        const values = config as unknown as Record<string, unknown>;
+        const envNames: Record<string, string> = {
+            tagKey: "JIG_BEDROCK_TAG_KEY",
+            tagValue: "JIG_BEDROCK_TAG_VALUE",
+            profile: "JIG_BEDROCK_PROFILE",
+            regions: "JIG_BEDROCK_REGIONS",
+            debug: "JIG_BEDROCK_DEBUG",
+        };
+        const labels = FIELDS.filter((key) => key !== "presets").map((key) => {
+            const value =
+                key === "preset" ? config.preset : (values[key] ?? (DEFAULTS as Record<string, unknown>)[key]);
+            const from =
+                key === "preset" && config.preset !== undefined
+                    ? config.presetSource === "env"
+                        ? "environment"
+                        : "file"
+                    : envNames[key] !== undefined && env[envNames[key] as string] !== undefined
+                      ? "environment"
+                      : !("error" in doc) && Object.hasOwn(doc.target, key)
+                        ? "file"
+                        : Object.hasOwn(DEFAULTS as Record<string, unknown>, key)
+                          ? "default"
+                          : "unset";
+            const shown = Array.isArray(value) ? value.join(",") : value === undefined ? "unset" : String(value);
+            return { key, label: `${key}: ${shown} (${from})` };
+        });
+        const choice = await ctx.ui.select("Bedrock settings", [...labels.map((entry) => entry.label), "Back"]);
         if (choice === undefined || choice === "Back") return;
-        const key = choice;
-        const action = await ctx.ui.select(`${key}`, ["Set", "Unset", "Back"]);
+        const key = labels.find((entry) => entry.label === choice)?.key;
+        if (key === undefined) return;
+        const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
+        const current = key === "preset" ? config.preset : (values[key] ?? (DEFAULTS as Record<string, unknown>)[key]);
+        const action = await ctx.ui.select(
+            `${key} (current: ${Array.isArray(current) ? current.join(",") : (current ?? "unset")})`,
+            ["Set", "Unset", "Back"],
+        );
         if (action === undefined || action === "Back") return;
         if (action === "Unset") {
-            await unset(key, ctx);
-            return;
-        }
-        const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
-        if (pair !== undefined) {
-            const answer = await ctx.ui.input(`${key} and ${pair}`, "Team my-team");
-            const [left, right] = (answer ?? "").trim().split(/\s+/);
-            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx);
+            await unset(pair === undefined ? key : `${key} ${pair}`, ctx);
             return;
         }
         if (key === "api") {
-            const answer = await ctx.ui.select("api", ["messages", "converse"]);
+            const answer = await ctx.ui.select("api (example: messages)", ["messages", "converse"]);
             if (answer !== undefined) await set(`api ${answer}`, ctx);
             return;
         }
         if (key === "signInAtStart" || key === "debug") {
-            const answer = await ctx.ui.select(key, ["true", "false"]);
-            if (answer !== undefined) await set(`${key} ${answer}`, ctx);
+            const answer = await ctx.ui.select(`${key} (current: ${String(current ?? "unset")})`, ["on", "off"]);
+            if (answer !== undefined) await set(`${key} ${answer === "on" ? "true" : "false"}`, ctx);
             return;
         }
-        const current = (config as unknown as Record<string, unknown>)[key];
-        const answer = await ctx.ui.input(key, current === undefined ? "value" : String(current));
+        if (pair !== undefined) {
+            const answer = await ctx.ui.input(
+                `${key} and ${pair} (current: ${String(current ?? "unset")}; example: Team my-team)`,
+                "Team my-team",
+            );
+            const [left, right] = (answer ?? "").trim().split(/\s+/);
+            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx);
+            return;
+        }
+        const examples: Record<string, string> = {
+            regions: "us-east-1",
+            profiles: "global.anthropic.claude-sonnet-5-5",
+            monthlyBudgetUsd: "200",
+            converseModels: "claude-opus-5",
+            messagesModels: "claude-sonnet-5-5",
+            spendCommand: "node spend.mjs",
+            ssoLoginCommand: "aws sso login --profile {profile}",
+            browser: "/usr/bin/xdg-open",
+        };
+        const answer = await ctx.ui.input(
+            `${key} (current: ${Array.isArray(current) ? current.join(",") : (current ?? "unset")}; example: ${examples[key] ?? "value"})`,
+            current === undefined
+                ? (examples[key] ?? "value")
+                : Array.isArray(current)
+                  ? current.join(",")
+                  : String(current),
+        );
         if (answer !== undefined && answer !== "") await set(`${key} ${answer}`, ctx);
     };
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
