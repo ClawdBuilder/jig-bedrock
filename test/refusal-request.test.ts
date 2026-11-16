@@ -126,3 +126,59 @@ test("the provider has one registration path with the refusal handler", async ()
     );
     assert.ok((source.match(/await register\(\)/g) ?? []).length >= 4);
 });
+
+test("a first start with no models registers the refresh list with the refusal handler", async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-refusal-first-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const env = { HOME: dir, PI_CODING_AGENT_DIR: dir };
+    const models: BedrockModel[] = [];
+    const providers: any[] = [];
+    const pi = {
+        registerProvider(provider: any) {
+            providers.push(provider);
+        },
+    };
+    const handler = (selected: BedrockModel) => {
+        if (!isRefused(env, "fixture", account, selected.arn))
+            rememberRefusal(env, "fixture", account, selected.arn, selected.id);
+        return `AWS refused ${selected.id} for your AWS role.`;
+    };
+    const args = [
+        pi,
+        dir,
+        { stream: nativeStream(real), streamSimple: nativeStream(real) },
+        models,
+        () => catalog,
+        { profile: () => "fixture", auth: {} },
+        handler,
+        { stream: nativeStream(real), streamSimple: nativeStream(real) },
+        async () => undefined,
+        async () => {
+            models.splice(0, models.length);
+        },
+    ] as const;
+    await registerBedrockProvider(...(args as never));
+    assert.equal(providers.at(-1).getModels().length, 0);
+    models.push(model);
+    await registerBedrockProvider(...(args as never));
+    const provider = providers.at(-1);
+    const events: any[] = [];
+    for await (const event of provider.streamSimple(
+        { ...model, provider: "jig-bedrock" },
+        { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+        {},
+    ))
+        events.push(event);
+    assert.match(events[0]?.error?.errorMessage ?? "", /AWS refused/);
+    assert.equal(isRefused(env, "fixture", account, arn), true);
+    await provider.refreshModels({
+        allowNetwork: true,
+        force: true,
+        signal: new AbortController().signal,
+        publish: async (value: any) => {
+            value.update();
+            return true;
+        },
+    });
+    assert.equal(provider.getModels().length, 0);
+});
