@@ -343,17 +343,27 @@ export function registerBedrockCommands(
             return line;
         });
         const rejected = sources.unavailable?.() ?? [];
-        for (const entry of rejected.slice(0, 3))
+        for (const entry of rejected.slice(0, 3)) {
+            const hint = /Pi registry has no exact metadata/i.test(entry.reason) ? " · update Pi" : "";
             rows.push(
-                `${m.skip} This Pi does not know the model: ${clean(entry.profile, 60)}, ${clean(entry.region, 20)}`,
+                `${m.skip} This Pi does not know the model: ${clean(entry.profile, 60)}, ${clean(entry.region, 20)}${hint}`,
             );
+        }
         if (rejected.length > 3) rows.push(`${m.skip} ... and ${rejected.length - 3} more`);
         const refused = sources.refused?.() ?? [];
         if (refused.length > 0) {
             rows.push("Refused by AWS for your role");
             for (const entry of refused) rows.push(`${m.warn} ${entry.id} · ${entry.date.slice(0, 10)}`);
         }
-        if (list.length === 0) rows.push(`${m.warn} No models loaded.`);
+        if (list.length === 0) {
+            rows.push(`${m.warn} No models loaded.`);
+            const status = sources.discoveryStatus?.();
+            rows.push(
+                status === undefined || status === "ok"
+                    ? "Next: /bedrock refresh."
+                    : `Next: ${discoveryHelp(status, sources.discoveryMode?.())}`,
+            );
+        }
         emit(ctx, `Bedrock models · ${list.length} · price per million tokens, in / out`, rows);
     };
     const settings = async (ctx: ExtensionCommandContext): Promise<void> => {

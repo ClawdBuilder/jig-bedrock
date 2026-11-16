@@ -136,6 +136,43 @@ test("refresh and status name the models this Pi cannot use", async (t) => {
     assert.match(h.notices.at(-1) ?? "", /3 more are not usable by this Pi/, h.notices.at(-1));
 });
 
+test("an empty model list gives the Next that fits the catalog status", async (t) => {
+    const ok = harness(t, {}, { models: () => [] });
+    await ok.result.bedrock("models", ok.ctx as never);
+    const fine = ok.notices.at(-1) ?? "";
+    assert.match(fine, /No models loaded\./, fine);
+    assert.match(fine, /Next: \/bedrock refresh\./, fine);
+    const denied = harness(
+        t,
+        {},
+        { models: () => [], discoveryStatus: () => "permission_denied", discoveryMode: () => "tag" },
+    );
+    await denied.result.bedrock("models", denied.ctx as never);
+    assert.match(
+        denied.notices.at(-1) ?? "",
+        /Next: Ask your AWS administrator for tag:GetResources/,
+        denied.notices.at(-1),
+    );
+});
+
+test("a model this Pi does not know says to update Pi", async (t) => {
+    const h = harness(
+        t,
+        {},
+        {
+            unavailable: () => [
+                {
+                    profile: "orders-api",
+                    region: "us-east-1",
+                    reason: "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.",
+                },
+            ],
+        },
+    );
+    await h.result.bedrock("models", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /This Pi does not know the model: orders-api, us-east-1 · update Pi/);
+});
+
 test("set and unset write the settings file and apply", async (t) => {
     const h = harness(t, {});
     await h.result.bedrock("set api converse", h.ctx as never);
