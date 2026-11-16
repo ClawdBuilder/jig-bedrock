@@ -66,6 +66,12 @@ async function build(options: {
             loginListProfiles: async () => options.loginList ?? options.list,
             ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
             verifyProfile: async () => ({ ok: true }),
+            check: async () =>
+                ({
+                    node: { status: "ready", version: "22.19.0" },
+                    aws: { status: "ready", version: "2.34.46" },
+                    platform: "linux",
+                }) as never,
         }) as never
     )(pi as never);
     const provider = providers.find((entry) => entry?.id === "jig-bedrock");
@@ -102,7 +108,7 @@ test("choosing a profile at /login starts discovery and says what is happening",
         assert.equal("key" in credential, false, "no secret is stored");
         const saved = JSON.parse(readFileSync(join(env.PI_CODING_AGENT_DIR as string, "bedrock.json"), "utf8"));
         assert.deepEqual(saved.regions, ["us-east-1"], "the discovery choice is saved");
-        assert.equal("profile" in saved, false, "the profile belongs to the credential");
+        assert.equal(saved.profile, "work", "the profile is written beside discovery");
         assert.equal(refreshes, 1, "the login starts discovery itself");
         const text = notices.map((notice) => `${notice.type}:${notice.message ?? ""}`).join("\n");
         assert.match(text, /progress:Looking up your AWS profiles…/);
@@ -113,7 +119,7 @@ test("choosing a profile at /login starts discovery and says what is happening",
     }
 });
 
-function fakeAws(dir: string): string {
+function fakeAws(dir: string, caseMismatch = false): string {
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
     const script = join(bin, "aws");
@@ -125,7 +131,22 @@ case "$*" in
   *--version*) echo "aws-cli/2.34.46 Python/3.12.0 Linux/6.0";;
   *get-caller-identity*) echo '{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/fixture"}';;
   *list-inference-profiles*) echo '{"inferenceProfileSummaries":[{"inferenceProfileArn":"arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-sonnet-5-5","inferenceProfileName":"System Sonnet","status":"ACTIVE","models":[{"modelArn":"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5"}]}]}' ;;
-  *resourcegroupstaggingapi*) echo '{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app","Tags":[{"Key":"Team","Value":"fixture-team"}]}]}' ;;
+  *resourcegroupstaggingapi*)
+    case "$*" in
+      *--tag-filters*) ${caseMismatch ? "echo '{\"ResourceTagMappingList\":[]}'" : 'echo \'{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app","Tags":[{"Key":"Team","Value":"fixture-team"}]}]}\''} ;;
+      *) if ${caseMismatch}; then
+           out='{"ResourceTagMappingList":['
+           i=1
+           while [ $i -le 13 ]; do
+             [ $i -eq 1 ] || out="$out,"
+             out="$out{\\"ResourceARN\\":\\"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/p$i\\",\\"Tags\\":[{\\"Key\\":\\"Team\\",\\"Value\\":\\"fixture-team\\"}]}"
+             i=$((i+1))
+           done
+           echo "$out]}"
+         else
+           echo '{"ResourceTagMappingList":[]}'
+         fi ;;
+    esac ;;
   *application-inference-profile/team-app*) echo '{"inferenceProfileArn":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app","inferenceProfileName":"Team Sonnet","status":"ACTIVE","models":[{"modelArn":"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5"}]}' ;;
   *) echo '{}';;
 esac`,
@@ -136,19 +157,18 @@ esac`,
 
 async function loginWithDiscovery(
     discovery: "tag" | "explicit",
-): Promise<{ models: string[]; catalogs: Array<Record<string, unknown>> }> {
+    options: { tagKey?: string; caseMismatch?: boolean } = {},
+): Promise<{ models: string[]; catalogs: Array<Record<string, unknown>>; notices: string[]; dir: string }> {
     const { dir, env } = folder();
-    const bin = fakeAws(dir);
+    const bin = fakeAws(dir, options.caseMismatch);
     const cache = join(dir, "cache");
-    const { provider } = await build({
-        env: {
-            ...env,
-            PATH: `${bin}:${process.env.PATH}`,
-            XDG_CACHE_HOME: cache,
-            JIG_BEDROCK_PROFILE: undefined,
-        },
-        list: ["work"],
-    });
+    const loginEnv = {
+        ...env,
+        PATH: `${bin}:${process.env.PATH}`,
+        XDG_CACHE_HOME: cache,
+        JIG_BEDROCK_PROFILE: undefined,
+    };
+    const { provider } = await build({ env: loginEnv, list: ["work"] });
     const notices: string[] = [];
     const oldPath = process.env.PATH;
     process.env.PATH = `${bin}:${oldPath ?? ""}`;
@@ -157,7 +177,7 @@ async function loginWithDiscovery(
             signal: new AbortController().signal,
             prompt: async (prompt: any) => {
                 if (prompt.type !== "select") {
-                    if (prompt.message === "Tag key") return "Team";
+                    if (prompt.message === "Tag key") return options.tagKey ?? "Team";
                     if (prompt.message === "Tag value") return "fixture-team";
                     if (prompt.message === "Profile ARNs or ids (comma separated)")
                         return "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app";
@@ -177,13 +197,21 @@ async function loginWithDiscovery(
             (name): name is string => typeof name === "string" && name.includes("catalog-") && name.endsWith(".json"),
         )
         .map((name) => JSON.parse(readFileSync(join(dir, String(name)), "utf8")) as Record<string, unknown>);
-    return { models: provider.getModels?.().map((model: { id: string }) => model.id) ?? [], catalogs };
+    return {
+        models: provider.getModels?.().map((model: { id: string }) => model.id) ?? [],
+        catalogs,
+        notices,
+        dir,
+        env: loginEnv,
+    };
 }
 
 test("/login choosing by tag applies the tag discovery before the first refresh", async () => {
-    const { catalogs } = await loginWithDiscovery("tag");
+    const { catalogs, dir: envLog } = await loginWithDiscovery("tag");
     assert.equal(catalogs[0]?.mode, "tag");
     const savedProfiles = catalogs[0]?.profiles as Array<{ kind?: string }> | undefined;
+    const settings = JSON.parse(readFileSync(join(envLog, "agent", "bedrock.json"), "utf8"));
+    assert.equal(settings.profile, "work");
     assert.ok(savedProfiles?.length, JSON.stringify(catalogs));
     assert.ok(
         savedProfiles.every((profile) => profile.kind === "application"),
@@ -192,12 +220,68 @@ test("/login choosing by tag applies the tag discovery before the first refresh"
 });
 
 test("/login choosing a hand-written list applies explicit discovery before the first refresh", async () => {
-    const { catalogs } = await loginWithDiscovery("explicit");
+    const { catalogs, dir: envLog } = await loginWithDiscovery("explicit");
     assert.equal(catalogs[0]?.mode, "explicit");
     const savedProfiles = catalogs[0]?.profiles as Array<{ kind?: string }> | undefined;
+    const settings = JSON.parse(readFileSync(join(envLog, "agent", "bedrock.json"), "utf8"));
+    assert.equal(settings.profile, "work");
     assert.ok(savedProfiles?.length, JSON.stringify(catalogs));
     assert.ok(
         savedProfiles.every((profile) => profile.kind === "application"),
         JSON.stringify(catalogs),
+    );
+});
+
+test("a tag key in the wrong case shows the warning and the exact fix after /login", async () => {
+    const { notices, dir: logDir } = await loginWithDiscovery("tag", { tagKey: "team", caseMismatch: true });
+    const text = notices.join("\n");
+    assert.match(text, /No application inference profiles matched team=fixture-team/);
+    assert.match(text, /13 have Team=fixture-team\. Run \/bedrock set tagKey Team\./);
+    assert.doesNotMatch(text, /not loaded yet/);
+});
+
+test("a tag key in the wrong case shows the same warning after /bedrock refresh", async () => {
+    const { dir, env } = folder();
+    const bin = fakeAws(dir, true);
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${bin}:${oldPath ?? ""}`;
+    try {
+        mkdirSync(env.PI_CODING_AGENT_DIR as string, { recursive: true });
+        writeFileSync(
+            join(env.PI_CODING_AGENT_DIR as string, "bedrock.json"),
+            JSON.stringify({ profile: "work", tagKey: "team", tagValue: "fixture-team", regions: ["us-east-1"] }),
+        );
+        const { commands } = await build({ env, list: ["work"] });
+        const notices: string[] = [];
+        const ctx = {
+            hasUI: true,
+            mode: "rpc",
+            signal: new AbortController().signal,
+            ui: { notify: (text: string) => notices.push(text) },
+        };
+        await commands.get("bedrock")?.handler("refresh", ctx as never);
+        const text = notices.join("\n");
+        assert.match(text, /No application inference profiles matched/);
+        assert.match(text, /13 have Team=fixture-team/);
+        assert.doesNotMatch(text, /0 models loaded/);
+    } finally {
+        process.env.PATH = oldPath;
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a zero match with no near key gets no case hint", async () => {
+    const { notices } = await loginWithDiscovery("tag", { tagKey: "nothing", caseMismatch: true });
+    const text = notices.join("\n");
+    assert.match(text, /No application inference profiles matched/);
+    assert.doesNotMatch(text, /have Team=/);
+});
+
+test("a new provider from a /login-only home has its models at the factory", async () => {
+    const login = await loginWithDiscovery("tag");
+    const next = await build({ env: login.env, list: ["work"] });
+    assert.ok(
+        next.provider.getModels?.().length,
+        JSON.stringify({ models: next.provider.getModels?.(), cats: login.catalogs, env: login.env }),
     );
 });

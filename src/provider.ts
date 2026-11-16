@@ -37,6 +37,7 @@ import type { ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig, PRESET_FIELDS, presetNamePattern } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import { createDebugLog, debugEnabled, withDebugCatalog, withDebugLog, withDebugRecover } from "./debug-log.ts";
+import { checkLocalDependencies } from "./doctor.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
@@ -51,7 +52,12 @@ import {
     missingProfileNotice,
     ProfileResolver,
 } from "./profile.ts";
-import { readSettingsDocument, saveDiscoverySettings, writeSettingsDocument } from "./settings-write.ts";
+import {
+    readSettingsDocument,
+    saveDiscoverySettings,
+    saveProfileSetting,
+    writeSettingsDocument,
+} from "./settings-write.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 import { SpendTracker } from "./spend.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
@@ -98,6 +104,8 @@ export interface BedrockOptions {
     listProfiles?: ListProfiles;
     /** The same listing with /login's longer timeout, for tests. */
     loginListProfiles?: ListProfiles;
+    /** The local AWS CLI check /login runs before its first question. */
+    check?: typeof checkLocalDependencies;
     /** The STS check /login runs; without it `aws sts get-caller-identity`. */
     verifyProfile?: (profile: string | undefined, signal: AbortSignal) => Promise<VerifyResult>;
     /** The SSO sign-in /login runs; without it the shared recovery. */
@@ -295,8 +303,19 @@ export function createBedrockProvider(
         const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
         // /login's guided choice: the AWS CLI is the only place a secret is entered, and the profile is verified before
         // the credential is stored. A fresh listing is used after the access-key/role guidance.
-        const guided = (interaction: ProviderAuthInteraction) =>
-            runLoginFlow(interaction, {
+        const guided = async (interaction: ProviderAuthInteraction) => {
+            const health = await (options.check ?? checkLocalDependencies)({
+                signal: interaction.signal,
+                env: profileEnv,
+                timeout: 15_000,
+            });
+            if (health.aws.status !== "ready") {
+                const message =
+                    'jig-bedrock needs AWS CLI v2 for sign-in and listing models. Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html — or choose "Use a Bedrock API key with Pi\'s own provider".';
+                interaction.notify({ type: "info", message });
+                throw new Error("AWS CLI v2 is required.");
+            }
+            return runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,
                 refreshProfiles: () => createListProfiles(profileEnv)(),
                 isSso: (profile) => isSsoProfile(profile, profileEnv),
@@ -309,6 +328,7 @@ export function createBedrockProvider(
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
             });
+        };
         const auth = createProfileAuth(profiles, loginListProfiles, {
             unavailable: () => autoProfileFailed,
             guided,
@@ -573,6 +593,14 @@ export function createBedrockProvider(
                         message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
                     });
             }
+            if (profile !== undefined) {
+                const savedProfile = saveProfileSetting(profileEnv, profile);
+                if (!savedProfile.ok)
+                    interaction.notify({
+                        type: "info",
+                        message: `The AWS profile could not be saved: ${savedProfile.error ?? "unknown error"}.`,
+                    });
+            }
             const loaded = reloadSettings();
             if (!applyResolved(loaded)) {
                 interaction.notify({
@@ -596,7 +624,7 @@ export function createBedrockProvider(
                 timeout,
             ]);
             if (signal.aborted) return;
-            const message = loginOutcomeMessage(models.length, settled);
+            const message = loginOutcomeMessage(models.length, settled, catalog.load()?.warnings?.join(" "));
             interaction.notify({ type: "info", message });
             if (config.preset !== undefined && config.profileSource === "preset") {
                 interaction.notify({
@@ -987,7 +1015,10 @@ export function createBedrockProvider(
                 context.ui.notify(missingProfileNotice(choice), "warning");
             } else if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
             else if (!models.length && !autoProfile)
-                context.ui.notify("Bedrock: reading the models from AWS (first start).", "info");
+                context.ui.notify(
+                    "Bedrock: reading the models from AWS; they appear in /model in a few seconds (first start).",
+                    "info",
+                );
             // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
             // discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh =

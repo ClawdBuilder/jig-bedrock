@@ -103,6 +103,10 @@ Bedrock is ready.
 
 Done when the last line is `Bedrock is ready.`
 
+## No AWS setup yet?
+
+At `/login`, choose **Create an IAM Identity Center (SSO) profile**. It asks for four values: the start URL, the SSO region, the account ID and the role name. Find them in your AWS access portal, or ask your AWS administrator.
+
 ## Budget
 
 ```text
@@ -164,7 +168,7 @@ Named presets switch AWS profiles, model lists, budgets and spend; see [Presets]
 
 **Update:** `pi update npm:@clawdbuilder/jig-bedrock`, then `/reload`.
 
-**Remove:** `/logout`, then `pi remove npm:@clawdbuilder/jig-bedrock`. It leaves some files: [Files on disk](docs/settings.md#files-on-disk).
+**Remove:** `/logout`, then `/bedrock unset profile`, then `pi remove npm:@clawdbuilder/jig-bedrock`. It leaves some files: [Files on disk](docs/settings.md#files-on-disk).
 
 With Jig, `jig update` updates jig-bedrock (it is installed unpinned) and `jig remove npm:@clawdbuilder/jig-bedrock` removes it.
 

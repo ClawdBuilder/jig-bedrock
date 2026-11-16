@@ -58,7 +58,7 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 
 `/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the current sign-in, and `/bedrock preset remove work` deletes it. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below.
+Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. A `profile` set by hand is replaced by the AWS profile chosen at `/login`; a preset's own `profile` still wins.
 
 ## Which AWS profile is used
 
@@ -99,7 +99,7 @@ Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must
 | Web identity or instance role | requests only          | no       | no                                           |
 | Bedrock API key               | built-in provider only | no       | no                                           |
 
-“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it. For an assumed role, each AWS CLI call assumes the role again through `source_profile`.
+“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it. Pi has no provider logout hook, so after `/logout` run `/bedrock unset profile`. For an assumed role, each AWS CLI call assumes the role again through `source_profile`.
 
 ## Other variables
 

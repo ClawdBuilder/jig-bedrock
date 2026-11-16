@@ -144,3 +144,12 @@ export function writeSettingsDocument(
         return { ok: false, file, error: `${file} could not be written; check its folder permissions.` };
     }
 }
+
+/** Save the AWS profile chosen at /login, beside the discovery settings. */
+export function saveProfileSetting(env: NodeJS.ProcessEnv, profile: string): { ok: boolean; error?: string } {
+    const doc = readSettingsDocument(env);
+    if ("error" in doc) return { ok: false, error: doc.error };
+    doc.target.profile = profile;
+    const saved = writeSettingsDocument(env, doc.document);
+    return saved.ok ? { ok: true } : { ok: false, error: saved.error };
+}

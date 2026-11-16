@@ -188,7 +188,10 @@ test("start-up with a real profile says the models are loading, not that a setti
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir, JIG_BEDROCK_PROFILE: "work-profile" },
         });
         const text = notices.join("\n");
-        assert.match(text, /Bedrock: reading the models from AWS \(first start\)/);
+        assert.match(
+            text,
+            /Bedrock: reading the models from AWS; they appear in \/model in a few seconds \(first start\)/,
+        );
         assert.doesNotMatch(text, /No AWS profile is configured/);
         assert.doesNotMatch(text, /run \/bedrock login/);
     } finally {

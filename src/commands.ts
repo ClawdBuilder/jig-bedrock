@@ -459,6 +459,14 @@ export function registerBedrockCommands(
             ]);
             return;
         }
+        const warnings = sources.catalog?.load()?.warnings ?? [];
+        if (after.length === 0 && warnings.length > 0) {
+            emit(ctx, "Bedrock refresh", [
+                `${m.warn} ${warnings.join(" ")}`,
+                "Next: fix the tag or list in /bedrock settings, then /bedrock refresh.",
+            ]);
+            return;
+        }
         const rows = [
             `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
         ];
