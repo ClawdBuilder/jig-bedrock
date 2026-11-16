@@ -456,6 +456,21 @@ export function createBedrockProvider(
             rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, model.arn, model.id);
             return `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
         };
+        const register = async (): Promise<void> => {
+            if (!native) return;
+            await registerBedrockProvider(
+                pi,
+                config.agentDir || "",
+                native,
+                models,
+                catalog.load,
+                identity,
+                refusalMessage,
+                messages,
+                signedFetch,
+                (options) => refreshForModelSelector(options.force),
+            );
+        };
 
         const readModels = () => {
             const result = discoveredProfiles(catalog.load(), "", config);
@@ -519,18 +534,7 @@ export function createBedrockProvider(
             await usePiAnthropicRegistry();
             usePiRegistry(native);
             models.push(...readModels().available);
-            await registerBedrockProvider(
-                pi,
-                config.agentDir || "",
-                native,
-                models,
-                catalog.load,
-                identity,
-                messages,
-                signedFetch,
-                (options) => refreshForModelSelector(options.force),
-                refusalMessage,
-            );
+            await register();
         } catch {
             failed = true;
         }
@@ -620,17 +624,7 @@ export function createBedrockProvider(
                 }
                 settingsChanged = false;
                 if (change.changed && native) {
-                    await registerBedrockProvider(
-                        pi,
-                        config.agentDir || "",
-                        native,
-                        models,
-                        catalog.load,
-                        identity,
-                        messages,
-                        signedFetch,
-                        (options) => refreshForModelSelector(options.force),
-                    );
+                    await register();
                 }
                 return status;
             })().finally(() => {
@@ -700,18 +694,7 @@ export function createBedrockProvider(
             }
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) {
-                await registerBedrockProvider(
-                    pi,
-                    config.agentDir || "",
-                    native,
-                    models,
-                    catalog.load,
-                    identity,
-                    messages,
-                    signedFetch,
-                    (options) => refreshForModelSelector(options.force),
-                    refusalMessage,
-                );
+                await register();
             }
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
@@ -820,18 +803,7 @@ export function createBedrockProvider(
                 );
                 const updated = readModels().available;
                 updateModels(models, updated);
-                await registerBedrockProvider(
-                    pi,
-                    config.agentDir || "",
-                    native,
-                    models,
-                    catalog.load,
-                    identity,
-                    messages,
-                    signedFetch,
-                    (options) => refreshForModelSelector(options.force),
-                    refusalMessage,
-                );
+                await register();
                 const selected = context.model;
                 const selectedId = selected?.provider === JIG_BEDROCK ? selected.id : undefined;
                 let selectionNotified = false;

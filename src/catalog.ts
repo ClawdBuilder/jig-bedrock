@@ -684,20 +684,15 @@ export function bedrockStream(
 export async function registerBedrockProvider(
     pi: Pick<ExtensionAPI, "registerProvider">,
     _agentDir: string,
-    native?: import("@earendil-works/pi-ai").Provider,
+    native: import("@earendil-works/pi-ai").Provider,
     models: BedrockModel[] = [],
     load: () => Catalog | undefined = () => undefined,
     identity: BedrockIdentity = { profile: () => undefined, auth: {} },
+    onRefusal: (model: BedrockModel, message: string) => string | undefined,
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
     refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
-    onRefusal?: (model: BedrockModel, message: string) => string | undefined,
 ): Promise<BedrockModel[]> {
-    if (!native) {
-        const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
-        native = builtinProviders().find((provider) => provider.id === "amazon-bedrock");
-        if (!native) throw new Error("Pi Bedrock provider unavailable; update Pi and reload.");
-    }
     const makePicker = () =>
         models.map(({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
             ...m,

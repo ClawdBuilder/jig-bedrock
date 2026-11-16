@@ -68,12 +68,12 @@ async function registered(api: "bedrock-converse-stream" | "anthropic-messages",
         models,
         () => catalog,
         { profile: () => "fixture", auth: {} } as never,
+        handler,
         { stream: nativeStream(real), streamSimple: nativeStream(real) } as never,
         (async () => undefined) as never,
         async () => {
             models.splice(0, models.length);
         },
-        handler,
     );
     const provider = providers.at(-1);
     return { env, models, provider, providerStream: provider.streamSimple };
