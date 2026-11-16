@@ -33,6 +33,17 @@ const SSO_FAILURE = /aws sso login|sso session|token is expired|expired or is ot
 /** Marks the synthetic 401 so the recovery wrapper can replay a local credential failure after a response. */
 export const SSO_EXPIRY_HEADER = "x-jig-sso-expiry";
 
+/**
+ * A credential-chain failure that is not an SSO expiry. Pi's Anthropic client turns any thrown fetch into
+ * "Connection error." and drops this message, so the stream marks the error and shows the credential words instead.
+ */
+export class CredentialFailureError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "CredentialFailureError";
+    }
+}
+
 /** `fetch` with the SigV4 headers of the profile's credentials, and without the client's own auth headers. */
 export function createSignedFetch(options: SignedFetchOptions): typeof globalThis.fetch {
     const inner = options.fetch ?? globalThis.fetch;
@@ -71,7 +82,7 @@ export function createSignedFetch(options: SignedFetchOptions): typeof globalThi
                     { status: 401, headers: { "content-type": "application/json", [SSO_EXPIRY_HEADER]: "1" } },
                 );
             }
-            throw error;
+            throw new CredentialFailureError(message);
         }
         const signed = signRequest({
             method,

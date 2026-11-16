@@ -222,7 +222,11 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
         assert.ok(messagesModel && converseModel);
 
         const seen: Array<{ model: { id: string; api: string }; options: Record<string, unknown> }> = [];
-        const signedFetch = (async () => new Response("{}")) as typeof globalThis.fetch;
+        let signed = 0;
+        const signedFetch = (async () => {
+            signed++;
+            return new Response("{}");
+        }) as typeof globalThis.fetch;
         const messages = bedrockStream(
             [messagesModel],
             {
@@ -246,7 +250,15 @@ test("the Messages wrapper sends the ARN, the signed fetch and a throwaway key; 
         assert.equal(seen[0]?.model.provider, JIG_BEDROCK);
         assert.equal(seen[0]?.model.api, "anthropic-messages");
         assert.equal(seen[0]?.options.apiKey, "bedrock-sigv4");
-        assert.equal(seen[0]?.options.fetch, signedFetch);
+        // The request's own wrapper records a credential failure around the signed fetch; it must still end there.
+        const wired = seen[0]?.options.fetch as typeof globalThis.fetch;
+        assert.notEqual(wired, signedFetch);
+        const signedResponse = await wired(
+            new URL("https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages"),
+            { method: "POST", body: "{}" },
+        );
+        assert.equal(signedResponse.status, 200);
+        assert.equal(signed, 1, "the Messages client still sends through the signed fetch");
         assert.equal(seen[0]?.options.profile, "fixture-profile");
 
         // The payload hook: Pi's own hook runs first, then Sonnet 5.5's thinking-off shape. Opus is left as Pi sends it.

@@ -833,10 +833,16 @@ export function registerBedrockCommands(
                 } catch (error) {
                     requestError = error instanceof Error ? error.message : String(error);
                     rows.push(`${m.fail} Request: ${requestError}`);
+                    // A credential failure is fixed outside this command: repeating the call cannot help.
+                    const credentials = /AWS credentials .*could not be loaded/i.test(requestError);
                     nextSteps.push(
                         /data retention mode .* is not available for this model/i.test(requestError)
                             ? 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".'
-                            : "Next: fix the request failure above, then /bedrock doctor call",
+                            : credentials
+                              ? profile === undefined
+                                  ? 'Next: check the AWS keys or role with "aws sts get-caller-identity", or refresh the keys, then /bedrock doctor call.'
+                                  : `Next: check the keys or role for ${profile} with "aws sts get-caller-identity --profile ${profile}", or refresh the keys, then /bedrock doctor call.`
+                              : "Next: fix the request failure above, then /bedrock doctor call",
                     );
                 }
             }
