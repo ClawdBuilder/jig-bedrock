@@ -466,6 +466,7 @@ export function createBedrockProvider(
             rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, model.arn, model.id);
             const index = models.findIndex((entry) => entry.arn === model.arn);
             if (index >= 0) models.splice(index, 1);
+            guard?.refusalHidden(model.id);
             void register();
             return `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
         };

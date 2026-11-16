@@ -765,9 +765,11 @@ export function registerBedrockSelectionGuard(
     unresolved(): boolean;
     restoreSaved(ctx: ExtensionContext): Promise<void>;
     suppressWarnings(): void;
+    refusalHidden(id: string): void;
 } {
     let unresolvedSavedSelection = false;
     let suppressWarnings = false;
+    let hiddenRefusal: string | undefined;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
@@ -782,6 +784,7 @@ export function registerBedrockSelectionGuard(
         model?.provider === "amazon-bedrock" && typeof model.id === "string" && model.id.startsWith("arn:");
     const ours = (model: { provider?: string; id?: string } | undefined) => isOwnModel(model) || oldRecorded(model);
     const unsupported = (ctx: ExtensionContext) =>
+        hiddenRefusal !== undefined ||
         unresolvedSavedSelection ||
         (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
@@ -842,11 +845,17 @@ export function registerBedrockSelectionGuard(
         if (event.source === "set" || event.source === "cycle") {
             unresolvedSavedSelection = false;
             suppressWarnings = false;
+            hiddenRefusal = undefined;
         }
         if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
+        if (hiddenRefusal !== undefined) {
+            if (typeof ctx.ui.setEditorText === "function") ctx.ui.setEditorText(event.text);
+            ctx.ui.notify(hiddenRefusal, "warning");
+            return { action: "handled" };
+        }
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
         if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
@@ -860,6 +869,9 @@ export function registerBedrockSelectionGuard(
         restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
         suppressWarnings: () => {
             suppressWarnings = true;
+        },
+        refusalHidden: (id: string) => {
+            hiddenRefusal = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
         },
     };
 }
