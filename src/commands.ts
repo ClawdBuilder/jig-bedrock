@@ -16,6 +16,7 @@ import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice, ProfileResolver } from "./profile.ts";
 import { readSettingsDocument, saveBudgetSetting, writeSettingsDocument } from "./settings-write.ts";
 import { formatMoney, monthLabel, type SpendTracker } from "./spend.ts";
+import { recoveryHint } from "./sso.ts";
 
 export interface BedrockCommandSpec {
     name: string;
@@ -526,14 +527,7 @@ export function registerBedrockCommands(
             await sources.login();
             emit(ctx, "Bedrock login", [`${m.ok} Sign-in finished. Models will refresh in the background.`]);
         } catch (error) {
-            const cause = error instanceof Error ? error.message : String(error);
-            const profile = config.profile;
-            emit(ctx, "Bedrock login", [
-                `${m.fail} Sign-in did not finish: ${clean(cause, 140)}`,
-                profile === undefined
-                    ? "Next: choose an AWS profile with /login."
-                    : `Next: run "aws sso login --profile ${profile}" in a terminal, then /bedrock refresh.`,
-            ]);
+            emit(ctx, "Bedrock login", [`${m.fail} ${clean(recoveryHint(error), 200)}`, "Next: /bedrock doctor"]);
         }
     };
     const doctor = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {

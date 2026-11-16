@@ -207,8 +207,8 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
         },
     );
     await withProfile.result.bedrock("login", withProfile.ctx as never);
-    assert.match(withProfile.notices.join("\n"), /Sign-in did not finish: sign-in expired for the selected profile/);
-    assert.match(withProfile.notices.join("\n"), /aws sso login --profile fixture/);
+    assert.match(withProfile.notices.join("\n"), /AWS SSO recovery did not complete/);
+    assert.doesNotMatch(withProfile.notices.join("\n"), /aws sso login --profile fixture/);
 
     const noProfile = harness(
         t,
@@ -222,8 +222,9 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
     );
     await noProfile.result.bedrock("login", noProfile.ctx as never);
     const text = noProfile.notices.join("\n");
-    assert.match(text, /choose an AWS profile with \/login/);
+    assert.match(text, /AWS SSO recovery did not complete/);
     assert.doesNotMatch(text, /my-profile/);
+    assert.doesNotMatch(text, /aws sso login --profile fixture/);
 });
 
 test("one command table feeds help, completions and the typo guard", async (t) => {
@@ -667,4 +668,21 @@ test("typed commands and no-UI mode do not open a menu", async (t) => {
     ]) {
         assert.match(text, new RegExp(expected), expected);
     }
+});
+
+test("/bedrock login prints the recovery hint for a browser failure", async (t) => {
+    const { SsoRecoveryError } = await import("../src/sso.ts");
+    const h = harness(
+        t,
+        {},
+        {
+            login: async () => {
+                throw new SsoRecoveryError("browser");
+            },
+        },
+    );
+    await h.result.bedrock("login", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /browser opener/);
+    assert.doesNotMatch(text, /aws sso login --profile/);
 });

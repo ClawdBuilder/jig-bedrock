@@ -67,8 +67,8 @@ test("a keys profile is refused, and says why /aws-login does not apply", async 
     const { env, dir } = configWith(MODERN);
     try {
         const problem = await profileProblem("keys", { list: async () => ["keys"], env });
-        assert.match(problem ?? "", /keys is not an IAM Identity Center \(SSO\) profile/);
-        assert.match(problem ?? "", /does not need it/);
+        assert.match(problem ?? "", /keys signs in with its own keys or role/);
+        assert.match(problem ?? "", /sts get-caller-identity/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -127,7 +127,7 @@ test("the shared recovery refuses a bad manual profile before any child starts, 
             () => recovery("keys"),
             (error: unknown) => {
                 assert.ok(error instanceof SsoRecoveryError);
-                assert.match((error as Error).message, /not an IAM Identity Center \(SSO\) profile/);
+                assert.match((error as SsoRecoveryError).detail ?? "", /signs in with its own keys or role/);
                 return true;
             },
         );
