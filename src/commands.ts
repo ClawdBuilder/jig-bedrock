@@ -12,44 +12,43 @@ import { isObject } from "./check.ts";
 import { DEFAULTS, FIELDS, loadConfig, type ResolvedConfig } from "./config.ts";
 import { debugEnabled, debugLogPath } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
-import { type Markers, markers } from "./markers.ts";
+import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice, ProfileResolver } from "./profile.ts";
 import { readSettingsDocument, saveBudgetSetting, writeSettingsDocument } from "./settings-write.ts";
 import { formatMoney, monthLabel, type SpendTracker } from "./spend.ts";
 
-export const BEDROCK_SUBCOMMANDS = [
-    "status",
-    "doctor",
-    "models",
-    "refresh",
-    "login",
-    "usage",
-    "budget",
-    "settings",
-    "set",
-    "unset",
-    "migrate",
-    "use",
-    "preset",
-    "help",
+export interface BedrockCommandSpec {
+    name: string;
+    usage: string;
+    summary: string;
+}
+export const BEDROCK_COMMANDS: readonly BedrockCommandSpec[] = [
+    { name: "status", usage: "status", summary: "show the AWS profile, models, spend and budget" },
+    {
+        name: "doctor",
+        usage: "doctor [offline|call]",
+        summary: 'check the set-up; "doctor call" sends one tiny request',
+    },
+    { name: "models", usage: "models", summary: "list the models, routes and prices" },
+    { name: "refresh", usage: "refresh", summary: "read the models from AWS again" },
+    { name: "login", usage: "login", summary: "renew the chosen AWS sign-in" },
+    { name: "usage", usage: "usage [day|week|month]", summary: "show the month, week or day spend by model" },
+    { name: "spend", usage: "spend [day|week|month]", summary: "show spend; the same as usage" },
+    { name: "budget", usage: "budget [amount|off]", summary: "show, set or remove the display budget" },
+    { name: "settings", usage: "settings", summary: "show every setting and its source" },
+    { name: "set", usage: "set <key> <value>", summary: "change one setting in bedrock.json" },
+    { name: "unset", usage: "unset <key>", summary: "remove one setting from bedrock.json" },
+    { name: "migrate", usage: "migrate", summary: "copy a 0.2.x jig.json section once" },
+    { name: "use", usage: "use [name]", summary: "switch presets, or list them" },
+    { name: "preset", usage: "preset add|remove <name>", summary: "add or remove a preset" },
+    { name: "help", usage: "help [name]", summary: "this list" },
 ] as const;
-const HELP: Record<(typeof BEDROCK_SUBCOMMANDS)[number], string> = {
-    status: "show the profile, models, spend and budget",
-    doctor: 'check the set-up; "doctor call" sends one tiny request',
-    models: "list the models, routes and prices",
-    refresh: "read the models from AWS again",
-    login: "renew the chosen AWS sign-in",
-    usage: "show the month, week or day spend by model",
-    budget: "show, set or remove the display budget",
-    settings: "show every setting and its source",
-    set: "change one setting in bedrock.json",
-    unset: "remove one setting from bedrock.json",
-    migrate: "copy a 0.2.x jig.json section once",
-    use: "switch presets, or list them",
-    preset: "add or remove a preset",
-    help: "this list",
-};
-const clean = (value: unknown, max = 100): string =>
+export const BEDROCK_SUBCOMMANDS = BEDROCK_COMMANDS.map((command) => command.name);
+const _HELP: Record<string, string> = Object.fromEntries(
+    BEDROCK_COMMANDS.map((command) => [command.name, command.summary]),
+);
+const usageFor = (name: string): string => BEDROCK_COMMANDS.find((command) => command.name === name)?.usage ?? name;
+const clean = (value: unknown, max = 10_000): string =>
     String(value ?? "")
         // biome-ignore lint/suspicious/noControlCharactersInRegex: strip terminal and bidi controls from a line
         .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, " ")
@@ -120,16 +119,21 @@ export interface BedrockCommandSources {
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
 export function registerBedrockCommands(
-    pi: ExtensionAPI,
+    _pi: ExtensionAPI,
     sources: BedrockCommandSources,
 ): { bedrock: BedrockCommand; completions: (prefix: string) => Array<{ value: string; label: string }> } {
     const { config, spend } = sources;
     const env = sources.env ?? process.env;
+    const m = markers(env);
 
     const usage = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const period = usageText(args);
         if (period === undefined) {
-            emit(ctx, "Bedrock spend", ["✗ Unknown period. Use day, week or month."]);
+            const near = closest(args.trim().toLowerCase(), ["day", "week", "month"]);
+            emit(ctx, "Bedrock spend", [
+                `${m.fail} Unknown period ${clean(args.trim(), 40)}.${near ? ` Did you mean ${near}?` : ""}`,
+                `Usage: /bedrock ${usageFor("usage")}`,
+            ]);
             return;
         }
         await spend.report(period, ctx);
@@ -144,27 +148,26 @@ export function registerBedrockCommands(
             config.monthlyBudgetUsd = undefined;
             const saved = saveBudgetSetting(env, undefined);
             emit(ctx, "Bedrock budget", [
-                saved.ok ? "✓ Budget removed." : `✗ ${saved.error}`,
-                "! Not an AWS limit; no request is blocked.",
+                saved.ok ? `${m.ok} Budget removed.` : `${m.fail} ${saved.error}`,
+                `${m.warn} Not an AWS limit; no request is blocked.`,
             ]);
             spend.updateFooter(ctx);
             return;
         }
         const amount = Number(value);
         if (!Number.isFinite(amount) || amount < 1) {
-            emit(ctx, "Bedrock budget", ["✗ The budget must be at least $1."]);
+            emit(ctx, "Bedrock budget", [`${m.fail} The budget must be at least $1.`]);
             return;
         }
         config.monthlyBudgetUsd = amount;
         const saved = saveBudgetSetting(env, amount);
         emit(ctx, "Bedrock budget", [
-            saved.ok ? `✓ Budget set to ${money(amount)}.` : `✗ ${saved.error}`,
-            "! Not an AWS limit; no request is blocked.",
+            saved.ok ? `${m.ok} Budget set to ${money(amount)}.` : `${m.fail} ${saved.error}`,
+            `${m.warn} Not an AWS limit; no request is blocked.`,
         ]);
         spend.updateFooter(ctx);
     };
     const status = async (ctx: ExtensionCommandContext): Promise<void> => {
-        const m = markers(env);
         const list = sources.models();
         const last = sources.lastChoice?.() ?? { profile: config.profile };
         const view = spend.local("month");
@@ -219,11 +222,10 @@ export function registerBedrockCommands(
     };
     const models = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (args.trim() !== "") {
-            emit(ctx, "Bedrock models", ["✗ Usage: /bedrock models"]);
+            emit(ctx, "Bedrock models", [`${m.fail} Usage: /bedrock ${usageFor("models")}`]);
             return;
         }
-        const list = [...sources.models()].sort((a, b) => a.id.localeCompare(b.id));
-        const m = markers(env);
+        const list = [...sources.models()];
         const regionOf = (model: BedrockModel): string =>
             /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(model.baseUrl)?.[1] ??
             model.arn.split(":")[3] ??
@@ -255,7 +257,6 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        const m = markers(env);
         const shownPath = displayPath(doc.file, env);
         const envNames: Record<string, string> = {
             tagKey: "JIG_BEDROCK_TAG_KEY",
@@ -327,37 +328,41 @@ export function registerBedrockCommands(
     const set = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const match = /^(\S+)\s+(.+)$/.exec(args.trim());
         if (!match) {
-            emit(ctx, "Bedrock settings", ["✗ Usage: /bedrock set <key> <value>"]);
+            emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
             return;
         }
         const key = match[1] as string;
         const value = match[2] as string;
         if (!(FIELDS as readonly string[]).includes(key)) {
-            emit(ctx, "Bedrock settings", [`✗ Unknown setting: ${clean(key, 60)}`]);
+            const near = closest(key, FIELDS);
+            emit(ctx, "Bedrock settings", [
+                `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                `Usage: /bedrock ${usageFor("set")}`,
+            ]);
             return;
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
             emit(ctx, "Bedrock settings", [
-                "✗ Settings file is not valid JSON.",
-                `– File: ${displayPath(doc.file, env)}`,
+                `${m.fail} Settings file is not valid JSON.`,
+                `${m.skip} File: ${displayPath(doc.file, env)}`,
             ]);
             return;
         }
         const parsed = parseSetting(key, value);
         if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
-            emit(ctx, "Bedrock settings", ["✗ The budget must be at least $1."]);
+            emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
             return;
         }
         doc.target[key] = parsed;
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
-            emit(ctx, "Bedrock settings", [`✗ ${candidate.error}`, "Next: /bedrock settings"]);
+            emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
             return;
         }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
-            emit(ctx, "Bedrock settings", [`✗ ${saved.error}`]);
+            emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
         Object.assign(config, candidate.config);
@@ -376,35 +381,39 @@ export function registerBedrockCommands(
             "messagesModels",
         ].includes(key);
         emit(ctx, "Bedrock settings", [
-            `✓ ${key}: ${clean(shown, 55)} (saved to bedrock.json)`,
+            `${m.ok} ${key}: ${clean(shown, 55)} (saved to bedrock.json)`,
             ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
         ]);
     };
     const unset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const key = args.trim();
         if (!(FIELDS as readonly string[]).includes(key)) {
+            const near = key === "" ? undefined : closest(key, FIELDS);
             emit(ctx, "Bedrock settings", [
-                key === "" ? "✗ Usage: /bedrock unset <key>" : `✗ Unknown setting: ${clean(key, 60)}`,
+                key === ""
+                    ? `${m.fail} Usage: /bedrock ${usageFor("unset")}`
+                    : `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                ...(key === "" ? [] : [`Usage: /bedrock ${usageFor("unset")}`]),
             ]);
             return;
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
             emit(ctx, "Bedrock settings", [
-                "✗ Settings file is not valid JSON.",
-                `– File: ${displayPath(doc.file, env)}`,
+                `${m.fail} Settings file is not valid JSON.`,
+                `${m.skip} File: ${displayPath(doc.file, env)}`,
             ]);
             return;
         }
         delete doc.target[key];
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
-            emit(ctx, "Bedrock settings", [`✗ ${candidate.error}`, "Next: /bedrock settings"]);
+            emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
             return;
         }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
-            emit(ctx, "Bedrock settings", [`✗ ${saved.error}`]);
+            emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
         Object.assign(config, candidate.config);
@@ -422,18 +431,22 @@ export function registerBedrockCommands(
             "messagesModels",
         ].includes(key);
         emit(ctx, "Bedrock settings", [
-            `✓ ${key}: unset (saved to bedrock.json)`,
+            `${m.ok} ${key}: unset (saved to bedrock.json)`,
             ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
         ]);
     };
-    const refresh = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const refresh = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() !== "") {
+            emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("refresh")}`]);
+            return;
+        }
         if (!sources.refresh) {
-            emit(ctx, "Bedrock refresh", ["✗ No catalog refresh is available in this install."]);
+            emit(ctx, "Bedrock refresh", [`${m.fail} No catalog refresh is available in this install.`]);
             return;
         }
         const before = new Set(sources.models().map((model) => model.id));
         const selectedBefore = ctx.model?.provider === "jig-bedrock" ? ctx.model.id : undefined;
-        emit(ctx, "Bedrock refresh", ["– Reading the models from AWS…"]);
+        if (ctx.hasUI && !toStdout(ctx)) emit(ctx, "Bedrock refresh", [`${m.skip} Reading the models from AWS…`]);
         const status = await sources.refresh();
         const after = sources.models();
         const added = after.filter((model) => !before.has(model.id)).length;
@@ -441,13 +454,13 @@ export function registerBedrockCommands(
         if (status !== "ok") {
             const advice = sources.discoveryStatus?.() ?? status;
             emit(ctx, "Bedrock refresh", [
-                `✗ ${sources.failure?.() ?? "The models could not be read from AWS."}`,
+                `${m.fail} ${sources.failure?.() ?? "The models could not be read from AWS."}`,
                 `Next: ${discoveryHelp(advice)}`,
             ]);
             return;
         }
         const rows = [
-            `✓ ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
+            `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
         ];
         if (selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore))
             rows.push("Choose /model if your selection was removed.");
@@ -455,17 +468,17 @@ export function registerBedrockCommands(
     };
     const login = async (ctx: ExtensionCommandContext): Promise<void> => {
         if (!sources.login) {
-            emit(ctx, "Bedrock login", ["✗ No sign-in is available in this install."]);
+            emit(ctx, "Bedrock login", [`${m.fail} No sign-in is available in this install.`]);
             return;
         }
         try {
             await sources.login();
-            emit(ctx, "Bedrock login", ["✓ Sign-in finished. Models will refresh in the background."]);
+            emit(ctx, "Bedrock login", [`${m.ok} Sign-in finished. Models will refresh in the background.`]);
         } catch (error) {
             const cause = error instanceof Error ? error.message : String(error);
             const profile = config.profile;
             emit(ctx, "Bedrock login", [
-                `✗ Sign-in did not finish: ${clean(cause, 140)}`,
+                `${m.fail} Sign-in did not finish: ${clean(cause, 140)}`,
                 profile === undefined
                     ? "Next: choose an AWS profile with /login."
                     : `Next: run "aws sso login --profile ${profile}" in a terminal, then /bedrock refresh.`,
@@ -475,19 +488,18 @@ export function registerBedrockCommands(
     const doctor = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const words = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
         if (words.some((word) => word !== "offline" && word !== "call")) {
-            emit(ctx, "Bedrock doctor", ["✗ Usage: /bedrock doctor [offline|call]"]);
+            emit(ctx, "Bedrock doctor", [`${m.fail} Usage: /bedrock ${usageFor("doctor")}`]);
             return;
         }
         const offline = words.includes("offline");
         const call = words.includes("call");
         if (call) noticeLine(ctx, "This sends one tiny request (a fraction of a cent).");
-        if (!offline) emit(ctx, "Bedrock doctor", ["– Checking AWS…"]);
+        if (!offline && ctx.hasUI && !toStdout(ctx)) emit(ctx, "Bedrock doctor", [`${m.skip} Checking AWS…`]);
         const health = await (sources.check ?? checkLocalDependencies)({
             signal: ctx.signal,
             env,
             timeout: 15_000,
         });
-        const m = markers(env);
         const rows: string[] = [];
         if (config.presetUnknown !== undefined)
             rows.push(
@@ -556,6 +568,7 @@ export function registerBedrockCommands(
         );
         if (debugEnabled(env, config)) rows.push(`${m.skip} Debug log: ${debugLogPath(env)}`);
         let requestOk = false;
+        let requestError = "";
         if (call) {
             if (!sources.doctorCall) rows.push(`${m.fail} Request: not available in this install`);
             else {
@@ -566,7 +579,8 @@ export function registerBedrockCommands(
                         `${m.ok} Request: ${result.route} route · ${(result.ms / 1000).toFixed(1)} s · cache read ${result.cacheRead}, wrote ${result.cacheWrite}`,
                     );
                 } catch (error) {
-                    rows.push(`${m.fail} Request: ${error instanceof Error ? error.message : String(error)}`);
+                    requestError = error instanceof Error ? error.message : String(error);
+                    rows.push(`${m.fail} Request: ${requestError}`);
                 }
             }
         }
@@ -585,7 +599,11 @@ export function registerBedrockCommands(
                 return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status)}`;
             }
             if (failed.includes("Spend command")) return "Next: see docs/spend-command.md";
-            if (failed.includes("Request")) return "Next: fix the request failure above, then /bedrock doctor call";
+            if (failed.includes("Request")) {
+                if (/data retention mode .* is not available for this model/i.test(requestError))
+                    return 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".';
+                return "Next: fix the request failure above, then /bedrock doctor call";
+            }
             return "Next: /bedrock doctor";
         })();
         if (problems === 0)
@@ -600,13 +618,16 @@ export function registerBedrockCommands(
     };
     const use = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const name = args.trim();
+        if (name.split(/\s+/).length > 1) {
+            emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("use")}`]);
+            return;
+        }
         if (name === "") {
             const list = sources.presetList?.() ?? [];
             if (list.length === 0) {
-                emit(ctx, "Bedrock presets", ["– No presets. Add one with /bedrock preset add <name>."]);
+                emit(ctx, "Bedrock presets", [`${m.skip} No presets. Add one with /bedrock preset add <name>.`]);
                 return;
             }
-            const m = markers(env);
             emit(ctx, "Bedrock presets", [
                 ...list.map((entry) => {
                     const active = entry.active ? " · active" : "";
@@ -618,7 +639,7 @@ export function registerBedrockCommands(
             return;
         }
         if (!sources.usePreset) {
-            emit(ctx, "Bedrock presets", ["✗ This install cannot switch presets."]);
+            emit(ctx, "Bedrock presets", [`${m.fail} This install cannot switch presets.`]);
             return;
         }
         await sources.usePreset(name, ctx);
@@ -627,11 +648,11 @@ export function registerBedrockCommands(
         const [action = "", name = ""] = args.trim().split(/\s+/);
         if (action === "add") {
             if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
-                emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset add <name>"]);
+                emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
                 return;
             }
             if (!sources.presetAdd) {
-                emit(ctx, "Bedrock presets", ["✗ This install cannot add presets."]);
+                emit(ctx, "Bedrock presets", [`${m.fail} This install cannot add presets.`]);
                 return;
             }
             await sources.presetAdd(name, ctx);
@@ -639,43 +660,44 @@ export function registerBedrockCommands(
         }
         if (action === "remove") {
             if (name === "") {
-                emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset remove <name>"]);
+                emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
                 return;
             }
             if (!sources.presetRemove) {
-                emit(ctx, "Bedrock presets", ["✗ This install cannot remove presets."]);
+                emit(ctx, "Bedrock presets", [`${m.fail} This install cannot remove presets.`]);
                 return;
             }
             await sources.presetRemove(name, ctx);
             return;
         }
-        emit(ctx, "Bedrock presets", ["✗ Usage: /bedrock preset add|remove <name>"]);
+        emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
     };
-    const help = async (ctx: ExtensionCommandContext): Promise<void> => {
-        emit(
-            ctx,
-            "Bedrock commands",
-            BEDROCK_SUBCOMMANDS.map((name) => `${name.padEnd(10)} ${HELP[name]}`),
-        );
+    const help = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        const wanted = args.trim();
+        if (wanted === "") {
+            emit(
+                ctx,
+                "Bedrock commands",
+                BEDROCK_COMMANDS.map((command) => `${command.name.padEnd(10)} ${command.summary}`),
+            );
+            return;
+        }
+        const command = BEDROCK_COMMANDS.find((entry) => entry.name === wanted);
+        if (command === undefined) {
+            const near = closest(wanted);
+            emit(ctx, "Bedrock commands", [
+                `${m.fail} Unknown command ${clean(wanted, 40)}.${near ? ` Did you mean ${near}?` : ""}`,
+                `Usage: /bedrock help [name]`,
+            ]);
+            return;
+        }
+        emit(ctx, "Bedrock commands", [`Usage: /bedrock ${command.usage}`, command.summary]);
     };
-    const names = [
-        "status",
-        "doctor",
-        "models",
-        "refresh",
-        "login",
-        "usage",
-        "budget",
-        "settings",
-        "set",
-        "unset",
-        "migrate",
-        "help",
-    ];
-    const closest = (value: string): string | undefined => {
+    const names = BEDROCK_SUBCOMMANDS;
+    const closest = (value: string, choices: readonly string[] = names): string | undefined => {
         let best: string | undefined;
         let distance = Infinity;
-        for (const name of names) {
+        for (const name of choices) {
             const a = value;
             const b = name;
             const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -714,6 +736,10 @@ export function registerBedrockCommands(
         switch (command) {
             case "":
             case "status":
+                if (command !== "" && tail !== "") {
+                    emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("status")}`]);
+                    return;
+                }
                 await status(ctx);
                 return;
             case "doctor":
@@ -726,15 +752,24 @@ export function registerBedrockCommands(
                 await refresh(tail, ctx);
                 return;
             case "login":
+                if (tail !== "") {
+                    emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("login")}`]);
+                    return;
+                }
                 await login(ctx);
                 return;
             case "usage":
+            case "spend":
                 await usage(tail, ctx);
                 return;
             case "budget":
                 await budget(tail, ctx);
                 return;
             case "settings":
+                if (tail !== "") {
+                    emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("settings")}`]);
+                    return;
+                }
                 await settings(ctx);
                 return;
             case "set":
@@ -750,18 +785,21 @@ export function registerBedrockCommands(
                 await preset(tail, ctx);
                 return;
             case "migrate":
+                if (tail !== "") {
+                    emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("migrate")}`]);
+                    return;
+                }
                 if (sources.migrate) await sources.migrate("migrate", ctx);
-                else emit(ctx, "Bedrock", ["! No 0.2.x settings to migrate."]);
+                else emit(ctx, "Bedrock", [`${m.warn} No 0.2.x settings to migrate.`]);
                 return;
             case "help":
-                await help(ctx);
+                await help(tail, ctx);
                 return;
             default: {
                 const near = closest(command);
-                await help(ctx);
                 emit(ctx, "Bedrock commands", [
-                    `✗ Unknown command ${clean(command)}.${near ? ` Did you mean ${near}?` : ""}`,
-                    ...BEDROCK_SUBCOMMANDS.map((name) => `${name.padEnd(10)} ${HELP[name]}`),
+                    `${m.fail} Unknown command ${clean(command)}.${near ? ` Did you mean ${near}?` : ""}`,
+                    "Next: /bedrock help",
                 ]);
             }
         }
@@ -787,52 +825,12 @@ export function registerBedrockCommands(
                 .map((name) => ({ value: `preset remove ${name}`, label: name }));
         return [];
     };
-    const legacy =
-        (mapped: BedrockCommand, oldName: string): BedrockCommand =>
-        async (args, ctx) => {
-            const line = `This name goes away in the next release: use /bedrock ${oldName}.`;
-            if (ctx.hasUI) {
-                const proxy = {
-                    ...ctx,
-                    ui: {
-                        ...ctx.ui,
-                        notify: (text: string, type: "info" | "warning" | "error") =>
-                            ctx.ui.notify(`${text}\n${line}`, type),
-                    },
-                } as ExtensionCommandContext;
-                await mapped(args, proxy);
-            } else {
-                await mapped(args, ctx);
-                if (ctx.mode === "print") writeSync(1, `${line}\n`);
-                else process.stdout.write(`${line}\n`);
-            }
-        };
-    pi.registerCommand("bedrock-usage", {
-        description: "Old name for /bedrock usage",
-        handler: legacy((args, ctx) => usage(args, ctx), "usage"),
-    });
-    pi.registerCommand("bedrock-stats", {
-        description: "Old name for /bedrock usage",
-        handler: legacy((args, ctx) => usage(args, ctx), "usage"),
-    });
-    pi.registerCommand("bedrock-profiles", {
-        description: "Old name for /bedrock models",
-        handler: legacy((args, ctx) => models(args, ctx), "models"),
-    });
-    pi.registerCommand("bedrock-doctor", {
-        description: "Old name for /bedrock doctor",
-        handler: legacy((args, ctx) => doctor(args, ctx), "doctor"),
-    });
-    pi.registerCommand("bedrock-refresh", {
-        description: "Old name for /bedrock refresh",
-        handler: legacy((args, ctx) => refresh(args, ctx), "refresh"),
-    });
     return { bedrock: full, completions };
 }
 
 /** `/bedrock` still exists with broken settings: status, doctor, settings, set and unset can repair it without a reload. */
 export function registerBrokenCommands(
-    pi: ExtensionAPI,
+    _pi: ExtensionAPI,
     options: {
         file: string;
         error: string;
@@ -893,8 +891,8 @@ export function registerBrokenCommands(
                     if (!(FIELDS as readonly string[]).includes(key)) {
                         emit(ctx, "Bedrock settings", [
                             key === ""
-                                ? `${m.fail} Usage: /bedrock unset <key>`
-                                : `${m.fail} Unknown setting: ${clean(key, 60)}`,
+                                ? `${m.fail} Usage: /bedrock ${usageFor("unset")}`
+                                : `${m.fail} Unknown setting ${clean(key, 60)}`,
                         ]);
                         return;
                     }
@@ -916,13 +914,13 @@ export function registerBrokenCommands(
                 }
                 const match = /^(\S+)\s+(.+)$/.exec(tail);
                 if (!match) {
-                    emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock set <key> <value>`]);
+                    emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
                     return;
                 }
                 const key = match[1] as string;
                 const value = match[2] as string;
                 if (!(FIELDS as readonly string[]).includes(key)) {
-                    emit(ctx, "Bedrock settings", [`${m.fail} ${key} is not a setting.`]);
+                    emit(ctx, "Bedrock settings", [`${m.fail} Unknown setting ${clean(key, 60)}`]);
                     return;
                 }
                 const doc = readSettingsDocument(options.env);
@@ -953,60 +951,19 @@ export function registerBrokenCommands(
                 return;
             }
             case "help":
-                emit(ctx, "Bedrock commands", [
-                    "status · doctor [offline|call] · models · refresh · login",
-                    "usage [day|week|month] · budget [amount|off]",
-                    "settings · set <key> <value> · unset <key>",
-                    "migrate · help",
-                ]);
+                emit(
+                    ctx,
+                    "Bedrock commands",
+                    BEDROCK_COMMANDS.map((command) => `${command.name.padEnd(10)} ${command.summary}`),
+                );
                 return;
             case "migrate":
                 if (options.migrate) await options.migrate("migrate", ctx);
-                else emit(ctx, "Bedrock", ["! No 0.2.x settings to migrate."]);
+                else emit(ctx, "Bedrock", [`${m.warn} No 0.2.x settings to migrate.`]);
                 return;
             default:
                 emit(ctx, "Bedrock", [`${m.fail} Unknown command while the settings are broken.`, ...errorRows]);
         }
     };
-    const legacy =
-        (mapped: BedrockCommand, name: string): BedrockCommand =>
-        async (args, ctx) => {
-            const line = `This name goes away in the next release: use /bedrock ${name}.`;
-            if (ctx.hasUI) {
-                const proxy = {
-                    ...ctx,
-                    ui: {
-                        ...ctx.ui,
-                        notify: (text: string, type: "info" | "warning" | "error") =>
-                            ctx.ui.notify(`${text}\n${line}`, type),
-                    },
-                } as ExtensionCommandContext;
-                await mapped(args, proxy);
-            } else {
-                await mapped(args, ctx);
-                if (ctx.mode === "print") writeSync(1, `${line}\n`);
-                else process.stdout.write(`${line}\n`);
-            }
-        };
-    pi.registerCommand("bedrock-usage", {
-        description: "Old name for /bedrock usage",
-        handler: legacy((a, c) => fallback(`usage ${a}`, c), "usage"),
-    });
-    pi.registerCommand("bedrock-stats", {
-        description: "Old name for /bedrock usage",
-        handler: legacy((a, c) => fallback(`usage ${a}`, c), "usage"),
-    });
-    pi.registerCommand("bedrock-profiles", {
-        description: "Old name for /bedrock models",
-        handler: legacy((a, c) => fallback(`models ${a}`, c), "models"),
-    });
-    pi.registerCommand("bedrock-doctor", {
-        description: "Old name for /bedrock doctor",
-        handler: legacy((a, c) => fallback(`doctor ${a}`, c), "doctor"),
-    });
-    pi.registerCommand("bedrock-refresh", {
-        description: "Old name for /bedrock refresh",
-        handler: legacy((a, c) => fallback(`refresh ${a}`, c), "refresh"),
-    });
     return fallback;
 }

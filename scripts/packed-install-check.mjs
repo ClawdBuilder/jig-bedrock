@@ -368,7 +368,7 @@ async function main() {
             .map((c) => c.name)
             .sort();
         console.log(`\nextension commands: ${names.join(", ")}`);
-        for (const name of ["bedrock", "bedrock-refresh"]) {
+        for (const name of ["bedrock"]) {
             const found = commands.find((c) => c.name === name);
             check(found?.source === "extension", `Pi lists /${name} as an extension command`);
             check(
@@ -377,6 +377,15 @@ async function main() {
                 `/${name} comes from the installed package (${found?.sourceInfo?.path})`,
             );
         }
+        for (const name of [
+            "bedrock-refresh",
+            "bedrock-doctor",
+            "bedrock-usage",
+            "bedrock-stats",
+            "bedrock-profiles",
+            "aws-login",
+        ])
+            check(!commands.some((c) => c.name === name), `Pi does not list the removed /${name}`);
         // Only what Pi said after the command list, so a notice Pi shows at start-up is not taken for the answer to /bedrock.
         const afterList = result.lines.slice(result.lines.indexOf(response) + 1);
         const notices = afterList.filter((m) => m.type === "extension_ui_request" && m.method === "notify");

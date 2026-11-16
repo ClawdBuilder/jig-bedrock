@@ -227,11 +227,76 @@ test("the second AWS-defined profile gets a short geography id and keeps its old
         const models = discoveredProfiles(catalog, "").available;
         assert.deepEqual(
             models.map((model) => model.id),
-            ["claude-sonnet-5-5", "claude-sonnet-5-5-global", "claude-sonnet-5-5-eu"],
+            ["claude-sonnet-5-5-global", "claude-sonnet-5-5", "claude-sonnet-5-5-eu"],
         );
-        const global = models[1]!;
+        const global = models[0]!;
         assert.deepEqual(global.aliases, ["claude-sonnet-5-5--us-east-1--global.anthropic.claude-sonnet-5-5"]);
     } finally {
         rmSync(folder, { recursive: true, force: true });
+    }
+});
+
+function orderCatalog(ids: string[]): Catalog {
+    const region = "us-east-1";
+    return {
+        schema: 1,
+        mode: "system",
+        aws_profile: "fixture",
+        account_id: "123456789012",
+        regions: [region],
+        fetched_at: Math.floor(Date.now() / 1000),
+        profiles: ids.map((id, n) => ({
+            arn: `arn:aws:bedrock:${region}:123456789012:${id.startsWith("amazon.") ? "application-inference-profile/p" + n : `inference-profile/global.${id}`}`,
+            profile_name: `Fixture ${n}`,
+            foundation_model_id: id,
+            region,
+            ...(id.startsWith("amazon.") ? { kind: "application" as const } : { kind: "system" as const }),
+        })),
+    };
+}
+
+test("a Fable profile first in AWS order still registers a Sonnet model first", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const empty = mkdtempSync(path.join(tmpdir(), "jig-bedrock-order-"));
+    try {
+        const { available } = discoveredProfiles(
+            orderCatalog(["anthropic.claude-fable-5", "anthropic.claude-opus-5-5", "anthropic.claude-sonnet-5-5"]),
+            empty,
+        );
+        assert.match(available[0]?.id ?? "", /sonnet/);
+    } finally {
+        rmSync(empty, { recursive: true, force: true });
+    }
+});
+
+test("Fable comes before a non-Claude application profile", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const empty = mkdtempSync(path.join(tmpdir(), "jig-bedrock-order-"));
+    try {
+        const { available } = discoveredProfiles(
+            orderCatalog(["amazon.nova-pro-v1:0", "anthropic.claude-fable-5"]),
+            empty,
+        );
+        assert.match(available[0]?.foundationModelId ?? "", /fable/);
+        assert.ok(available.some((model) => model.foundationModelId.includes("nova")));
+    } finally {
+        rmSync(empty, { recursive: true, force: true });
+    }
+});
+
+test("with no Sonnet, the newest Opus is first", async () => {
+    const { builtinProviders } = await hostImport("@earendil-works/pi-ai/providers/all");
+    usePiRegistry(builtinProviders().find((provider: { id: string }) => provider.id === "amazon-bedrock"));
+    const empty = mkdtempSync(path.join(tmpdir(), "jig-bedrock-order-"));
+    try {
+        const { available } = discoveredProfiles(
+            orderCatalog(["anthropic.claude-opus-4-1", "anthropic.claude-opus-5-5"]),
+            empty,
+        );
+        assert.match(available[0]?.foundationModelId ?? "", /opus-5-5/);
+    } finally {
+        rmSync(empty, { recursive: true, force: true });
     }
 });

@@ -101,8 +101,8 @@ function probe(tool: Tool, minimum: number[] | undefined, options: CheckOptions)
             if (bytes > 16_384) finish({ status: "overflow" });
             else output.push(chunk);
         };
-        child.stdout!.on("data", collect);
-        child.stderr!.on("data", collect);
+        child.stdout?.on("data", collect);
+        child.stderr?.on("data", collect);
         child.on("error", (error: NodeJS.ErrnoException) =>
             finish({ status: error.code === "ENOENT" || error.code === "EACCES" ? "missing" : "unavailable" }),
         );

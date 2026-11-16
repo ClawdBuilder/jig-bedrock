@@ -218,3 +218,19 @@ test("every doctor block in troubleshooting.md is the block the code prints", as
     });
     assert.ok(page.includes(block(none)), block(none));
 });
+
+test("a long doctor row is shown whole, not cut at 100 characters", async (t) => {
+    const row = `Identity: ${"x".repeat(140)}`;
+    const text = await doctor(t, { aws: [{ ok: true, text: row }] });
+    assert.ok(text.includes(row), "the row was cut");
+});
+
+test("a Fable data-retention refusal gets the model-specific next step", async (t) => {
+    const body =
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":"data retention mode \'default\' is not available for this model"}}';
+    const text = await doctor(t, { args: "doctor call", call: { ok: false, error: body } });
+    assert.match(text, /Request: 400/);
+    assert.match(text, /data retention mode/);
+    assert.match(text, /needs an AWS account data-retention setting/);
+    assert.match(text, /A Fable model is refused/);
+});

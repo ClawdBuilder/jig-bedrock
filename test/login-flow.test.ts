@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConfigSection } from "../src/aws-config-write.ts";
 import { type LoginFlowOptions, runLoginFlow } from "../src/login-flow.ts";
-import type { DiscoverySettings, SaveDiscoveryResult } from "../src/settings-write.ts";
+import type { DiscoverySettings } from "../src/settings-write.ts";
 
 interface Prompt {
     type: string;
@@ -14,7 +14,7 @@ interface Prompt {
 
 const isGuidance = (prompt: Prompt): boolean =>
     prompt.message?.includes("Run this in a terminal") === true ||
-    prompt.message?.includes("Add a profile to ~/.aws/config") === true;
+    prompt.message?.includes("Add an AWS profile to ~/.aws/config") === true;
 
 function interaction(respond: (prompt: Prompt) => string) {
     const controller = new AbortController();

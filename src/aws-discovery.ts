@@ -63,7 +63,7 @@ export function discoveryHelp(status: Status): string {
         case "sso_expired":
             return "Run /bedrock login, finish browser sign-in, then /bedrock refresh.";
         case "permission_denied":
-            return "Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured profile; then /bedrock refresh.";
+            return "Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured AWS profile; then /bedrock refresh.";
         case "configuration":
             return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
         case "credentials":
@@ -304,7 +304,7 @@ export function createAwsDiscovery(
                     if (match && !config.regions.includes(region)) {
                         explicitErrors.push({
                             profile: entry,
-                            message: `it is in ${region}; add ${region} to bedrock.regions`,
+                            message: `it is in ${region}; add ${region} to regions`,
                         });
                         continue;
                     }
@@ -440,7 +440,7 @@ export function createAwsDiscovery(
             if (mode === "tag" && profiles.length === 0) {
                 const active = activeKey === undefined ? "" : ` and ${activeKey}=${activeValue}`;
                 warnings.push(
-                    `No application inference profiles matched ${tagKeyFor()}=${tagValueFor()}${active} in ${config.regions.join(", ")}. Check bedrock.tagKey/tagValue.`,
+                    `No application inference profiles matched ${tagKeyFor()}=${tagValueFor()}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.`,
                 );
             }
             if (mode === "system" && profiles.length === 0)

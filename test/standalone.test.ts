@@ -17,8 +17,6 @@ import { category, createAwsDiscovery, discoveryHelp, type Runner } from "../src
 import { bedrockStream, discoveredProfiles, registerBedrockSelectionGuard, usePiRegistry } from "../src/catalog.ts";
 import { checkBedrock, loadConfig } from "../src/config.ts";
 import { createRecovery } from "../src/login.ts";
-import { createBedrockProvider } from "../src/provider.ts";
-import { hostImport } from "./support/pi-host.ts";
 import { elsewhere } from "./support/wsl.ts";
 
 type Hook = (...args: any[]) => any;
@@ -190,8 +188,8 @@ test("config precedence and invalid or missing teams fail closed without throwin
         [plain.team, plain.profile, plain.regions, plain.monthlyBudgetUsd],
         ["file-team", "file-profile", ["us-west-2"], 25],
     );
-    assert.deepEqual(resolveConfig({ team: "t" })!.ssoLoginCommand, ["aws", "sso", "login", "--profile", "{profile}"]);
-    assert.equal(resolveConfig({ team: "t" })!.profile, undefined);
+    assert.deepEqual(resolveConfig({ team: "t" })?.ssoLoginCommand, ["aws", "sso", "login", "--profile", "{profile}"]);
+    assert.equal(resolveConfig({ team: "t" })?.profile, undefined);
     for (const team of ["", " ", "bad\nteam", "x".repeat(257)])
         assert.equal(resolveConfig(undefined, { JIG_BEDROCK_TEAM: team }), undefined);
     assert.equal(
@@ -235,15 +233,9 @@ test("the bedrock section is checked: each problem names its key and none repeat
         [],
     );
     assert.deepEqual(errors({}), []);
-    assert.match(errors({ team: "t", typo: "private-canary" }).join("\n"), /bedrock\.typo is not a known field/);
-    assert.match(
-        errors({ team: "t", profile: "bad profile" }).join("\n"),
-        /bedrock\.profile must be an AWS profile name/,
-    );
-    assert.match(
-        errors({ team: "t", regions: [] }).join("\n"),
-        /bedrock\.regions must contain 1-16 unique AWS region names/,
-    );
+    assert.match(errors({ team: "t", typo: "private-canary" }).join("\n"), /typo is not a known field/);
+    assert.match(errors({ team: "t", profile: "bad profile" }).join("\n"), /profile must be an AWS profile name/);
+    assert.match(errors({ team: "t", regions: [] }).join("\n"), /regions must contain 1-16 unique AWS region names/);
     assert.match(
         errors({ team: "t", monthlyBudgetUsd: 0 }).join("\n"),
         /monthlyBudgetUsd must be a positive finite number/,
@@ -252,7 +244,7 @@ test("the bedrock section is checked: each problem names its key and none repeat
         errors({ team: "t", ssoLoginCommand: ["aws", "{token}"] }).join("\n"),
         /ssoLoginCommand must be an argv array/,
     );
-    assert.match(errors("private-canary").join("\n"), /bedrock must be an object/);
+    assert.match(errors("private-canary").join("\n"), /settings must be an object/);
     for (const raw of [
         { team: "private-canary\n" },
         { team: "t", profile: "private-canary\n" },
@@ -404,11 +396,11 @@ test("removed selection blocks after Pi changes model until a user chooses", () 
     );
     const ctx = { model: { provider: "other", id: "other" }, ui: { notify() {} } };
     guard.blockUntilChoice();
-    assert.equal(hooks.get("input")!({}, ctx).action, "handled");
-    hooks.get("model_select")!({ source: "restore" }, ctx);
-    assert.equal(hooks.get("input")!({}, ctx).action, "handled");
-    hooks.get("model_select")!({ source: "set" }, ctx);
-    assert.equal(hooks.get("input")!({}, ctx).action, "continue");
+    assert.equal(hooks.get("input")?.({}, ctx).action, "handled");
+    hooks.get("model_select")?.({ source: "restore" }, ctx);
+    assert.equal(hooks.get("input")?.({}, ctx).action, "handled");
+    hooks.get("model_select")?.({ source: "set" }, ctx);
+    assert.equal(hooks.get("input")?.({}, ctx).action, "continue");
 });
 
 test("saved default comes from the active Pi home and warns once when unavailable", async (t) => {
@@ -434,7 +426,7 @@ test("saved default comes from the active Pi home and warns once when unavailabl
         modelRegistry: { find: () => undefined },
         ui: { notify: (s: string) => notices.push(s) },
     };
-    await hooks.get("session_start")!({}, ctx);
+    await hooks.get("session_start")?.({}, ctx);
     assert.equal(notices.length, 1);
     assert.match(notices[0]!, /Saved Bedrock model is unavailable/);
     assert.match(notices[0]!, /for your profiles/);
@@ -454,7 +446,7 @@ test("catalog rejects symlinks, loose permissions, duplicate ARNs and future tim
     for (const changes of [
         { fetched_at: -1 },
         { fetched_at: Math.floor(Date.now() / 1000) + 10 },
-        { profiles: [source.load()!.profiles[0], source.load()!.profiles[0]] },
+        { profiles: [source.load()?.profiles[0], source.load()?.profiles[0]] },
     ]) {
         writeFileSync(file, JSON.stringify({ ...JSON.parse(cached), ...changes }));
         assert.equal(source.load(), undefined);
@@ -489,14 +481,14 @@ test("catalog uses exact Pi registry metadata and marks a model with no price", 
         ],
     } as any);
     const found = discoveredProfiles(source.load(), dir);
-    assert.equal(found.available[0]!.rateSource, "Pi registry");
-    assert.equal(found.available[0]!.contextWindow, 2000);
-    assert.equal(found.available[0]!.cost.input, 1);
+    assert.equal(found.available[0]?.rateSource, "Pi registry");
+    assert.equal(found.available[0]?.contextWindow, 2000);
+    assert.equal(found.available[0]?.cost.input, 1);
     assert.doesNotMatch(JSON.stringify(found), /credential-canary|apiKey|token/);
     usePiRegistry({ getModels: () => [] } as any);
     const unknown = discoveredProfiles(source.load(), dir);
     assert.equal(unknown.available.length, 0);
-    assert.match(unknown.unavailable[0]!.reason, /update Pi/);
+    assert.match(unknown.unavailable[0]?.reason, /update Pi/);
 });
 test("parallel failed SSO login does not report successful recovery", async (t) => {
     const dir = directory(t),
@@ -682,7 +674,7 @@ test("system mode lists once per configured region and keeps profiles from both"
 
 test("an explicit access-denied entry is named, the others still load, and ids and ARNs mix", async (t) => {
     const id = `arn:aws:bedrock:us-east-1:${account}:application-inference-profile/ok`;
-    const id2 = `arn:aws:bedrock:us-east-1:${account}:application-inference-profile/ok2`;
+    const _id2 = `arn:aws:bedrock:us-east-1:${account}:application-inference-profile/ok2`;
     const runner: Runner = async (_program, args) => {
         if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
         const ref = args[args.indexOf("--inference-profile-identifier") + 1]!;

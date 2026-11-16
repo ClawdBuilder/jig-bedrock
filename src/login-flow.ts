@@ -4,7 +4,6 @@
 import type { ApiKeyCredential, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { type ConfigSection, type ConfigWriteResult, renderSections } from "./aws-config-write.ts";
 import type { VerifyResult } from "./aws-profile.ts";
-import { isSsoProfile } from "./aws-profile.ts";
 import { profilePattern } from "./config.ts";
 import type { ListProfiles } from "./profile.ts";
 import type { DiscoverySettings, SaveDiscoveryResult } from "./settings-write.ts";
@@ -229,8 +228,8 @@ export async function runLoginFlow(
             // they say the profile exists. A notify would vanish when the pick-list replaced it.
             const guidance =
                 method === "keys"
-                    ? "Run this in a terminal, then come back:\n\n  aws configure --profile my-profile\n\nIt asks for the access key ID and secret access key and writes them to ~/.aws/credentials; the region and output go to ~/.aws/config. jig-bedrock never asks for or stores them.\n\nWhen the profile exists, continue."
-                    : "Add a profile to ~/.aws/config, then come back:\n\n  [profile my-profile]\n  role_arn = arn:aws:iam::123456789012:role/MyRole\n  source_profile = my-source-profile\n  region = us-east-1\n\nsource_profile must already exist. The AWS CLI obtains and caches the role's temporary credentials (and asks for an MFA code when mfa_serial is set); jig-bedrock never asks for it.\n\nWhen the profile exists, continue.";
+                    ? "Run this in a terminal, then come back:\n\n  aws configure --profile my-profile\n\nIt asks for the access key ID and secret access key and writes them to ~/.aws/credentials; the region and output go to ~/.aws/config. jig-bedrock never asks for or stores them.\n\nWhen the AWS profile exists, continue."
+                    : "Add an AWS profile to ~/.aws/config, then come back:\n\n  [profile my-profile]\n  role_arn = arn:aws:iam::123456789012:role/MyRole\n  source_profile = my-source-profile\n  region = us-east-1\n\nsource_profile must already exist. The AWS CLI obtains and caches the role's temporary credentials (and asks for an MFA code when mfa_serial is set); jig-bedrock never asks for it.\n\nWhen the AWS profile exists, continue.";
             const ready = await interaction.prompt({
                 type: "select",
                 message: guidance,
