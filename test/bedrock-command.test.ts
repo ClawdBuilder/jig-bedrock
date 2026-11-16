@@ -191,6 +191,7 @@ test("the status screen is one whole block with no spend-command row", async (t)
             "Bedrock · ready",
             "✓ AWS profile: fixture · signed in",
             "✓ Models: 1 loaded",
+            "– /logout does not remove bedrock.json; run /bedrock unset profile.",
             "– Selected model: none chosen",
             "✓ Spend: Nov $0.00 of $100",
         ].join("\n"),
@@ -223,7 +224,8 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
     );
     await noProfile.result.bedrock("login", noProfile.ctx as never);
     const text = noProfile.notices.join("\n");
-    assert.match(text, /AWS SSO recovery did not complete/);
+    assert.match(text, /No AWS profile is chosen/);
+    assert.match(text, /Next: \/login and choose Amazon Bedrock/);
     assert.doesNotMatch(text, /my-profile/);
     assert.doesNotMatch(text, /aws sso login --profile fixture/);
 });
@@ -837,4 +839,27 @@ test("broken settings repair refuses an unclear boolean without writing", async 
     await handler("set debug maybe", h.ctx as never);
     assert.equal(readFileSync(file, "utf8"), before);
     assert.match(h.notices.at(-1) ?? "", /accepts true, false, on, off, yes or no; nothing was written/);
+});
+
+test("login with no profile says exactly what to run, without a doctor loop", async (t) => {
+    const h = harness(
+        t,
+        {},
+        {
+            login: async () => {
+                throw new Error("No AWS profile is chosen. Run /login first.");
+            },
+        },
+    );
+    await h.result.bedrock("login", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /No AWS profile is chosen/);
+    assert.match(text, /Next: \/login and choose Amazon Bedrock \(jig-bedrock\)\./);
+    assert.doesNotMatch(text, /\/bedrock doctor/);
+});
+
+test("status says how to stop using the saved profile after /logout", async (t) => {
+    const h = harness(t, {});
+    await h.result.bedrock("status", h.ctx as never);
+    assert.match(h.notices.join("\n"), /\/bedrock unset profile/);
 });

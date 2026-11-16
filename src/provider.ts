@@ -17,6 +17,7 @@ import {
     checkedRecovery,
     isSsoProfile,
     profileProblem,
+    ssoSignInTarget,
     type VerifyResult,
     verifyAwsProfile,
 } from "./aws-profile.ts";
@@ -326,7 +327,7 @@ export function createBedrockProvider(
             const credential = await runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,
                 refreshProfiles: () => createListProfiles(profileEnv)(),
-                isSso: (profile) => isSsoProfile(profile, profileEnv),
+                isSso: (profile) => !("problem" in ssoSignInTarget(profile, profileEnv)),
                 verify: (profile, signal) =>
                     options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
                 signIn: (profile, signal) =>
@@ -686,11 +687,12 @@ export function createBedrockProvider(
             return true;
         };
         afterProfileLogin = async (profile, interaction, signal) => {
-            config.profile = profile;
+            if (profile === undefined) config.profile = undefined;
+            else config.profile = profile;
             profiles.stored = profile;
             lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
-            if (profile !== undefined) {
+            {
                 const savedProfile = saveProfileSetting(profileEnv, profile, config.preset);
                 if (!savedProfile.ok)
                     interaction.notify({
@@ -728,14 +730,28 @@ export function createBedrockProvider(
                 }, options.loginRefreshWaitMs ?? 20_000);
                 timer.unref();
             });
-            await Promise.race([
+            const outcome = await Promise.race([
                 refresh(true, true)
-                    .then(() => undefined)
-                    .catch(() => undefined),
-                timeout,
+                    .then((status) => status)
+                    .catch(() => "unavailable" as const),
+                timeout.then(() => undefined),
             ]);
-            if (signal.aborted) return;
-            const message = loginOutcomeMessage(models.length, settled, catalog.load()?.warnings?.join(" "));
+            if (signal.aborted) {
+                interaction.notify({
+                    type: "info",
+                    message: "Saved profile and discovery; models are loading. /bedrock settings to change.",
+                });
+                return;
+            }
+            const failedAdvice =
+                outcome !== undefined && outcome !== "ok"
+                    ? `${catalog.failure?.() ?? "Bedrock could not load models."} Next: ${discoveryHelp(outcome, config.mode)}`
+                    : undefined;
+            const message = loginOutcomeMessage(
+                models.length,
+                settled,
+                failedAdvice ?? catalog.load()?.warnings?.join(" "),
+            );
             interaction.notify({ type: "info", message });
             const presetMessage = config.preset === undefined ? undefined : `Saved to preset ${config.preset}.`;
             if (presetMessage !== undefined) interaction.notify({ type: "info", message: presetMessage });

@@ -374,7 +374,7 @@ async function runLoginFlowInner(
                 (
                     await interaction.prompt({
                         type: "text",
-                        message: "SSO region",
+                        message: `SSO region (default: first Bedrock region ${options.regions?.[0] ?? "us-east-1"})`,
                         placeholder: options.regions?.[0] ?? "us-east-1",
                     })
                 ).trim() ||

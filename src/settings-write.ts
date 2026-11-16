@@ -170,17 +170,20 @@ export function writeSettingsDocument(
 /** Save the AWS profile chosen at /login, beside the discovery settings. */
 export function saveProfileSetting(
     env: NodeJS.ProcessEnv,
-    profile: string,
+    profile: string | undefined,
     preset?: string,
 ): { ok: boolean; error?: string } {
     const doc = readSettingsDocument(env);
     if ("error" in doc) return { ok: false, error: doc.error };
-    if (preset === undefined) doc.target.profile = profile;
-    else {
+    if (preset === undefined) {
+        if (profile === undefined) delete doc.target.profile;
+        else doc.target.profile = profile;
+    } else {
         const presets = isObject(doc.target.presets) ? doc.target.presets : undefined;
         const target = presets !== undefined && isObject(presets[preset]) ? presets[preset] : undefined;
         if (target === undefined) return { ok: false, error: `Preset ${preset} is not defined.` };
-        target.profile = profile;
+        if (profile === undefined) delete target.profile;
+        else target.profile = profile;
     }
     const saved = writeSettingsDocument(env, doc.document);
     return saved.ok ? { ok: true } : { ok: false, error: saved.error };

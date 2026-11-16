@@ -262,6 +262,7 @@ export function registerBedrockCommands(
         if (sources.loading?.()) rows.push(`${m.skip} Models: loading from AWS…`);
         else if (list.length === 0) rows.push(`${m.skip} Models: not loaded`);
         else rows.push(`${m.ok} Models: ${list.length} loaded`);
+        rows.push(`${m.skip} /logout does not remove bedrock.json; run /bedrock unset profile.`);
         const selected = ctx.model;
         if (selected?.provider === "jig-bedrock") {
             const model = list.find((entry) => entry.id === selected.id);
@@ -631,7 +632,14 @@ export function registerBedrockCommands(
             await sources.login();
             emit(ctx, "Bedrock login", [`${m.ok} Sign-in finished. Models will refresh in the background.`]);
         } catch (error) {
-            emit(ctx, "Bedrock login", [`${m.fail} ${clean(recoveryHint(error), 200)}`, "Next: /bedrock doctor"]);
+            const raw = error instanceof Error ? error.message : String(error);
+            const hint = raw.includes("No AWS profile is chosen") ? raw : recoveryHint(error);
+            emit(ctx, "Bedrock login", [
+                `${m.fail} ${clean(hint, 200)}`,
+                ...(hint.includes("No AWS profile is chosen")
+                    ? ["Next: /login and choose Amazon Bedrock (jig-bedrock)."]
+                    : ["Next: fix the reason above, then run /bedrock login again."]),
+            ]);
         }
     };
     const doctor = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
