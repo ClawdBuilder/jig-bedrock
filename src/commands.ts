@@ -513,6 +513,7 @@ export function registerBedrockCommands(
         ];
         if (selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore))
             rows.push("Choose /model if your selection was removed.");
+        for (const warning of warnings) rows.push(`${m.warn} ${warning}`);
         emit(ctx, "Bedrock refresh", rows);
     };
     const login = async (ctx: ExtensionCommandContext): Promise<void> => {
@@ -590,6 +591,7 @@ export function registerBedrockCommands(
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
         else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
+        if (!offline) for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
         for (const check of awsRows) {
             const text = check.text
                 .replace(/^AWS identity: /, "Sign-in: ")
