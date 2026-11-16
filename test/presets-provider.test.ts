@@ -75,7 +75,10 @@ function setup(t: test.TestContext, shared?: string) {
     };
     return { dir, file, h, pi, ctx, calls: () => calls, bump: () => calls++ };
 }
-async function start(t: test.TestContext, options: { env?: NodeJS.ProcessEnv; ids?: string[]; fresh?: boolean } = {}) {
+async function start(
+    t: test.TestContext,
+    options: { env?: NodeJS.ProcessEnv; ids?: string[]; fresh?: boolean; byProfile?: boolean } = {},
+) {
     const s = setup(t);
     const raw = JSON.parse(readFileSync(s.file, "utf8")) as Record<string, unknown>;
     const resolved = loadConfig({
@@ -86,7 +89,14 @@ async function start(t: test.TestContext, options: { env?: NodeJS.ProcessEnv; id
     assert.ok(resolved.config);
     let current = catalog("anthropic.claude-haiku-5-5");
     const source = {
-        load: () => current,
+        load: () =>
+            options.byProfile
+                ? catalog(
+                      resolved.config.profile === "personal"
+                          ? "anthropic.claude-sonnet-5-5"
+                          : "anthropic.claude-haiku-5-5",
+                  )
+                : current,
         refresh: async () => {
             if (options.fresh) return "ok" as const;
             s.bump();
@@ -272,4 +282,13 @@ test("a list that loses the selected id after background discovery warns once, a
     assert.doesNotMatch(s.notices.join("\n"), /is not in preset/);
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(s.notices.filter((text) => text.includes("is not in preset personal")).length, 1);
+});
+
+test("a fresh preset switch registers the new preset's models, not the old ones", async (t) => {
+    const s = await start(t, { byProfile: true, fresh: true });
+    assert.ok(models(s.h).includes("claude-haiku-5-5"));
+    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
+    const after = models(s.h);
+    assert.ok(after.includes("claude-sonnet-5-5"), JSON.stringify(after));
+    assert.equal(after.includes("claude-haiku-5-5"), false, JSON.stringify(after));
 });

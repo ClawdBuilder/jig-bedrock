@@ -40,30 +40,53 @@ export const runFile: Runner = (program, args, options) =>
                 error ? reject(new Error(error.killed ? "timeout" : stderr || error.message)) : resolve(stdout),
         );
     });
+/** Plain reason for one region that did not answer; the region itself is named by the caller. */
+function regionReason(error: unknown): string {
+    const cause = error instanceof StepError ? error.cause : error;
+    const text = String(cause);
+    if (/security token.*invalid|unrecognizedclientexception/i.test(text))
+        return "the security token is invalid there; the region may not be enabled for this account";
+    if (/timeout|timed out/i.test(text)) return "AWS timed out";
+    if (/access.?denied|not authorized to perform|unauthorizedoperation/i.test(text))
+        return "AWS refused the request; check permissions for this region";
+    return discoveryHelp(category(cause))
+        .replace(/^./, (c) => c.toLowerCase())
+        .replace(/\.$/, "");
+}
+
 export function category(error: unknown): Status {
     const m = String(error).toLowerCase();
-    return /access.?denied|not authorized to perform|unauthorizedoperation/.test(m)
+    return /access.?denied|not authorized to perform|unauthorizedoperation|security token.*invalid|unrecognizedclientexception/.test(
+        m,
+    )
         ? "permission_denied"
-        : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
-                m,
-            )
-          ? "credentials"
-          : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
-            ? "configuration"
-            : /sso|token/.test(m) && /expired|invalid|login|unauthorized|does not exist/.test(m)
-              ? "sso_expired"
+        : /aws sso login|sso session|token for .* has expired|sso token/i.test(String(error))
+          ? "sso_expired"
+          : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
+                  m,
+              )
+            ? "credentials"
+            : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
+              ? "configuration"
               : /timeout|timed out/.test(m)
                 ? "timeout"
                 : /network|connect|dns|resolve|unreachable|proxy/.test(m)
                   ? "network"
                   : "unavailable";
 }
-export function discoveryHelp(status: Status): string {
+export function discoveryHelp(status: Status, mode?: string): string {
     switch (status) {
         case "sso_expired":
             return "Run /bedrock login, finish browser sign-in, then /bedrock refresh.";
-        case "permission_denied":
-            return "Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured AWS profile; then /bedrock refresh.";
+        case "permission_denied": {
+            const permission =
+                mode === "tag"
+                    ? "tag:GetResources"
+                    : mode === "explicit"
+                      ? "bedrock:GetInferenceProfile"
+                      : "bedrock:ListInferenceProfiles";
+            return `Ask your AWS administrator for ${permission} on the configured AWS profile; then /bedrock refresh.`;
+        }
         case "configuration":
             return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
         case "credentials":
@@ -284,6 +307,7 @@ export function createAwsDiscovery(
                     kind,
                 });
             };
+            const regionFailures: Array<{ region: string; error: unknown }> = [];
             const candidates: Array<{
                 profile: string;
                 region: string;
@@ -312,90 +336,101 @@ export function createAwsDiscovery(
                 }
             } else if (mode === "tag") {
                 for (const region of config.regions) {
-                    let token = "";
-                    const tokens = new Set<string>();
-                    for (let page = 0; page < 32; page++) {
-                        if (++pages > 64) throw new Error("pagination");
-                        const result = await step("list tagged inference profiles", () =>
-                            aws([
-                                "resourcegroupstaggingapi",
-                                "get-resources",
-                                "--region",
-                                region,
-                                "--resource-type-filters",
-                                "bedrock:application-inference-profile",
-                                "--tag-filters",
-                                JSON.stringify([
-                                    { Key: tagKeyFor(), Values: [tagValueFor()] },
-                                    ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
+                    try {
+                        let token = "";
+                        const tokens = new Set<string>();
+                        for (let page = 0; page < 32; page++) {
+                            if (++pages > 64) throw new Error("pagination");
+                            const result = await step("list tagged inference profiles", () =>
+                                aws([
+                                    "resourcegroupstaggingapi",
+                                    "get-resources",
+                                    "--region",
+                                    region,
+                                    "--resource-type-filters",
+                                    "bedrock:application-inference-profile",
+                                    "--tag-filters",
+                                    JSON.stringify([
+                                        { Key: tagKeyFor(), Values: [tagValueFor()] },
+                                        ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
+                                    ]),
+                                    "--no-paginate",
+                                    ...(token ? ["--pagination-token", token] : []),
                                 ]),
-                                "--no-paginate",
-                                ...(token ? ["--pagination-token", token] : []),
-                            ]),
-                        );
-                        if (!Array.isArray(result.ResourceTagMappingList) || result.ResourceTagMappingList.length > 256)
-                            throw new Error("resources");
-                        for (const row of result.ResourceTagMappingList) {
-                            const arn = row.ResourceARN;
+                            );
                             if (
-                                typeof arn !== "string" ||
-                                !validArn(arn, region, account) ||
-                                seen.has(arn) ||
-                                seen.size >= 256
+                                !Array.isArray(result.ResourceTagMappingList) ||
+                                result.ResourceTagMappingList.length > 256
                             )
-                                throw new Error("profile scope");
-                            const wanted = [
-                                [tagKeyFor(), tagValueFor()],
-                                ...(activeKey === undefined ? [] : [[activeKey, activeValue]]),
-                            ] as Array<[string, string | undefined]>;
-                            if (
-                                !Array.isArray(row.Tags) ||
-                                !wanted.every(
-                                    ([key, value]) =>
-                                        row.Tags.filter((tag: Json) => tag?.Key === key).length === 1 &&
-                                        row.Tags.some((tag: Json) => tag?.Key === key && tag.Value === value),
+                                throw new Error("resources");
+                            for (const row of result.ResourceTagMappingList) {
+                                const arn = row.ResourceARN;
+                                if (
+                                    typeof arn !== "string" ||
+                                    !validArn(arn, region, account) ||
+                                    seen.has(arn) ||
+                                    seen.size >= 256
                                 )
-                            )
-                                throw new Error("profile tags");
-                            candidates.push({ profile: arn, region, kind: "application", arn });
+                                    throw new Error("profile scope");
+                                const wanted = [
+                                    [tagKeyFor(), tagValueFor()],
+                                    ...(activeKey === undefined ? [] : [[activeKey, activeValue]]),
+                                ] as Array<[string, string | undefined]>;
+                                if (
+                                    !Array.isArray(row.Tags) ||
+                                    !wanted.every(
+                                        ([key, value]) =>
+                                            row.Tags.filter((tag: Json) => tag?.Key === key).length === 1 &&
+                                            row.Tags.some((tag: Json) => tag?.Key === key && tag.Value === value),
+                                    )
+                                )
+                                    throw new Error("profile tags");
+                                candidates.push({ profile: arn, region, kind: "application", arn });
+                            }
+                            token = result.PaginationToken ?? "";
+                            if (!token) break;
+                            if (typeof token !== "string" || token.length > 2048 || tokens.has(token) || page === 31)
+                                throw new Error("pagination");
+                            tokens.add(token);
                         }
-                        token = result.PaginationToken ?? "";
-                        if (!token) break;
-                        if (typeof token !== "string" || token.length > 2048 || tokens.has(token) || page === 31)
-                            throw new Error("pagination");
-                        tokens.add(token);
+                    } catch (error) {
+                        regionFailures.push({ region, error });
                     }
                 }
             } else {
                 for (const region of config.regions) {
-                    let token = "";
-                    const tokens = new Set<string>();
-                    for (let page = 0; page < 32; page++) {
-                        if (++pages > 64) throw new Error("pagination");
-                        const result = await step("list inference profiles", () =>
-                            aws([
-                                "bedrock",
-                                "list-inference-profiles",
-                                "--type-equals",
-                                "SYSTEM_DEFINED",
-                                "--region",
-                                region,
-                                ...(token ? ["--next-token", token] : []),
-                            ]),
-                        );
-                        const rows = result.inferenceProfileSummaries;
-                        if (!Array.isArray(rows) || rows.length > 256) throw new Error("profiles");
-                        for (const row of rows) {
-                            const arn = row?.inferenceProfileArn;
-                            if (typeof arn !== "string") throw new Error("profile scope");
-                            if (!/anthropic\.claude/i.test(`${arn} ${row.inferenceProfileName ?? ""}`)) continue;
-                            candidates.push({ profile: arn, region, kind: "system", arn, row });
+                    try {
+                        let token = "";
+                        const tokens = new Set<string>();
+                        for (let page = 0; page < 32; page++) {
+                            if (++pages > 64) throw new Error("pagination");
+                            const result = await step("list inference profiles", () =>
+                                aws([
+                                    "bedrock",
+                                    "list-inference-profiles",
+                                    "--type-equals",
+                                    "SYSTEM_DEFINED",
+                                    "--region",
+                                    region,
+                                    ...(token ? ["--next-token", token] : []),
+                                ]),
+                            );
+                            const rows = result.inferenceProfileSummaries;
+                            if (!Array.isArray(rows) || rows.length > 256) throw new Error("profiles");
+                            for (const row of rows) {
+                                const arn = row?.inferenceProfileArn;
+                                if (typeof arn !== "string") throw new Error("profile scope");
+                                if (!/anthropic\.claude/i.test(`${arn} ${row.inferenceProfileName ?? ""}`)) continue;
+                                candidates.push({ profile: arn, region, kind: "system", arn, row });
+                            }
+                            token = result.nextToken ?? "";
+                            if (!token) break;
+                            if (typeof token !== "string" || token.length > 2048 || tokens.has(token) || page === 31)
+                                throw new Error("pagination");
+                            tokens.add(token);
                         }
-                        token = result.nextToken ?? "";
-                        if (!token) break;
-                        if (typeof token !== "string" || token.length > 2048 || tokens.has(token) || page === 31)
-                            throw new Error("pagination");
-                        tokens.add(token);
+                    } catch (error) {
+                        regionFailures.push({ region, error });
                     }
                 }
             }
@@ -492,8 +527,16 @@ export function createAwsDiscovery(
                     `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.${hint}`,
                 );
             }
-            if (mode === "system" && profiles.length === 0)
+            if (mode === "system" && profiles.length === 0 && regionFailures.length < config.regions.length)
                 warnings.push(`No AWS-defined Claude inference profiles in ${config.regions.join(", ")}.`);
+            for (const failure of regionFailures)
+                warnings.push(`${failure.region} did not answer: ${regionReason(failure.error)}.`);
+            if (
+                profiles.length === 0 &&
+                regionFailures.length >= config.regions.length &&
+                regionFailures[0] !== undefined
+            )
+                throw regionFailures[0].error;
             if (failed) {
                 lastFailure = problemSummary(explicitErrors) ?? "Could not read any Bedrock profile.";
                 return "unavailable";
@@ -515,6 +558,7 @@ export function createAwsDiscovery(
             if (typeof file === "function") pruneCatalogFiles(dirname(readFrom()));
             invalidAccount = false;
             lastFailure = undefined;
+            lastStatus = undefined;
             return "ok";
         } catch (e) {
             lastFailure = failureText(e);

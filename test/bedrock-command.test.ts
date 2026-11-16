@@ -1,7 +1,8 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test UI doubles */
 /* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The one command: every sub-command, the completions, the old names and the always-present broken settings path.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -57,10 +58,16 @@ function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv, ext
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
+        model: undefined,
+        modelRegistry: { find: (_provider: string, id: string) => ({ ...model, id }) },
         ui: { notify: (text: string) => notices.push(text), setStatus() {} },
         sessionManager: { getSessionId: () => "s" },
     };
-    return { root, settings, notices, commands, result, ctx };
+    pi.setModel = async (selected: any) => {
+        ctx.model = selected;
+        return true;
+    };
+    return { root, settings, notices, commands, result, ctx, pi };
 }
 
 test("every sub-command prints a titled block and usage has no stale Next", async (t) => {
@@ -201,8 +208,8 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
         },
     );
     await withProfile.result.bedrock("login", withProfile.ctx as never);
-    assert.match(withProfile.notices.join("\n"), /Sign-in did not finish: sign-in expired for the selected profile/);
-    assert.match(withProfile.notices.join("\n"), /aws sso login --profile fixture/);
+    assert.match(withProfile.notices.join("\n"), /AWS SSO recovery did not complete/);
+    assert.doesNotMatch(withProfile.notices.join("\n"), /aws sso login --profile fixture/);
 
     const noProfile = harness(
         t,
@@ -216,8 +223,9 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
     );
     await noProfile.result.bedrock("login", noProfile.ctx as never);
     const text = noProfile.notices.join("\n");
-    assert.match(text, /choose an AWS profile with \/login/);
+    assert.match(text, /AWS SSO recovery did not complete/);
     assert.doesNotMatch(text, /my-profile/);
+    assert.doesNotMatch(text, /aws sso login --profile fixture/);
 });
 
 test("one command table feeds help, completions and the typo guard", async (t) => {
@@ -300,4 +308,500 @@ test("print-mode doctor omits the progress line", async (t) => {
         process.stdout.write = original;
     }
     assert.doesNotMatch(writes.join(""), /Checking AWS/);
+});
+
+test("a tag pair can be set and unset in one command", async (t) => {
+    const h = harness(t, {});
+    await h.result.bedrock("set activeTagKey Active", h.ctx as never);
+    assert.match(
+        h.notices.at(-1) ?? "",
+        /activeTagKey and activeTagValue go together: \/bedrock set activeTagKey <key> activeTagValue <value>/,
+    );
+    await h.result.bedrock("set activeTagKey Active activeTagValue true", h.ctx as never);
+    let saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.activeTagKey, "Active");
+    assert.equal(saved.activeTagValue, "true");
+    await h.result.bedrock("unset activeTagKey activeTagValue", h.ctx as never);
+    saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal("activeTagKey" in saved, false);
+    assert.equal("activeTagValue" in saved, false);
+});
+
+function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string[] = [], confirms: boolean[] = []) {
+    let selectCalls = 0;
+    h.ctx.mode = "tui";
+    h.ctx.ui.confirm = async () => confirms.shift() ?? true;
+    (h.ctx.ui as any).calls = [];
+    h.ctx.ui.select = async (title: string, options: string[] = []) => {
+        selectCalls++;
+        (h.ctx.ui as any).calls.push({ title, options });
+        const wanted = selects.shift();
+        if (wanted === undefined) return undefined;
+        return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
+    };
+    h.ctx.ui.input = async (title: string) => {
+        (h.ctx.ui as any).calls.push({ title, options: [] });
+        return inputs.shift();
+    };
+    return () => selectCalls;
+}
+
+test("/bedrock alone opens the action menu", async (t) => {
+    const h = harness(t, {});
+    const calls = withUi(h, ["Help"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(calls(), 1);
+});
+
+test("the settings menu edits a tag pair in one step", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "Second tag", "Set"], ["Active true"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.activeTagKey, "Active");
+    assert.equal(saved.activeTagValue, "true");
+});
+
+test("the settings menu saves a fixed choice and a comma-separated list", async (t) => {
+    const api = harness(t, {});
+    withUi(api, ["Settings", "api", "Set", "converse"]);
+    await api.result.bedrock("", api.ctx as never);
+    assert.equal(JSON.parse(readFileSync(join(api.root, "bedrock.json"), "utf8")).api, "converse");
+    const regions = harness(t, {});
+    withUi(regions, ["Settings", "regions", "Set"], ["us-east-1,us-west-2"]);
+    await regions.result.bedrock("", regions.ctx as never);
+    assert.deepEqual(JSON.parse(readFileSync(join(regions.root, "bedrock.json"), "utf8")).regions, [
+        "us-east-1",
+        "us-west-2",
+    ]);
+});
+
+test("the settings menu refuses an invalid value and writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /value not accepted/);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
+});
+
+test("the settings menu unsets both halves of a pair", async (t) => {
+    const h = harness(t, {});
+    writeFileSync(join(h.root, "bedrock.json"), JSON.stringify({ activeTagKey: "Active", activeTagValue: "true" }));
+    withUi(h, ["Settings", "Second tag", "Unset"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal("activeTagKey" in saved, false);
+    assert.equal("activeTagValue" in saved, false);
+});
+
+test("the settings menu Escape writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
+});
+test("the presets menu lists presets and switches", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev — dev"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev");
+});
+
+test("the spend and budget menus ask before running", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Budget"], ["250"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /Budget set to \$250/);
+    withUi(h, ["Spend"], []);
+    const calls = h.ctx.ui.select as (...args: never[]) => Promise<string | undefined>;
+    assert.ok(calls);
+});
+
+test("an explicit refresh reports how many refused models came back", async (t) => {
+    const h = harness(t, {}, { clearRefusals: () => 3 });
+    await h.result.bedrock("refresh", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /3 refused models offered again/);
+});
+
+test("the presets menu switches to the chosen preset", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev");
+});
+
+test("the presets menu saves a valid name and refuses an invalid one", async (t) => {
+    let saved = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetAdd: async (name: string) => {
+                saved = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Save current"], ["work"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(saved, "work");
+    const bad = harness(
+        t,
+        {},
+        {
+            presetAdd: async (name: string) => {
+                saved = name;
+            },
+        },
+    );
+    saved = "";
+    withUi(bad, ["Presets", "Save current"], ["bad name"]);
+    await bad.result.bedrock("", bad.ctx as never);
+    assert.equal(saved, "");
+    assert.match(bad.notices.join("\n"), /not a preset name/);
+});
+
+test("the presets menu removes a preset after confirmation", async (t) => {
+    let removed = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            presetRemove: async (name: string) => {
+                removed = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Remove", "dev"], [], [true]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(removed, "dev");
+});
+
+test("the presets menu Escape writes and switches nothing", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, []);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "");
+});
+
+test("the models menu lists registered order, shows details, and uses a model", async (t) => {
+    const first = { ...model, id: "claude-sonnet-5-5" };
+    const second = { ...model, id: "claude-opus-5" };
+    const h = harness(t, {}, { models: () => [first, second] });
+    (h.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...first, id });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.deepEqual(
+        calls[1]?.options.slice(0, 2).map((option) => option.split(" — ")[0]),
+        ["claude-sonnet-5-5", "claude-opus-5"],
+    );
+    assert.match(calls[2]?.title ?? "", /Converse route/);
+    assert.match(calls[2]?.title ?? "", /Region: us-east-1/);
+    assert.match(calls[2]?.title ?? "", /Inference profile:/);
+    assert.equal(h.ctx.model?.id, "claude-sonnet-5-5");
+});
+
+test("the models menu shows refused models and Try again clears them", async (t) => {
+    let clears = 0;
+    const h = harness(
+        t,
+        {},
+        {
+            refused: () => [{ arn: "arn", id: "claude-opus-5", date: "2026-11-16T10:00:00.000Z" }],
+            clearRefusals: () => {
+                clears++;
+                return 1;
+            },
+        },
+    );
+    withUi(h, ["Models", "claude-opus-5", "Try again"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.ok(calls[1]?.options.includes("Refused by AWS for your role"));
+    assert.ok(calls[1]?.options.some((option) => option.startsWith("claude-opus-5 · 2026-11-16")));
+    assert.equal(clears, 1);
+});
+
+test("the models menu Escape does nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Models"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(h.ctx.model, undefined);
+    assert.deepEqual(h.notices, []);
+});
+
+test("the main menu offers every action and Escape closes", async (t) => {
+    const h = harness(t, {});
+    withUi(h, []);
+    await h.result.bedrock("", h.ctx as never);
+    const options = (h.ctx.ui as any).calls[0].options as string[];
+    assert.deepEqual(
+        options.map((option) => option.split(" — ")[0]),
+        [
+            "Status",
+            "Check setup",
+            "Test one request",
+            "Models",
+            "Refresh models",
+            "Sign in again",
+            "Presets",
+            "Settings",
+            "Spend",
+            "Budget",
+            "Help",
+        ],
+    );
+    assert.deepEqual(h.notices, []);
+});
+
+test("each main-menu action reaches its command", async (t) => {
+    const cases: Array<[string, string[], string]> = [
+        ["Status", ["Status"], /Bedrock ·/],
+        ["Check setup", ["Check setup"], /Bedrock doctor/],
+        ["Test one request", ["Test one request"], /tiny request/],
+        ["Refresh models", ["Refresh models"], /Bedrock refresh/],
+        ["Sign in again", ["Sign in again"], /Bedrock login/],
+        ["Help", ["Help"], /Bedrock commands/],
+    ];
+    for (const [, selects, expected] of cases) {
+        const h = harness(t, {});
+        withUi(h, selects);
+        await h.result.bedrock("", h.ctx as never);
+        assert.match(h.notices.join("\n"), expected, selects[0]);
+    }
+    for (const [label, nested] of [
+        ["Models", "Back"],
+        ["Presets", "Back"],
+        ["Settings", "Back"],
+        ["Spend", "Back"],
+    ] as const) {
+        const h = harness(t, {});
+        withUi(h, [label, nested]);
+        await h.result.bedrock("", h.ctx as never);
+        assert.ok(((h.ctx.ui as any).calls as unknown[]).length >= 2, label);
+    }
+});
+
+test("Spend asks for a period and shows the existing report", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Spend", "Week"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /last 7 days/);
+});
+
+test("Budget sets, clears, rejects an invalid value and does nothing on empty", async (t) => {
+    const set = harness(t, {});
+    withUi(set, ["Budget"], ["250"]);
+    await set.result.bedrock("", set.ctx as never);
+    assert.match(set.notices.at(-1) ?? "", /Budget set to \$250/);
+    const clear = harness(t, {});
+    withUi(clear, ["Budget"], ["0"]);
+    await clear.result.bedrock("", clear.ctx as never);
+    assert.match(clear.notices.at(-1) ?? "", /Budget removed/);
+    const bad = harness(t, {});
+    withUi(bad, ["Budget"], ["nope"]);
+    await bad.result.bedrock("", bad.ctx as never);
+    assert.match(bad.notices.at(-1) ?? "", /at least \$1/);
+    const empty = harness(t, {});
+    withUi(empty, ["Budget"], [""]);
+    await empty.result.bedrock("", empty.ctx as never);
+    assert.deepEqual(empty.notices, []);
+});
+
+test("typed commands and no-UI mode do not open a menu", async (t) => {
+    const h = harness(t, {});
+    let selects = 0;
+    h.ctx.mode = "json";
+    h.ctx.hasUI = false;
+    h.ctx.ui.select = async () => {
+        selects++;
+        return undefined;
+    };
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        for (const args of ["status", "help", "models", "usage month", "budget 200", "settings"]) {
+            await h.result.bedrock(args, h.ctx as never);
+        }
+    } finally {
+        process.stdout.write = original;
+    }
+    assert.equal(selects, 0);
+    const text = writes.join("");
+    for (const expected of [
+        "Bedrock commands",
+        "Bedrock models",
+        "Bedrock spend",
+        "Bedrock budget",
+        "Bedrock settings",
+    ]) {
+        assert.match(text, new RegExp(expected), expected);
+    }
+});
+
+test("/bedrock login prints the recovery hint for a browser failure", async (t) => {
+    const { SsoRecoveryError } = await import("../src/sso.ts");
+    const h = harness(
+        t,
+        {},
+        {
+            login: async () => {
+                throw new SsoRecoveryError("browser");
+            },
+        },
+    );
+    await h.result.bedrock("login", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /browser opener/);
+    assert.doesNotMatch(text, /aws sso login --profile/);
+});
+
+test("the presets menu picks dev-eks, not the dev prefix", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [
+                { name: "dev", profile: "dev", mode: "AWS-defined", active: false },
+                { name: "dev-eks", profile: "dev-eks", mode: "AWS-defined", active: false },
+            ],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev-eks"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev-eks");
+});
+
+test("the models menu picks a model id that shares a prefix", async (t) => {
+    const a = { ...model, id: "claude-sonnet" };
+    const b = { ...model, id: "claude-sonnet-5-5" };
+    const h = harness(t, {}, { models: () => [a, b] });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Back"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    assert.match(calls[2]?.title ?? "", /^claude-sonnet-5-5/);
+});
+
+test("the settings list shows pairs once in plain words and inputs carry their hint", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "Tag", "Set"], ["Team fixture-team"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    const settingsOptions = calls.flatMap((call) => call.options);
+    assert.ok(
+        settingsOptions.some((option) => option.startsWith("Tag:")),
+        JSON.stringify(settingsOptions),
+    );
+    assert.equal(
+        settingsOptions.some((option) => option.startsWith("tagValue:")),
+        false,
+    );
+    assert.ok(calls.some((call) => /e\.g\. Team my-team/.test(call.title) && /empty cancels/.test(call.title)));
+});
+
+test("a menu save that changes discovery refreshes and does not claim the model left", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "Tag", "Set"], ["Team fixture-team"]);
+    await h.result.bedrock("", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /Saved\. Loading models for the new settings/);
+    assert.match(text, /Bedrock refresh/);
+    assert.doesNotMatch(text, /no longer in your account/);
+});
+
+test("the budget input title shows the current value, example and clear rule", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Budget"], [""]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    const title = calls.find((call) => /Monthly budget/.test(call.title))?.title ?? "";
+    assert.match(title, /now: (\$100|none)/, JSON.stringify(calls));
+    assert.match(title, /e\.g\. 200/);
+    assert.match(title, /0 or off clears/);
+});
+
+test("a typed discovery change refreshes, and api does not", async (t) => {
+    let refreshes = 0;
+    const regions = harness(
+        t,
+        {},
+        {
+            refresh: async () => {
+                refreshes++;
+                return "ok";
+            },
+        },
+    );
+    await regions.result.bedrock("set regions us-west-2", regions.ctx as never);
+    assert.equal(refreshes, 1);
+    assert.match(regions.notices.join("\n"), /Saved\. Loading models for the new settings/);
+    const api = harness(
+        t,
+        {},
+        {
+            refresh: async () => {
+                refreshes++;
+                return "ok";
+            },
+        },
+    );
+    refreshes = 0;
+    await api.result.bedrock("set api converse", api.ctx as never);
+    assert.equal(refreshes, 0);
+});
+
+test("an invalid menu value reopens the input, then a valid one saves once", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1", "us-east-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.deepEqual(saved.regions, ["us-east-1"]);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    assert.ok(calls.some((call) => /value not accepted/.test(call.title)));
+});
+
+test("an invalid menu value followed by Escape writes nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });

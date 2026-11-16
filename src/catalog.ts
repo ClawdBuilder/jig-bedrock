@@ -14,6 +14,7 @@ import type { BedrockApi } from "./config.ts";
 import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import { isAnthropicModel, noThinkingOff, rewriteThinkingOff, usesAdaptiveThinking } from "./messages.ts";
 import { promptCacheFor } from "./prompt-cache.ts";
+import { isRefusalError } from "./refusals.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Pi's model registry and session entries, checked field by field where they are used
 type Json = any;
@@ -538,6 +539,7 @@ export function bedrockStream(
     load: () => Catalog | undefined,
     profile: () => string | undefined,
     signedFetch?: typeof globalThis.fetch,
+    onRefusal?: (model: BedrockModel, message: string) => string | undefined,
 ): Stream {
     const approved = [...models];
     return (model, context, options) => {
@@ -575,26 +577,51 @@ export function bedrockStream(
         // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
         // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
         const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
+        const guard = (stream: ReturnType<typeof streams.converse>) =>
+            typeof stream !== "object" || stream === null
+                ? stream
+                : (new Proxy(stream as never, {
+                      get(target: any, property) {
+                          if (property !== Symbol.asyncIterator) {
+                              const value = Reflect.get(target, property, target);
+                              return typeof value === "function" ? value.bind(target) : value;
+                          }
+                          return async function* () {
+                              for await (const event of target) {
+                                  if (event?.type === "error" && onRefusal !== undefined) {
+                                      const message = String(event.error?.errorMessage ?? "");
+                                      if (isRefusalError(message, physical.arn)) {
+                                          const plain = onRefusal(physical, message);
+                                          if (plain !== undefined) event.error.errorMessage = plain;
+                                      }
+                                  }
+                                  yield event;
+                              }
+                          };
+                      },
+                  }) as never);
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
             if (!messages || !signedFetch) throw new Error("The Bedrock Messages route is not available; reload Pi.");
             const previous = (options as Json)?.onPayload as
                 | ((payload: unknown, selected: unknown) => unknown)
                 | undefined;
-            return messages({ ...logical, api: "anthropic-messages" }, context, {
-                ...scoped,
-                // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
-                // fetch removes both this and any Authorization header before signing.
-                apiKey: "bedrock-sigv4",
-                fetch: signedFetch,
-                // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
-                // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
-                onPayload: async (payload: unknown, selected: unknown) => {
-                    const next = previous === undefined ? payload : await previous(payload, selected);
-                    const value = { ...((next ?? payload) as Record<string, unknown>), model: physical.arn };
-                    return rewriteThinkingOff(value, physical.foundationModelId);
-                },
-            } as typeof options);
+            return guard(
+                messages({ ...logical, api: "anthropic-messages" }, context, {
+                    ...scoped,
+                    // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
+                    // fetch removes both this and any Authorization header before signing.
+                    apiKey: "bedrock-sigv4",
+                    fetch: signedFetch,
+                    // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
+                    // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
+                    onPayload: async (payload: unknown, selected: unknown) => {
+                        const next = previous === undefined ? payload : await previous(payload, selected);
+                        const value = { ...((next ?? payload) as Record<string, unknown>), model: physical.arn };
+                        return rewriteThinkingOff(value, physical.foundationModelId);
+                    },
+                } as typeof options),
+            );
         }
         const previous = (options as Json)?.onPayload as ((payload: unknown, selected: unknown) => unknown) | undefined;
         // Pi's Converse client reads AWS_BEARER_TOKEN_BEDROCK through getProviderEnvValue, where an empty scoped value
@@ -632,12 +659,12 @@ export function bedrockStream(
             restore();
             throw error;
         }
-        if (!hadBearer) return stream;
+        if (!hadBearer) return guard(stream);
         // The SDK reads the variable after the factory returns. Hold the old environment until the stream ends, then
         // restore it. A proxy keeps the object's methods bound to the real stream.
         const timer = setTimeout(restore, 60_000);
         timer.unref?.();
-        return new Proxy(stream, {
+        return new Proxy(guard(stream) as any, {
             get(target, property) {
                 if (property === Symbol.asyncIterator)
                     return async function* () {
@@ -657,19 +684,15 @@ export function bedrockStream(
 export async function registerBedrockProvider(
     pi: Pick<ExtensionAPI, "registerProvider">,
     _agentDir: string,
-    native?: import("@earendil-works/pi-ai").Provider,
+    native: import("@earendil-works/pi-ai").Provider,
     models: BedrockModel[] = [],
     load: () => Catalog | undefined = () => undefined,
     identity: BedrockIdentity = { profile: () => undefined, auth: {} },
+    onRefusal: (model: BedrockModel, message: string) => string | undefined,
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
     refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
 ): Promise<BedrockModel[]> {
-    if (!native) {
-        const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
-        native = builtinProviders().find((provider) => provider.id === "amazon-bedrock");
-        if (!native) throw new Error("Pi Bedrock provider unavailable; update Pi and reload.");
-    }
     const makePicker = () =>
         models.map(({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
             ...m,
@@ -710,6 +733,7 @@ export async function registerBedrockProvider(
             load,
             identity.profile,
             signedFetch,
+            onRefusal,
         ) as typeof native.stream,
         streamSimple: bedrockStream(
             models,
@@ -720,6 +744,7 @@ export async function registerBedrockProvider(
             load,
             identity.profile,
             signedFetch,
+            onRefusal,
         ),
     });
     return models;
@@ -735,13 +760,22 @@ export function registerBedrockSelectionGuard(
         /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
         discoverySlow?: () => boolean;
     } = {},
-): { blockUntilChoice(): void } {
+): {
+    blockUntilChoice(): void;
+    unresolved(): boolean;
+    restoreSaved(ctx: ExtensionContext): Promise<void>;
+    suppressWarnings(): void;
+} {
     let unresolvedSavedSelection = false;
+    let suppressWarnings = false;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
         "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
-    const warning = () => (options.discoverySlow?.() === true ? slowWarning : unavailableWarning);
+    const loadingWarning =
+        "Saved Bedrock model is not loaded yet; the models are still arriving. Choose one with /model after they appear.";
+    const warning = () =>
+        options.discoverySlow?.() === true || models.length === 0 ? loadingWarning : unavailableWarning;
     // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
     // built-in model and must be left alone.
     const oldRecorded = (model: { provider?: string; id?: string } | undefined) =>
@@ -750,7 +784,7 @@ export function registerBedrockSelectionGuard(
     const unsupported = (ctx: ExtensionContext) =>
         unresolvedSavedSelection ||
         (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
-    const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext) => {
+    const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
         // Pi 1.2 reports a session switch as session_start with reason new, resume or fork.
         const switched =
             event.type === "session_start" &&
@@ -789,12 +823,15 @@ export function registerBedrockSelectionGuard(
                     ctx.ui.notify(warning(), "warning");
                     warned = true;
                 }
-            } else if (ctx.model?.provider !== target.provider || ctx.model.id !== target.id) {
+            } else if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
                     ctx.ui.notify(warning(), "warning");
                     warned = true;
-                } else unresolvedSavedSelection = false;
+                } else {
+                    unresolvedSavedSelection = false;
+                    if (announce) ctx.ui.notify(`Bedrock: restored ${target.id}.`, "info");
+                }
             }
         }
         if (!warned && options.deferStartupWarning?.() !== true && unsupported(ctx))
@@ -802,19 +839,27 @@ export function registerBedrockSelectionGuard(
     };
     pi.on("session_start", restore);
     pi.on("model_select", (event, ctx) => {
-        if (event.source === "set" || event.source === "cycle") unresolvedSavedSelection = false;
-        if (unsupported(ctx)) ctx.ui.notify(warning(), "warning");
+        if (event.source === "set" || event.source === "cycle") {
+            unresolvedSavedSelection = false;
+            suppressWarnings = false;
+        }
+        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
-        ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
         return { action: "handled" };
     });
     return {
         blockUntilChoice: () => {
             unresolvedSavedSelection = true;
+        },
+        unresolved: () => unresolvedSavedSelection,
+        restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
+        suppressWarnings: () => {
+            suppressWarnings = true;
         },
     };
 }

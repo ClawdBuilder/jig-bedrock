@@ -24,6 +24,16 @@ export interface LoginFlowOptions {
     configFile?: string;
     /** Append the confirmed sections; without it the create-a-profile methods are unavailable. */
     writeConfig?: (sections: ConfigSection[]) => ConfigWriteResult;
+    /** The tags of the application profiles matching the chosen tag, for choosing a second filter. */
+    /** A note that has no next prompt (for example a failed tag lookup): show it after the login dialog closes. */
+    reportNote?: (message: string) => void;
+    tagMatches?: (
+        profile: string | undefined,
+        regions: string[],
+        tagKey: string,
+        tagValue: string,
+        signal: AbortSignal,
+    ) => Promise<Array<Array<{ Key: string; Value: string }>>>;
 }
 
 const methods = [
@@ -62,8 +72,7 @@ async function askProfile(
                 ? await interaction.prompt({ type: "text", message: "AWS profile name", placeholder: "my-profile" })
                 : answer.replace(/^profile:/, "");
     } else {
-        if (listed === undefined)
-            interaction.notify({ type: "info", message: "Could not list your AWS profiles; type the name." });
+        if (listed === undefined) say(interaction, "Could not list your AWS profiles; type the name.");
         name = await interaction.prompt({
             type: "text",
             message: "AWS profile name (aws configure sso or aws configure makes one)",
@@ -73,11 +82,11 @@ async function askProfile(
     interaction.signal.throwIfAborted();
     name = name.trim();
     if (!profilePattern.test(name)) {
-        interaction.notify({ type: "info", message: "That is not an AWS profile name; choose or type another." });
+        say(interaction, "That is not an AWS profile name; choose or type another.");
         return askProfile(interaction, listed, message);
     }
     if (listed !== undefined && !listed.includes(name))
-        interaction.notify({ type: "info", message: `${name} is not in aws configure list-profiles yet.` });
+        say(interaction, `${name} is not in aws configure list-profiles yet.`);
     return name;
 }
 
@@ -90,7 +99,7 @@ async function requiredText(
         const value = (await interaction.prompt({ type: "text", message, placeholder })).trim();
         interaction.signal.throwIfAborted();
         if (value !== "") return value;
-        interaction.notify({ type: "info", message: "A value is required." });
+        say(interaction, "A value is required.");
     }
     throw new Error("No value entered.");
 }
@@ -99,8 +108,11 @@ const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d$/;
 const roleNamePattern = /^[\w+=,.@-]{1,64}$/;
 const roleArnPattern = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
+const activeNotes = new WeakSet<object>();
+const noteTexts = new WeakMap<object, string>();
 function say(interaction: ProviderAuthInteraction, message: string): void {
-    interaction.notify({ type: "info", message });
+    if (activeNotes.has(interaction)) noteTexts.set(interaction, message);
+    else interaction.notify({ type: "info", message });
 }
 
 async function askName(interaction: ProviderAuthInteraction, message: string, placeholder = "my-profile") {
@@ -141,7 +153,11 @@ async function confirmConfig(
     return true;
 }
 
-async function askDiscovery(interaction: ProviderAuthInteraction, options: LoginFlowOptions): Promise<void> {
+async function askDiscovery(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+    profile?: string,
+): Promise<void> {
     const mode = await interaction.prompt({
         type: "select",
         message: "Which inference profiles should Bedrock list?",
@@ -183,6 +199,57 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
         .filter((value) => value !== "");
     interaction.signal.throwIfAborted();
     if (regions.length > 0) settings.regions = regions;
+    if (
+        settings.mode === "tag" &&
+        settings.tagKey !== undefined &&
+        settings.tagValue !== undefined &&
+        options.tagMatches
+    ) {
+        let matches: Array<Array<{ Key: string; Value: string }>> = [];
+        try {
+            matches = await options.tagMatches(
+                profile,
+                settings.regions,
+                settings.tagKey,
+                settings.tagValue,
+                interaction.signal,
+            );
+        } catch (error) {
+            const message = `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`;
+            say(interaction, message);
+            options.reportNote?.(message);
+        }
+        const counts = new Map<string, Map<string, number>>();
+        for (const tags of matches)
+            for (const key of new Set(tags.map((tag) => tag.Key))) {
+                if (key === settings.tagKey) continue;
+                const value = tags.find((tag) => tag.Key === key)?.Value ?? "";
+                const values = counts.get(key) ?? new Map<string, number>();
+                values.set(value, (values.get(value) ?? 0) + 1);
+                counts.set(key, values);
+            }
+        const split = [...counts.entries()]
+            .filter(([, values]) => values.size > 1)
+            .sort((a, b) => a[1].size - b[1].size)[0];
+        if (split !== undefined) {
+            const [key, values] = split;
+            const choice = await interaction.prompt({
+                type: "select",
+                message: `This tag also splits by ${key}; narrow the list?`,
+                options: [
+                    ...[...values.entries()].map(([value, count]) => ({
+                        id: `tag:${value}`,
+                        label: `Only the ${count} with ${key}=${value || "(none)"}`,
+                    })),
+                    { id: "all", label: `List all ${matches.length}` },
+                ],
+            });
+            if (choice.startsWith("tag:")) {
+                settings.activeTagKey = key;
+                settings.activeTagValue = choice.slice(4);
+            }
+        }
+    }
     const save = options.saveDiscovery?.(settings);
     if (save === undefined) return;
     if (!save.written)
@@ -191,7 +258,7 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
 }
 
 /** Ask how to sign in, verify, ask discovery, and return the credential Pi stores. */
-export async function runLoginFlow(
+async function runLoginFlowInner(
     interaction: ProviderAuthInteraction,
     options: LoginFlowOptions,
 ): Promise<ApiKeyCredential> {
@@ -201,6 +268,8 @@ export async function runLoginFlow(
     let note = "";
     for (let attempt = 0; attempt < 10; attempt++) {
         interaction.signal.throwIfAborted();
+        note = noteTexts.get(interaction) ?? note;
+        noteTexts.delete(interaction);
         const method = (await interaction.prompt({
             type: "select",
             message: note === "" ? "How do you sign in to AWS?" : `${note}\n\nHow do you sign in to AWS?`,
@@ -217,7 +286,7 @@ export async function runLoginFlow(
             interaction.notify({ type: "progress", message: "Checking the AWS credential chain…" });
             const check = await options.verify(undefined, interaction.signal);
             if (!check.ok) {
-                interaction.notify({ type: "info", message: check.message });
+                say(interaction, check.message);
                 continue;
             }
             await askDiscovery(interaction, options);
@@ -247,19 +316,15 @@ export async function runLoginFlow(
             const ssoListed =
                 listed === undefined ? undefined : listed.filter((profile) => options.isSso?.(profile) ?? false);
             if (ssoListed !== undefined && ssoListed.length === 0) {
-                interaction.notify({
-                    type: "info",
-                    message:
-                        "No IAM Identity Center (SSO) profiles are configured. Run aws configure sso in a terminal, then try again.",
-                });
+                say(
+                    interaction,
+                    "No IAM Identity Center (SSO) profiles are configured. Run aws configure sso in a terminal, then try again.",
+                );
                 continue;
             }
             const name = await askProfile(interaction, ssoListed, "Which AWS SSO profile do you want to sign in to?");
             if (!(options.isSso?.(name) ?? false)) {
-                interaction.notify({
-                    type: "info",
-                    message: `${name} is not an IAM Identity Center (SSO) profile.`,
-                });
+                say(interaction, `${name} is not an IAM Identity Center (SSO) profile.`);
                 continue;
             }
             interaction.notify({
@@ -269,16 +334,16 @@ export async function runLoginFlow(
             try {
                 await options.signIn?.(name, interaction.signal);
             } catch (error) {
-                interaction.notify({ type: "info", message: recoveryHint(error) });
+                say(interaction, recoveryHint(error));
                 continue;
             }
             interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
             const check = await options.verify(name, interaction.signal);
             if (!check.ok) {
-                interaction.notify({ type: "info", message: check.message });
+                say(interaction, check.message);
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, name);
             return profileCredential(name);
         }
         if (method === "sso-new") {
@@ -374,7 +439,7 @@ export async function runLoginFlow(
             try {
                 await options.signIn?.(profile, interaction.signal);
             } catch (error) {
-                interaction.notify({ type: "info", message: recoveryHint(error) });
+                say(interaction, recoveryHint(error));
                 continue;
             }
             interaction.notify({ type: "progress", message: `Checking ${profile} with AWS…` });
@@ -383,7 +448,7 @@ export async function runLoginFlow(
                 say(interaction, check.message);
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, profile);
             return profileCredential(profile);
         }
         if (method === "role-new") {
@@ -481,7 +546,7 @@ export async function runLoginFlow(
                 say(interaction, check.message);
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, profile);
             return profileCredential(profile);
         }
         const name = await askProfile(interaction, listed);
@@ -494,19 +559,32 @@ export async function runLoginFlow(
                 interaction.notify({ type: "progress", message: `Checking ${name} with AWS…` });
                 check = await options.verify(name, interaction.signal);
             } catch (error) {
-                interaction.notify({
-                    type: "info",
-                    message: `Sign-in expired for ${name}: ${error instanceof Error ? error.message : String(error)}`,
-                });
+                say(
+                    interaction,
+                    `Sign-in expired for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+                );
                 continue;
             }
         }
         if (!check.ok) {
-            interaction.notify({ type: "info", message: check.message });
+            say(interaction, check.message);
             continue;
         }
-        await askDiscovery(interaction, options);
+        await askDiscovery(interaction, options, name);
         return profileCredential(name);
     }
     throw new Error("Too many sign-in attempts. Run /login again.");
+}
+
+export async function runLoginFlow(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+): Promise<ApiKeyCredential> {
+    activeNotes.add(interaction);
+    try {
+        return await runLoginFlowInner(interaction, options);
+    } finally {
+        activeNotes.delete(interaction);
+        noteTexts.delete(interaction);
+    }
 }

@@ -16,6 +16,7 @@ import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice, ProfileResolver } from "./profile.ts";
 import { readSettingsDocument, saveBudgetSetting, writeSettingsDocument } from "./settings-write.ts";
 import { formatMoney, monthLabel, type SpendTracker } from "./spend.ts";
+import { recoveryHint } from "./sso.ts";
 
 export interface BedrockCommandSpec {
     name: string;
@@ -112,14 +113,19 @@ export interface BedrockCommandSources {
     presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
-    doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
+    doctorAws?: (
+        signal: AbortSignal,
+    ) => Promise<Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>>;
     discoveryStatus?: () => Status | undefined;
+    discoveryMode?: () => string | undefined;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
+    clearRefusals?: () => number;
+    refused?: () => Array<{ arn: string; id: string; date: string }>;
 }
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
 export function registerBedrockCommands(
-    _pi: ExtensionAPI,
+    pi: ExtensionAPI,
     sources: BedrockCommandSources,
 ): { bedrock: BedrockCommand; completions: (prefix: string) => Array<{ value: string; label: string }> } {
     const { config, spend } = sources;
@@ -127,6 +133,10 @@ export function registerBedrockCommands(
     const m = markers(env);
 
     const usage = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await spendMenu(ctx);
+            return;
+        }
         const period = usageText(args);
         if (period === undefined) {
             const near = closest(args.trim().toLowerCase(), ["day", "week", "month"]);
@@ -140,6 +150,10 @@ export function registerBedrockCommands(
     };
     const budget = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const value = args.trim();
+        if (value === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await budgetMenu(ctx);
+            return;
+        }
         if (value === "") {
             await spend.budgetReport(ctx);
             return;
@@ -221,6 +235,10 @@ export function registerBedrockCommands(
         emit(ctx, `Bedrock · ${problems === 0 ? "ready" : `${problems} problem${problems === 1 ? "" : "s"}`}`, rows);
     };
     const models = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await modelsMenu(ctx);
+            return;
+        }
         if (args.trim() !== "") {
             emit(ctx, "Bedrock models", [`${m.fail} Usage: /bedrock ${usageFor("models")}`]);
             return;
@@ -245,6 +263,11 @@ export function registerBedrockCommands(
                 `${m.skip} This Pi does not know the model: ${clean(entry.profile, 60)}, ${clean(entry.region, 20)}`,
             );
         if (rejected.length > 3) rows.push(`${m.skip} ... and ${rejected.length - 3} more`);
+        const refused = sources.refused?.() ?? [];
+        if (refused.length > 0) {
+            rows.push("Refused by AWS for your role");
+            for (const entry of refused) rows.push(`${m.warn} ${entry.id} · ${entry.date.slice(0, 10)}`);
+        }
         if (list.length === 0) rows.push(`${m.warn} No models loaded.`);
         emit(ctx, `Bedrock models · ${list.length} · price per million tokens, in / out`, rows);
     };
@@ -325,21 +348,23 @@ export function registerBedrockCommands(
         if (key === "monthlyBudgetUsd") return Number(value);
         return value;
     };
-    const set = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-        const match = /^(\S+)\s+(.+)$/.exec(args.trim());
-        if (!match) {
+    const set = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<boolean> => {
+        const parts = args.trim().split(/\s+/);
+        if (parts.length < 2 || parts.length % 2 !== 0) {
             emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
-            return;
+            return false;
         }
-        const key = match[1] as string;
-        const value = match[2] as string;
-        if (!(FIELDS as readonly string[]).includes(key)) {
-            const near = closest(key, FIELDS);
-            emit(ctx, "Bedrock settings", [
-                `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
-                `Usage: /bedrock ${usageFor("set")}`,
-            ]);
-            return;
+        const pairs: Array<[string, string]> = [];
+        for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i] as string, parts[i + 1] as string]);
+        for (const [key] of pairs) {
+            if (!(FIELDS as readonly string[]).includes(key)) {
+                const near = closest(key, FIELDS);
+                emit(ctx, "Bedrock settings", [
+                    `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                    `Usage: /bedrock ${usageFor("set")}`,
+                ]);
+                return false;
+            }
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
@@ -347,55 +372,69 @@ export function registerBedrockCommands(
                 `${m.fail} Settings file is not valid JSON.`,
                 `${m.skip} File: ${displayPath(doc.file, env)}`,
             ]);
-            return;
+            return false;
         }
-        const parsed = parseSetting(key, value);
-        if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
-            emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
-            return;
+        for (const [key, value] of pairs) {
+            const parsed = parseSetting(key, value);
+            if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
+                emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
+                return false;
+            }
+            doc.target[key] = parsed;
         }
-        doc.target[key] = parsed;
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
-            emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
-            return;
+            const error = candidate.error ?? "The settings are not valid.";
+            const pair = /activeTagKey and activeTagValue|tagKey and tagValue/.exec(error);
+            emit(ctx, "Bedrock settings", [
+                `${m.fail} ${
+                    fromMenu
+                        ? `${pairs[0]?.[0] ?? "Value"}: value not accepted.`
+                        : pair
+                          ? `${pair[0]} go together: /bedrock set ${pair[0] === "activeTagKey and activeTagValue" ? "activeTagKey <key> activeTagValue <value>" : "tagKey <key> tagValue <value>"}`
+                          : error
+                }`,
+                ...(fromMenu ? [] : [`Usage: /bedrock ${usageFor("set")}`]),
+            ]);
+            return false;
         }
         const saved = writeSettingsDocument(env, doc.document);
         if (!saved.ok) {
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
-            return;
+            return false;
         }
-        Object.assign(config, candidate.config);
         sources.apply?.();
-        const shown = Array.isArray(parsed) ? parsed.join(", ") : String(parsed);
-        const needsRefresh = [
-            "profile",
-            "regions",
-            "tagKey",
-            "tagValue",
-            "activeTagKey",
-            "activeTagValue",
-            "profiles",
-            "api",
-            "converseModels",
-            "messagesModels",
-        ].includes(key);
+        const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
+        const needsRefresh = pairs.some(([key]) =>
+            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
+                key,
+            ),
+        );
         emit(ctx, "Bedrock settings", [
-            `${m.ok} ${key}: ${clean(shown, 55)} (saved to bedrock.json)`,
-            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+            `${m.ok} ${shown} (saved to bedrock.json)`,
+            ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
+        if (needsRefresh) await refresh("", ctx);
+        return true;
     };
-    const unset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-        const key = args.trim();
-        if (!(FIELDS as readonly string[]).includes(key)) {
-            const near = key === "" ? undefined : closest(key, FIELDS);
+    const unset = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
+        const keys = args.trim().split(/\s+/).filter(Boolean);
+        if (keys.length === 0) {
             emit(ctx, "Bedrock settings", [
-                key === ""
-                    ? `${m.fail} Usage: /bedrock ${usageFor("unset")}`
-                    : `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
-                ...(key === "" ? [] : [`Usage: /bedrock ${usageFor("unset")}`]),
+                `${m.fail} Usage: /bedrock ${usageFor("unset")}`,
+                "Usage: /bedrock unset <key> [key...]",
             ]);
             return;
+        }
+        for (const key of keys) {
+            if (!(FIELDS as readonly string[]).includes(key)) {
+                const near = closest(key, FIELDS);
+                emit(ctx, "Bedrock settings", [
+                    `${m.fail} Unknown setting ${clean(key, 60)}.${near ? ` Did you mean ${near}?` : ""}`,
+                    `Usage: /bedrock unset <key> [key...]`,
+                ]);
+                return;
+            }
         }
         const doc = readSettingsDocument(env);
         if ("error" in doc) {
@@ -405,7 +444,7 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        delete doc.target[key];
+        for (const key of keys) delete doc.target[key];
         const candidate = loadConfig({ raw: doc.target, env });
         if (!candidate.config) {
             emit(ctx, "Bedrock settings", [`${m.fail} ${candidate.error}`, "Next: /bedrock settings"]);
@@ -416,24 +455,17 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
-        Object.assign(config, candidate.config);
         sources.apply?.();
-        const needsRefresh = [
-            "profile",
-            "regions",
-            "tagKey",
-            "tagValue",
-            "activeTagKey",
-            "activeTagValue",
-            "profiles",
-            "api",
-            "converseModels",
-            "messagesModels",
-        ].includes(key);
+        const needsRefresh = keys.some((key) =>
+            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
+                key,
+            ),
+        );
         emit(ctx, "Bedrock settings", [
-            `${m.ok} ${key}: unset (saved to bedrock.json)`,
-            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+            `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
+            ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
+        if (needsRefresh) await refresh("", ctx);
     };
     const refresh = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (args.trim() !== "") {
@@ -447,6 +479,7 @@ export function registerBedrockCommands(
         const before = new Set(sources.models().map((model) => model.id));
         const selectedBefore = ctx.model?.provider === "jig-bedrock" ? ctx.model.id : undefined;
         if (ctx.hasUI && !toStdout(ctx)) emit(ctx, "Bedrock refresh", [`${m.skip} Reading the models from AWS…`]);
+        const cleared = sources.clearRefusals?.() ?? 0;
         const status = await sources.refresh();
         const after = sources.models();
         const added = after.filter((model) => !before.has(model.id)).length;
@@ -455,7 +488,7 @@ export function registerBedrockCommands(
             const advice = sources.discoveryStatus?.() ?? status;
             emit(ctx, "Bedrock refresh", [
                 `${m.fail} ${sources.failure?.() ?? "The models could not be read from AWS."}`,
-                `Next: ${discoveryHelp(advice)}`,
+                `Next: ${discoveryHelp(advice, sources.discoveryMode?.())}`,
             ]);
             return;
         }
@@ -469,9 +502,11 @@ export function registerBedrockCommands(
         }
         const rows = [
             `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
+            ...(cleared > 0 ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`] : []),
         ];
         if (selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore))
             rows.push("Choose /model if your selection was removed.");
+        for (const warning of warnings) rows.push(`${m.warn} ${warning}`);
         emit(ctx, "Bedrock refresh", rows);
     };
     const login = async (ctx: ExtensionCommandContext): Promise<void> => {
@@ -483,14 +518,7 @@ export function registerBedrockCommands(
             await sources.login();
             emit(ctx, "Bedrock login", [`${m.ok} Sign-in finished. Models will refresh in the background.`]);
         } catch (error) {
-            const cause = error instanceof Error ? error.message : String(error);
-            const profile = config.profile;
-            emit(ctx, "Bedrock login", [
-                `${m.fail} Sign-in did not finish: ${clean(cause, 140)}`,
-                profile === undefined
-                    ? "Next: choose an AWS profile with /login."
-                    : `Next: run "aws sso login --profile ${profile}" in a terminal, then /bedrock refresh.`,
-            ]);
+            emit(ctx, "Bedrock login", [`${m.fail} ${clean(recoveryHint(error), 200)}`, "Next: /bedrock doctor"]);
         }
     };
     const doctor = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
@@ -509,6 +537,7 @@ export function registerBedrockCommands(
             timeout: 15_000,
         });
         const rows: string[] = [];
+        const nextSteps: string[] = [];
         if (config.presetUnknown !== undefined)
             rows.push(
                 `${m.fail} Preset: ${clean(config.presetUnknown)} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}`,
@@ -518,21 +547,28 @@ export function registerBedrockCommands(
                 ? `${m.ok} Node ${health.node.version ?? "unknown"}`
                 : `${m.fail} Node ${health.node.version ?? "unknown"} (needs 22.19 or later)`;
         rows.push(node);
+        if (health.node.status !== "ready") nextSteps.push("Next: upgrade Node to 22.19 or later");
         if (health.aws.status === "ready") rows.push(`${m.ok} AWS CLI ${health.aws.version ?? "unknown"}`);
-        else if (health.aws.status === "old")
+        else if (health.aws.status === "old") {
             rows.push(`${m.fail} AWS CLI ${health.aws.version ?? "unknown"} (needs v2)`);
-        else if (health.aws.status === "missing") rows.push(`${m.fail} AWS CLI: not found. Install AWS CLI v2.`);
-        else rows.push(`${m.skip} AWS CLI: could not check`);
+            nextSteps.push("Next: install AWS CLI v2");
+        } else if (health.aws.status === "missing") {
+            rows.push(`${m.fail} AWS CLI: not found. Install AWS CLI v2.`);
+            nextSteps.push("Next: install AWS CLI v2");
+        } else rows.push(`${m.skip} AWS CLI: could not check`);
         const doc = readSettingsDocument(env);
         const home = env.HOME;
         const file = "file" in doc ? doc.file : join(home ?? "", ".pi/agent/bedrock.json");
         rows.push(`${m.ok} Settings: ${displayPath(file, env, 70)}`);
         const last = sources.lastChoice?.() ?? { profile: config.profile };
         const profile = last.profile ?? config.profile;
-        if (profile === undefined) rows.push(`${m.fail} AWS profile: none chosen; run /login`);
-        else if (last.exists === false)
+        if (profile === undefined) {
+            rows.push(`${m.fail} AWS profile: none chosen; run /login`);
+            nextSteps.push("Next: /login, choose Amazon Bedrock (jig-bedrock)");
+        } else if (last.exists === false) {
             rows.push(`${m.fail} AWS profile: ${clean(profile, 40)} is not in ~/.aws/config; run /login`);
-        else {
+            nextSteps.push("Next: /login, choose Amazon Bedrock (jig-bedrock)");
+        } else {
             const source =
                 last.source === "env"
                     ? "from JIG_BEDROCK_PROFILE"
@@ -545,16 +581,30 @@ export function registerBedrockCommands(
                           : "";
             rows.push(`${m.ok} AWS profile: ${clean(profile)}${source ? ` (${source})` : ""}`);
         }
-        let awsRows: Array<{ ok: boolean; text: string }> = [];
+        let awsRows: Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }> =
+            [];
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
         else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
+        if (!offline) for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
         for (const check of awsRows) {
             const text = check.text
                 .replace(/^AWS identity: /, "Sign-in: ")
                 .replace(/^Inference profiles: /, "Models: ")
                 .replace(/^One profile: /, "One inference profile: ");
             rows.push(`${check.ok ? m.ok : m.fail} ${text}`);
+            if (!check.ok) {
+                if (check.next !== undefined) nextSteps.push(check.next);
+                else if (check.check === "models") {
+                    const status = sources.discoveryStatus?.();
+                    nextSteps.push(
+                        status === undefined || status === "ok"
+                            ? "Next: check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh"
+                            : `Next: ${discoveryHelp(status, sources.discoveryMode?.())}`,
+                    );
+                } else if (check.check === "sign-in") nextSteps.push("Next: /bedrock login");
+                else nextSteps.push("Next: ask your AWS administrator for bedrock:GetInferenceProfile");
+            }
         }
         if (offline || health.aws.status !== "ready")
             rows.push(
@@ -574,6 +624,8 @@ export function registerBedrockCommands(
         rows.push(
             `${config.spendCommand === undefined ? m.skip : spendStatus.startsWith("ok") ? m.ok : m.fail} Spend command: ${spendStatus}`,
         );
+        if (config.spendCommand !== undefined && !spendStatus.startsWith("ok"))
+            nextSteps.push("Next: see docs/spend-command.md");
         if (debugEnabled(env, config)) rows.push(`${m.skip} Debug log: ${debugLogPath(env)}`);
         let requestOk = false;
         let requestError = "";
@@ -589,31 +641,16 @@ export function registerBedrockCommands(
                 } catch (error) {
                     requestError = error instanceof Error ? error.message : String(error);
                     rows.push(`${m.fail} Request: ${requestError}`);
+                    nextSteps.push(
+                        /data retention mode .* is not available for this model/i.test(requestError)
+                            ? 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".'
+                            : "Next: fix the request failure above, then /bedrock doctor call",
+                    );
                 }
             }
         }
         const problems = rows.filter((row) => row.startsWith(m.fail)).length;
-        const next = (() => {
-            const failed = rows.find((row) => row.startsWith(m.fail)) ?? "";
-            if (failed.includes("Preset")) return "Next: /bedrock use, or edit bedrock.json";
-            if (failed.includes("Node")) return "Next: upgrade Node to 22.19 or later";
-            if (failed.includes("AWS CLI")) return "Next: install AWS CLI v2";
-            if (failed.includes("AWS profile")) return "Next: /login, choose Amazon Bedrock (jig-bedrock)";
-            if (failed.includes("Sign-in")) return "Next: /bedrock login";
-            if (failed.includes("inference profile"))
-                return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
-            if (failed.includes("Models")) {
-                const status = sources.discoveryStatus?.();
-                return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status)}`;
-            }
-            if (failed.includes("Spend command")) return "Next: see docs/spend-command.md";
-            if (failed.includes("Request")) {
-                if (/data retention mode .* is not available for this model/i.test(requestError))
-                    return 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".';
-                return "Next: fix the request failure above, then /bedrock doctor call";
-            }
-            return "Next: /bedrock doctor";
-        })();
+        const next = nextSteps[0] ?? "Next: /bedrock doctor";
         if (problems === 0)
             rows.push(
                 call && requestOk
@@ -628,6 +665,10 @@ export function registerBedrockCommands(
         const name = args.trim();
         if (name.split(/\s+/).length > 1) {
             emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("use")}`]);
+            return;
+        }
+        if (name === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await presetsMenu(ctx);
             return;
         }
         if (name === "") {
@@ -738,13 +779,245 @@ export function registerBedrockCommands(
         }
         return distance <= 2 ? best : undefined;
     };
+    const menu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const actions: Array<{ label: string; run: () => Promise<void> | void }> = [
+            { label: "Status — profile, models, spend", run: () => status(ctx) },
+            { label: "Check setup — doctor", run: () => doctor("", ctx) },
+            { label: "Test one request — doctor call", run: () => doctor("call", ctx) },
+            { label: "Models — routes and prices", run: () => modelsMenu(ctx) },
+            { label: "Refresh models", run: () => refresh("", ctx) },
+            { label: "Sign in again", run: () => login(ctx) },
+            { label: "Presets", run: () => presetsMenu(ctx) },
+            { label: "Settings", run: () => settingsMenu(ctx) },
+            { label: "Spend", run: () => spendMenu(ctx) },
+            { label: "Budget", run: () => budgetMenu(ctx) },
+            { label: "Help", run: () => help("", ctx) },
+        ];
+        const choice = await ctx.ui.select(
+            "Bedrock",
+            actions.map((action) => action.label),
+        );
+        const action = actions.find((entry) => entry.label === choice);
+        if (action !== undefined) await action.run();
+    };
+    const presetsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const list = sources.presetList?.() ?? [];
+        const actions = new Map<string, () => Promise<void> | void>();
+        for (const entry of list) {
+            const active = entry.active ? `${m.ok} ` : "";
+            const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
+            actions.set(
+                `${active}${entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`,
+                () => sources.usePreset?.(entry.name, ctx),
+            );
+        }
+        actions.set("Save current settings as a preset…", async () => {
+            const name = await ctx.ui.input(
+                `Preset name · now: ${sources.activePreset?.().name ?? "none"} · e.g. work · empty cancels`,
+                "work",
+            );
+            if (name === undefined) return;
+            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
+                emit(ctx, "Bedrock presets", [
+                    `${m.fail} ${clean(name, 40)} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
+                ]);
+                return;
+            }
+            await sources.presetAdd?.(name, ctx);
+        });
+        actions.set("Remove a preset…", async () => {
+            if (list.length === 0) return;
+            const choices = new Map(list.map((entry) => [entry.name, entry.name]));
+            const selected = await ctx.ui.select("Remove preset", [...choices.keys(), "Back"]);
+            if (selected === undefined || selected === "Back") return;
+            const name = choices.get(selected);
+            if (name === undefined) return;
+            const confirmed = await ctx.ui.confirm("Remove preset", `Remove ${name}?`);
+            if (!confirmed) return;
+            await sources.presetRemove?.(name, ctx);
+        });
+        actions.set("Back", () => {});
+        const choice = await ctx.ui.select("Bedrock presets", [...actions.keys()]);
+        await actions.get(choice ?? "")?.();
+    };
+    const settingsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const doc = readSettingsDocument(env);
+        const values = config as unknown as Record<string, unknown>;
+        const envNames: Record<string, string> = {
+            tagKey: "JIG_BEDROCK_TAG_KEY",
+            tagValue: "JIG_BEDROCK_TAG_VALUE",
+            profile: "JIG_BEDROCK_PROFILE",
+            regions: "JIG_BEDROCK_REGIONS",
+            debug: "JIG_BEDROCK_DEBUG",
+        };
+        const sourceOf = (key: string): string => {
+            if (key === "preset") return config.presetSource === "env" ? "JIG_BEDROCK_PRESET variable" : "bedrock.json";
+            if (envNames[key] !== undefined && env[envNames[key] as string] !== undefined)
+                return `${envNames[key]} variable`;
+            if (!("error" in doc) && Object.hasOwn(doc.target, key)) return "bedrock.json";
+            if (Object.hasOwn(DEFAULTS as Record<string, unknown>, key)) return "default";
+            return "";
+        };
+        const labels: Array<{ key: string; label: string }> = [];
+        for (const key of FIELDS.filter((key) => key !== "presets")) {
+            if (key === "tagValue" || key === "activeTagValue") continue;
+            const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
+            if (pair !== undefined) {
+                const name = key === "tagKey" ? "Tag" : "Second tag";
+                const left = values[key];
+                const right = values[pair];
+                if (left === undefined && right === undefined) labels.push({ key, label: `${name}: not set` });
+                else
+                    labels.push({
+                        key,
+                        label: `${name}: ${String(left ?? "?")} = ${String(right ?? "?")} (${sourceOf(key)})`,
+                    });
+                continue;
+            }
+            const value =
+                key === "preset" ? config.preset : (values[key] ?? (DEFAULTS as Record<string, unknown>)[key]);
+            if (value === undefined || (Array.isArray(value) && value.length === 0)) {
+                labels.push({ key, label: `${key}: not set` });
+                continue;
+            }
+            const shown = Array.isArray(value) ? value.join(",") : String(value);
+            labels.push({ key, label: `${key}: ${shown} (${sourceOf(key)})` });
+        }
+        const choice = await ctx.ui.select("Bedrock settings", [...labels.map((entry) => entry.label), "Back"]);
+        if (choice === undefined || choice === "Back") return;
+        const key = labels.find((entry) => entry.label === choice)?.key;
+        if (key === undefined) return;
+        const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
+        const current = key === "preset" ? config.preset : (values[key] ?? (DEFAULTS as Record<string, unknown>)[key]);
+        const action = await ctx.ui.select(
+            `${key} (current: ${Array.isArray(current) ? current.join(",") : (current ?? "unset")})`,
+            ["Set", "Unset", "Back"],
+        );
+        if (action === undefined || action === "Back") return;
+        if (action === "Unset") {
+            await unset(pair === undefined ? key : `${key} ${pair}`, ctx, true);
+            return;
+        }
+        if (key === "api") {
+            const answer = await ctx.ui.select("api (example: messages)", ["messages", "converse"]);
+            if (answer !== undefined) await set(`api ${answer}`, ctx, true);
+            return;
+        }
+        if (key === "signInAtStart" || key === "debug") {
+            const answer = await ctx.ui.select(`${key} (current: ${String(current ?? "unset")})`, ["on", "off"]);
+            if (answer !== undefined) await set(`${key} ${answer === "on" ? "true" : "false"}`, ctx, true);
+            return;
+        }
+        if (pair !== undefined) {
+            const answer = await ctx.ui.input(
+                `${key === "tagKey" ? "Tag" : "Second tag"} · now: ${String(current ?? "not set")} · e.g. Team my-team · empty cancels`,
+                "Team my-team",
+            );
+            const [left, right] = (answer ?? "").trim().split(/\s+/);
+            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx, true);
+            return;
+        }
+        const examples: Record<string, string> = {
+            regions: "us-east-1",
+            profiles: "global.anthropic.claude-sonnet-5-5",
+            monthlyBudgetUsd: "200",
+            converseModels: "claude-opus-5",
+            messagesModels: "claude-sonnet-5-5",
+            spendCommand: "node spend.mjs",
+            ssoLoginCommand: "aws sso login --profile {profile}",
+            browser: "/usr/bin/xdg-open",
+        };
+        const format =
+            key === "regions" ? "comma separated, e.g. us-east-1,us-west-2" : `e.g. ${examples[key] ?? "value"}`;
+        let answer = await ctx.ui.input(
+            `${key}: ${format} · now: ${Array.isArray(current) ? current.join(",") : (current ?? "not set")} · empty keeps it · Unset removes it`,
+            current === undefined
+                ? (examples[key] ?? "value")
+                : Array.isArray(current)
+                  ? current.join(",")
+                  : String(current),
+        );
+        while (answer !== undefined && answer !== "") {
+            if (await set(`${key} ${answer}`, ctx, true)) return;
+            answer = await ctx.ui.input(
+                `${key}: value not accepted · ${format} · Escape leaves it unchanged`,
+                String(answer),
+            );
+        }
+    };
+    const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const list = sources.models();
+        const refused = sources.refused?.() ?? [];
+        const actions = new Map<string, () => Promise<void> | void>();
+        for (const model of list)
+            actions.set(`${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`, () => {
+                const region =
+                    /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(model.baseUrl)?.[1] ??
+                    model.arn.split(":")[3] ??
+                    "";
+                const details = [
+                    `${model.id}`,
+                    `${route(model, config)} route · ${routeReason(model, config)}`,
+                    `Region: ${region}`,
+                    `Price per million tokens: $${model.cost.input} in / $${model.cost.output} out`,
+                    `Inference profile: ${model.arn.slice(model.arn.lastIndexOf("/") + 1)}`,
+                    ctx.model?.provider === "jig-bedrock" && ctx.model.id === model.id
+                        ? "This is the session's model."
+                        : "Not the session's model.",
+                    "To keep it for every start: /model, select it, Ctrl+S.",
+                ].join("\n");
+                return ctx.ui.select(details, ["Use for this session", "Back"]).then(async (action) => {
+                    if (action !== "Use for this session") return;
+                    const target = ctx.modelRegistry.find("jig-bedrock", model.id);
+                    if (target !== undefined) await pi.setModel(target);
+                });
+            });
+        if (refused.length > 0) {
+            actions.set("Refused by AWS for your role", () => {});
+            for (const entry of refused)
+                actions.set(`${entry.id} · ${entry.date.slice(0, 10)}`, async () => {
+                    const action = await ctx.ui.select(
+                        `${entry.id}\nRefused ${entry.date.slice(0, 10)} by AWS for this role.`,
+                        ["Try again", "Back"],
+                    );
+                    if (action === "Try again") await refresh("", ctx);
+                });
+        }
+        actions.set("Back", () => {});
+        if (actions.size === 1) {
+            emit(ctx, "Bedrock models", [`${m.warn} No models loaded.`]);
+            return;
+        }
+        const choice = await ctx.ui.select("Bedrock models", [...actions.keys()]);
+        await actions.get(choice ?? "")?.();
+    };
+    const spendMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const period = await ctx.ui.select("Spend period", ["Month", "Week", "Day", "Back"]);
+        if (period === undefined || period === "Back") return;
+        await usage(period.toLowerCase(), ctx);
+    };
+    const budgetMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
+        const answer = await ctx.ui.input(
+            `Monthly budget in USD · now: ${config.monthlyBudgetUsd === undefined ? "none" : `$${config.monthlyBudgetUsd}`} · e.g. 200 · 0 or off clears · empty keeps it`,
+            config.monthlyBudgetUsd === undefined ? "200" : String(config.monthlyBudgetUsd),
+        );
+        if (answer === undefined || answer === "") return;
+        if (answer === "0" || answer === "off") await budget("off", ctx);
+        else await budget(answer, ctx);
+    };
     const full: BedrockCommand = async (args, ctx) => {
         const [command = "", ...rest] = args.trim().split(/\s+/);
         const tail = rest.join(" ");
         switch (command) {
             case "":
+                if (ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx) && tail === "") {
+                    await menu(ctx);
+                    return;
+                }
+                await status(ctx);
+                return;
             case "status":
-                if (command !== "" && tail !== "") {
+                if (tail !== "") {
                     emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("status")}`]);
                     return;
                 }

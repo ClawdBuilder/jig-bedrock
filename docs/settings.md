@@ -10,7 +10,7 @@ The package reads `~/.pi/agent/bedrock.json` (or `PI_CODING_AGENT_DIR/bedrock.js
 { "profile": "my-profile", "regions": ["us-east-1"] }
 ```
 
-Edit the file, or run `/bedrock set <key> <value>` and `/bedrock unset <key>`. `set` checks first, writes mode 0600, and applies at once where it can. Lists are comma separated. An unknown key warns; a bad value stops the provider, but `/bedrock settings`, `set` and `unset` still work.
+Edit the file, or run `/bedrock set <key> <value>` and `/bedrock unset <key>`. A save replaces the running settings at once, and a changed profile, region, tag or explicit list reloads the models. `unset` also takes effect at once. Lists are comma separated. An unknown key warns; a bad value stops the provider, but `/bedrock settings`, `set` and `unset` still work.
 
 From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `bedrock.json`, once, and never overwrites.
 
@@ -38,11 +38,15 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 | `browser`          | string                       | unset                               | none                    | Program that opens the sign-in address.                                |
 | `debug`            | boolean                      | `false`                             | `JIG_BEDROCK_DEBUG=1`   | One private JSON line per request, discovery or repair.                |
 
-`set` and `unset` change one key at a time. A model cannot be in both `converseModels` and `messagesModels`.
+`set` accepts several key-value pairs and `unset` several keys in one command, for example `/bedrock set activeTagKey Active activeTagValue true`. A model cannot be in both `converseModels` and `messagesModels`.
 
 ## Presets
 
 A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
+
+When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
+
+A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again.
 
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 
@@ -58,7 +62,7 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 
 `/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the current sign-in, and `/bedrock preset remove work` deletes it. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. A `profile` set by hand is replaced by the AWS profile chosen at `/login`; a preset's own `profile` still wins.
+Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, not the top level.
 
 ## Which AWS profile is used
 

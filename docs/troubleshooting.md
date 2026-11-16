@@ -51,7 +51,19 @@ In tag mode the row says `no inference profiles with tag Team=payments`.
 
 **Run:** `/bedrock refresh`
 
-**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. Then run `/bedrock models`.
+**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. If one region fails, the others still load and the warning names the failed region. Then run `/bedrock models`.
+
+## AccessDenied for a model
+
+**You see**
+
+```text
+AWS refused claude-opus-5 for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.
+```
+
+**Run:** `/login` (choose the tag that marks the inference profiles your role may call) or `/bedrock settings`.
+
+**Still wrong?** Ask your AWS administrator for `bedrock:InvokeModelWithResponseStream` on the application inference profile. `/bedrock models` lists refused models separately for seven days.
 
 ## Unknown preset
 

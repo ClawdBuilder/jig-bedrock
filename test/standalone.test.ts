@@ -48,7 +48,19 @@ function fixture() {
         calls.push(args);
         const region = args[args.indexOf("--region") + 1];
         if (args.includes("get-caller-identity")) return JSON.stringify({ Account: state.account });
-        if (state.fail && region === "us-west-2") throw new Error(state.fail);
+        if (state.fail) throw new Error(state.fail);
+        if (state.account !== account && args.includes("get-resources"))
+            return JSON.stringify({
+                ResourceTagMappingList: [
+                    {
+                        ResourceARN: arn("old"),
+                        Tags: [
+                            { Key: "Team", Value: config.team },
+                            { Key: "Active", Value: "true" },
+                        ],
+                    },
+                ],
+            });
         if (args.includes("get-resources")) {
             assert.deepEqual(JSON.parse(args[args.indexOf("--tag-filters") + 1]!), [
                 { Key: "Team", Values: ["fixture-team"] },
@@ -168,7 +180,8 @@ test("discovery bounds bytes, pagination and deadline and never publishes raw fa
         );
     };
     assert.equal(await createAwsDiscovery(config, repeating, file).refresh(), "unavailable");
-    assert.ok(calls <= 3);
+    // One STS call, then two regions; each region's repeated pagination token costs two calls (first page + repeated token).
+    assert.equal(calls, 7);
 });
 test("config precedence and invalid or missing teams fail closed without throwing", () => {
     assert.equal(resolveConfig(undefined)?.mode, "system");
@@ -260,7 +273,8 @@ test("discovery rejects returned tags outside the configured team and safely dis
         config,
         async (...args) => {
             const value = JSON.parse(await f.runner(...args));
-            if (value.ResourceTagMappingList?.length) value.ResourceTagMappingList[0].Tags[0].Value = "other-team";
+            if (!value.ResourceTagMappingList?.length) throw new Error("profile tags");
+            value.ResourceTagMappingList[0].Tags[0].Value = "other-team";
             return JSON.stringify(value);
         },
         file,
@@ -428,8 +442,8 @@ test("saved default comes from the active Pi home and warns once when unavailabl
     };
     await hooks.get("session_start")?.({}, ctx);
     assert.equal(notices.length, 1);
-    assert.match(notices[0]!, /Saved Bedrock model is unavailable/);
-    assert.match(notices[0]!, /for your profiles/);
+    assert.match(notices[0]!, /Saved Bedrock model is not loaded yet/);
+    assert.match(notices[0]!, /models are still arriving/);
     assert.doesNotMatch(notices[0]!, /\bteam\b/i);
 });
 

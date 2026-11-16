@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-16
+
+- Added: a `/bedrock` menu for status, setup, models, sign-in, presets, settings, spend and budget; `/bedrock models` shows model details and can use a model for this session.
+- Added: `/login` offers a second tag to narrow a tag's profiles.
+- Added: `/bedrock set` takes several key-value pairs, so a tag pair can be set in one command.
+- Changed: saves reload the models for the new settings; `/bedrock unset` takes effect at once; the settings list shows one row per tag pair and input prompts carry their examples.
+- Changed: a refused model is hidden for seven days per AWS profile and account, and `/bedrock refresh` brings it back.
+- Fixed: a preset switch now registers the new preset's models instead of keeping the old ones.
+- Fixed: a saved model is restored when models arrive after startup.
+- Fixed: a region your account cannot use is no longer reported as an expired sign-in.
+- Fixed: `/bedrock doctor` fills the model list it found.
+- Fixed: `/login` says when models are still loading instead of claiming the old count.
+- Fixed: start-up keeps saying what failed for AWS_PROFILE and default-profile users.
+- Fixed: `/login` without the AWS CLI names where to install it.
+- Fixed: a failed region is skipped with a warning instead of discarding every region's models.
+- Fixed: doctor advice comes from the failing check, and `/login` says why it came back instead of silently showing the method list.
+- Fixed: `/login` uses the profile and regions just chosen for its tag lookup, and saves into the active preset.
+- Fixed: a role over SSO renews its source profile, while a keys profile is not sent to `aws sso login`.
+- Fixed: `set`/`unset` replace the running settings and profile choice, so commands no longer use stale values.
+
 ## [0.5.3] - 2026-11-16
 
 - A saved catalog is put in the Sonnet-first order at the factory, so a restart with no default model starts on a Sonnet.

@@ -27,7 +27,7 @@ async function doctor(
     options: {
         check?: typeof ready;
         last?: Record<string, unknown>;
-        aws?: Array<{ ok: boolean; text: string }>;
+        aws?: Array<{ ok: boolean; text: string; check?: "sign-in" | "models" | "one-profile"; next?: string }>;
         models?: unknown[];
         spendCommand?: string[];
         profile?: string;
@@ -44,6 +44,7 @@ async function doctor(
             | { ok: true; route: string; ms: number; cacheRead: number; cacheWrite: number }
             | { ok: false; error: string };
         args?: string;
+        mode?: string;
     } = {},
 ) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-case-"));
@@ -67,8 +68,19 @@ async function doctor(
         check: async () => (options.check ?? ready) as never,
         lastChoice: () => (options.last ?? { profile: "fixture", exists: true }) as never,
         unavailable: () => [],
-        doctorAws: async () => options.aws ?? [],
+        doctorAws: async () =>
+            (options.aws ?? []).map((row) => ({
+                ...row,
+                check:
+                    row.check ??
+                    (row.text.startsWith("Sign-in") || row.text.startsWith("AWS identity")
+                        ? ("sign-in" as const)
+                        : row.text.startsWith("One profile")
+                          ? ("one-profile" as const)
+                          : ("models" as const)),
+            })),
         discoveryStatus: options.status === undefined ? undefined : () => options.status,
+        discoveryMode: options.mode === undefined ? undefined : () => options.mode,
         doctorCall:
             options.call === undefined
                 ? undefined
@@ -233,4 +245,52 @@ test("a Fable data-retention refusal gets the model-specific next step", async (
     assert.match(text, /data retention mode/);
     assert.match(text, /needs an AWS account data-retention setting/);
     assert.match(text, /A Fable model is refused/);
+});
+
+test("a tag permission failure asks for tag:GetResources, not ListInferenceProfiles", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Models: Could not list tagged inference profiles: AWS denied access." }],
+    });
+    assert.match(text, /tag:GetResources/);
+    assert.doesNotMatch(text, /ListInferenceProfiles|GetInferenceProfile/);
+});
+
+test("an empty tag result is a settings problem, not a permission", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "ok",
+        aws: [{ ok: false, text: "Models: no inference profiles with tag Team=payments in us-east-1" }],
+    });
+    assert.match(text, /check regions and the tag or explicit list/);
+    assert.doesNotMatch(text, /GetInferenceProfile|ListInferenceProfiles/);
+});
+
+test("the doctor's next step does not depend on a Models row's wording", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "permission_denied",
+        aws: [
+            {
+                ok: false,
+                text: "Profiles found: an inference profile appears here, but this is the Models check",
+            },
+        ],
+    });
+    assert.match(text, /Next: Ask your AWS administrator for tag:GetResources/);
+});
+
+test("a profileProblem row carries its own next step", async (t) => {
+    const text = await doctor(t, {
+        aws: [
+            {
+                ok: false,
+                text: "deploy uses source_profile base, which is not SSO",
+                check: "sign-in",
+                next: "Next: fix source_profile in the AWS config",
+            },
+        ],
+    });
+    assert.match(text, /Next: fix source_profile in the AWS config/);
 });

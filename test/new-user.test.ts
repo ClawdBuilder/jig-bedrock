@@ -82,7 +82,7 @@ test("start-up with no profile names the setting and points to /login", async ()
     }
 });
 
-test("an automatically picked default profile that fails gets only the /login notice", async () => {
+test("an automatically picked default profile that fails gets the status-specific notice", async () => {
     const dir = home();
     try {
         const { notices, providers } = await startWith({
@@ -93,8 +93,8 @@ test("an automatically picked default profile that fails gets only the /login no
             env: { HOME: dir, PI_CODING_AGENT_DIR: dir },
         });
         const text = notices.join("\n");
-        assert.match(text, /Bedrock: run \/login, choose Amazon Bedrock \(jig-bedrock\), then \/model\./);
-        assert.doesNotMatch(text, /has no credentials|Warning/);
+        assert.match(text, /has no credentials/);
+        assert.doesNotMatch(text, /run \/login, choose Amazon Bedrock/);
         const provider = providers.find((entry) => entry?.id === "jig-bedrock");
         assert.equal(
             await provider.auth.apiKey.resolve({

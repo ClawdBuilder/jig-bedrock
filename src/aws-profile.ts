@@ -81,6 +81,32 @@ export async function verifyAwsProfile(
     };
 }
 
+/** The profile whose SSO session must be renewed: the profile itself, or one source_profile level. */
+export function ssoSignInTarget(
+    profile: string,
+    env: NodeJS.ProcessEnv = process.env,
+): { target: string; via?: string } | { problem: string } {
+    const text = readConfig(env);
+    if (text === undefined) return { problem: `${profile} is not in the AWS config.` };
+    const sections = parseAwsConfig(text);
+    const section = sections.get(`profile:${profile}`) ?? sections.get(profile);
+    if (section === undefined) return { problem: `${profile} has no profile section in the AWS config.` };
+    if (section.get("sso_session") !== undefined || section.get("sso_start_url") !== undefined)
+        return { target: profile };
+    const source = section.get("source_profile");
+    if (source === undefined || source === "")
+        return {
+            problem: `${profile} signs in with its own keys or role, not an IAM Identity Center (SSO) session. Check it with "aws sts get-caller-identity --profile ${profile}", or use /login to choose another AWS profile.`,
+        };
+    if (source === profile)
+        return { problem: `${profile} names itself as source_profile; fix the loop in the AWS config.` };
+    if (!isSsoProfile(source, env))
+        return {
+            problem: `${profile} uses source_profile ${source}, which is not an IAM Identity Center (SSO) profile. Fix the AWS config or use /login to choose another AWS profile.`,
+        };
+    return { target: source, via: profile };
+}
+
 /** What is wrong with this profile for an SSO sign-in, or undefined when it is a listed SSO profile. */
 export async function profileProblem(
     profile: string,
@@ -103,10 +129,14 @@ export async function profileProblem(
     const sections = parseAwsConfig(text);
     const section = sections.get(`profile:${profile}`) ?? sections.get(profile);
     if (section === undefined)
-        return `${profile} has no profile section in the AWS config, so it is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions.`;
+        return `${profile} has no profile section in the AWS config. /bedrock login only renews IAM Identity Center (SSO) sessions.`;
     const session = section.get("sso_session");
-    if (session === undefined && section.get("sso_start_url") === undefined)
-        return `${profile} is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions; an AWS profile with keys or a role does not need it.`;
+    if (session === undefined && section.get("sso_start_url") === undefined) {
+        const target = ssoSignInTarget(profile, env);
+        if ("problem" in target) return target.problem;
+        if (target.via !== undefined) return undefined;
+        return `${profile} is not an IAM Identity Center (SSO) profile.`;
+    }
     if (session !== undefined && session !== "" && !sections.has(`sso-session:${session}`))
         return `${profile} names the SSO session ${session}, but [sso-session ${session}] is not in the AWS config. Run aws configure sso again.`;
     return undefined;
@@ -122,12 +152,15 @@ export function checkedRecovery(
     options: { manualList: ListProfiles; env: NodeJS.ProcessEnv },
 ): Recover {
     return async (profile, signal, source = "manual") => {
-        const problem = await profileProblem(profile, {
+        const target = ssoSignInTarget(profile, options.env);
+        if ("problem" in target) throw new SsoRecoveryError("profile", source === "request", target.problem);
+        const problem = await profileProblem(target.target, {
             ...(source === "manual" ? { list: options.manualList } : {}),
             env: options.env,
             ...(signal === undefined ? {} : { signal }),
         });
         if (problem !== undefined) throw new SsoRecoveryError("profile", source === "request", problem);
+        profile = target.target;
         return recovery(profile, signal, source);
     };
 }

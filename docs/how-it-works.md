@@ -80,7 +80,7 @@ _One retry, never a third time; details in [Sign-in repair](#sign-in-repair) and
 
 1. At session start, the saved SSO token's expiry is checked. An expired one gets a `/bedrock login` notice. With `signInAtStart: true` the sign-in starts at once; the default is false.
 2. If a request fails before any reply because the SSO session expired, `ssoLoginCommand` (`aws sso login --profile <name>`) runs, then the request is sent once more. Never a third time.
-3. `/bedrock login` runs the same sign-in. One login runs at a time; a lock file separates two Pi processes.
+3. `/bedrock login` runs the same sign-in. A role profile renews its SSO `source_profile`; a keys profile is not sent to `aws sso login`. One login runs at a time; a lock file separates two Pi processes.
 
 A browser opens for the sign-in. On WSL the package opens the Windows browser through `bin/windows-browser`; `browser` names another program. The package never stores a password or token; `/login` stores only the AWS profile name.
 

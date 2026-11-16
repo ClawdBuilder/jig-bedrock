@@ -230,7 +230,7 @@ test("a typed non-SSO profile is refused before any sign-in", async () => {
     });
     assert.equal(signed, 1, "the second, SSO attempt signs in");
     assert.deepEqual(credential.env, { AWS_PROFILE: "demo-sso" });
-    assert.match(fake.notices.map((notice) => notice.message).join("\n"), /keys is not an IAM Identity Center/);
+    assert.match(fake.prompts.map((prompt) => prompt.message ?? "").join("\n"), /keys is not an IAM Identity Center/);
     assert.equal(ssoAttempts, 2);
 });
 
@@ -286,7 +286,7 @@ test("a failed check says so and asks again", async () => {
     });
     assert.equal(attempt, 2);
     assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
-    assert.match(fake.notices.map((notice) => notice.message).join("\n"), /AWS did not answer for keys/);
+    assert.match(fake.prompts.map((prompt) => prompt.message ?? "").join("\n"), /AWS did not answer for keys/);
 });
 
 test("tag and explicit discovery choices are saved with the regions", async () => {
@@ -443,7 +443,7 @@ test("a bad SSO account ID is reported before anything is written", async () => 
         },
     });
     assert.equal(written, 0);
-    assert.match(fake.notices.map((notice) => notice.message).join("\n"), /12-digit AWS account ID/);
+    assert.match(fake.prompts.map((prompt) => prompt.message ?? "").join("\n"), /12-digit AWS account ID/);
     assert.deepEqual(
         credential.env,
         { AWS_PROFILE: "keys" },
@@ -517,7 +517,7 @@ test("a source profile that does not exist is refused before writing", async () 
     });
     assert.equal(written, 0);
     assert.match(
-        fake.notices.map((notice) => notice.message).join("\n"),
+        fake.prompts.map((prompt) => prompt.message ?? "").join("\n"),
         /missing-source is not in aws configure list-profiles/,
     );
     assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
@@ -534,4 +534,166 @@ test("the new-profile questions never ask for a secret", async () => {
         assert.notEqual(prompt.type, "secret");
         assert.doesNotMatch(prompt.message ?? "", /enter (your |the )?(secret|access key)|secret access key:/i);
     }
+});
+
+function tagAnswer(prompt: Prompt): string {
+    if (prompt.message === "How do you sign in to AWS?") return "existing";
+    if (prompt.message === "Which inference profiles should Bedrock list?") return "tag";
+    if (prompt.message === "Tag key") return "Team";
+    if (prompt.message === "Tag value") return "payments";
+    if (prompt.message === "AWS regions for discovery (comma separated)") return "eu-west-1";
+    if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+    if (prompt.type === "select" && prompt.message?.includes("second tag")) return "no";
+    return "";
+}
+
+test("the tag lookup receives the profile and regions chosen in this login", async () => {
+    const fake = interaction(tagAnswer);
+    const seen: Array<{ profile?: string; regions?: string[] }> = [];
+    let saved: DiscoverySettings | undefined;
+    const value = await runLoginFlow(
+        fake.value as never,
+        options({
+            verify: async (profile) => {
+                assert.equal(profile, "keys");
+                return { ok: true };
+            },
+            tagMatches: async (profile, regions) => {
+                seen.push({ profile, regions });
+                return [];
+            },
+            saveDiscovery: (settings) => {
+                saved = settings;
+                return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+            },
+        }),
+    );
+    assert.equal(value.type, "api_key");
+    assert.deepEqual(seen, [{ profile: "keys", regions: ["eu-west-1"] }]);
+    assert.deepEqual(saved?.regions, ["eu-west-1"]);
+});
+
+test("a failed tag lookup skips the second tag but still saves the login", async () => {
+    const fake = interaction(tagAnswer);
+    let saved = false;
+    let reported = "";
+    const value = await runLoginFlow(
+        fake.value as never,
+        options({
+            reportNote: (message) => {
+                reported = message;
+            },
+            tagMatches: async () => {
+                throw new Error("Unable to locate credentials");
+            },
+            saveDiscovery: () => {
+                saved = true;
+                return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+            },
+        }),
+    );
+    assert.equal(value.type, "api_key");
+    assert.equal(saved, true);
+    assert.match(reported, /Could not read the tags .*Unable to locate credentials/);
+});
+
+const methodSelect = (prompt: Prompt) =>
+    prompt.type === "select" && prompt.message?.includes("How do you sign in to AWS?");
+
+test("a wrong SSO start URL is carried into the next method prompt", async () => {
+    const prompts: string[] = [];
+    let method = 0;
+    const fake = interaction((prompt) => {
+        if (methodSelect(prompt)) {
+            method++;
+            return method === 1 ? "sso-new" : "chain";
+        }
+        if (prompt.message === "New AWS SSO profile name") return "demo-sso";
+        if (prompt.message === "SSO start URL") return "http://x";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        return "";
+    });
+    const original = fake.value.prompt;
+    fake.value.prompt = async (prompt: Prompt) => {
+        prompts.push(prompt.message ?? "");
+        return original(prompt);
+    };
+    await runLoginFlow(fake.value as never, options());
+    const next = prompts.filter((message) => message.includes("How do you sign in to AWS?")).at(-1) ?? "";
+    assert.match(next, /SSO start URL must start with https:\/\//);
+});
+
+test("a failed STS check is carried into the next method prompt", async () => {
+    let method = 0;
+    const fake = interaction((prompt) => {
+        if (methodSelect(prompt)) {
+            method++;
+            return method === 1 ? "existing" : "chain";
+        }
+        if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        return "";
+    });
+    const prompts: string[] = [];
+    const original = fake.value.prompt;
+    fake.value.prompt = async (prompt: Prompt) => {
+        prompts.push(prompt.message ?? "");
+        return original(prompt);
+    };
+    await runLoginFlow(
+        fake.value as never,
+        options({
+            verify: async (profile) =>
+                profile === "keys" ? { ok: false, message: "AWS did not answer for keys." } : { ok: true },
+        }),
+    );
+    const next = prompts.filter((message) => message.includes("How do you sign in to AWS?")).at(-1) ?? "";
+    assert.match(next, /AWS did not answer for keys/);
+    const info = fake.notices.filter(
+        (notice) => notice.type === "info" && !notice.message?.startsWith("Saved discovery"),
+    );
+    assert.deepEqual(info, [], "the reason is only in the next prompt title, not a hidden notify");
+});
+
+test("no SSO profiles is carried into the next method prompt", async () => {
+    let method = 0;
+    const fake = interaction((prompt) => {
+        if (methodSelect(prompt)) {
+            method++;
+            return method === 1 ? "sso" : "chain";
+        }
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        return "";
+    });
+    const prompts: string[] = [];
+    const original = fake.value.prompt;
+    fake.value.prompt = async (prompt: Prompt) => {
+        prompts.push(prompt.message ?? "");
+        return original(prompt);
+    };
+    await runLoginFlow(fake.value as never, options({ listProfiles: async () => [] }));
+    const next = prompts.filter((message) => message.includes("How do you sign in to AWS?")).at(-1) ?? "";
+    assert.match(next, /No IAM Identity Center \(SSO\) profiles are configured/);
+});
+
+test("a second login starts with no note from the first, and its own failure appears", async () => {
+    const run = async (url: string) => {
+        let method = 0;
+        const fake = interaction((prompt) => {
+            if (methodSelect(prompt)) {
+                method++;
+                return method === 1 ? "sso-new" : "chain";
+            }
+            if (prompt.message === "New AWS SSO profile name") return "demo-sso";
+            if (prompt.message === "SSO start URL") return url;
+            if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+            return "";
+        });
+        await runLoginFlow(fake.value as never, options());
+        return fake.prompts.map((prompt) => prompt.message ?? "").join("\n");
+    };
+    await run("http://first");
+    const second = await run("http://second");
+    assert.match(second, /SSO start URL must start with https:\/\//);
+    assert.doesNotMatch(second, /http:\/\/first/);
 });

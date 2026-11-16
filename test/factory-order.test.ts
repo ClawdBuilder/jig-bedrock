@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test doubles */
 // The saved catalog is turned into models at the factory, before session_start. Its order must be the same
 // Sonnet-first order the refresh path uses, or Pi starts on AWS's first profile.
 import assert from "node:assert/strict";
@@ -10,6 +11,7 @@ import { catalogFileFor } from "../src/cache-root.ts";
 import { filterHash, readCatalog } from "../src/catalog.ts";
 import { loadConfig } from "../src/config.ts";
 import { createBedrockProvider } from "../src/provider.ts";
+import { isRefused, rememberRefusal } from "../src/refusals.ts";
 
 const rows = [
     "claude-opus-5",
@@ -89,10 +91,11 @@ function harness() {
     };
 }
 
-async function start(t: test.TestContext) {
+async function start(t: test.TestContext, before?: (env: NodeJS.ProcessEnv) => void) {
     const h = home();
     t.after(() => rmSync(h.dir, { recursive: true, force: true }));
     assert.ok(h.config.config);
+    before?.(h.env);
     const p = harness();
     const handle = await createBedrockProvider({
         env: h.env,
@@ -103,7 +106,7 @@ async function start(t: test.TestContext) {
     assert.ok(handle);
     const provider = p.providers.find((entry) => entry.id === "jig-bedrock");
     assert.ok(provider);
-    return { ...h, provider, handle, commands: p.commands, pi: p.pi };
+    return { ...h, provider, providers: p.providers, handle, commands: p.commands, pi: p.pi };
 }
 
 const models = (provider: any): Array<{ id: string; foundationModelId: string }> =>
@@ -156,4 +159,11 @@ test("a preset switch to an AWS-order saved catalog registers Sonnet first", asy
         sessionManager: { getSessionId: () => "s" },
     });
     assert.match(models(s.provider)[0]?.id ?? "", /sonnet-5-5/);
+});
+
+test("a remembered refusal is hidden at the factory", async (t) => {
+    const s = await start(t, (env) =>
+        rememberRefusal(env, "fixture", account, catalog.profiles[0]!.arn, "claude-opus-5"),
+    );
+    assert.ok(!models(s.provider).some((model) => model.id === "claude-opus-5"));
 });
