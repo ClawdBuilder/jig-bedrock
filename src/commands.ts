@@ -129,6 +129,10 @@ export function registerBedrockCommands(
     const m = markers(env);
 
     const usage = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await spendMenu(ctx);
+            return;
+        }
         const period = usageText(args);
         if (period === undefined) {
             const near = closest(args.trim().toLowerCase(), ["day", "week", "month"]);
@@ -142,6 +146,10 @@ export function registerBedrockCommands(
     };
     const budget = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const value = args.trim();
+        if (value === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await budgetMenu(ctx);
+            return;
+        }
         if (value === "") {
             await spend.budgetReport(ctx);
             return;
@@ -983,7 +991,9 @@ export function registerBedrockCommands(
             "Monthly budget in USD",
             config.monthlyBudgetUsd === undefined ? "200" : String(config.monthlyBudgetUsd),
         );
-        if (answer !== undefined && answer !== "") await budget(answer, ctx);
+        if (answer === undefined || answer === "") return;
+        if (answer === "0" || answer === "off") await budget("off", ctx);
+        else await budget(answer, ctx);
     };
     const full: BedrockCommand = async (args, ctx) => {
         const [command = "", ...rest] = args.trim().split(/\s+/);

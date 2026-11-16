@@ -555,3 +555,116 @@ test("the models menu Escape does nothing", async (t) => {
     assert.equal(h.ctx.model, undefined);
     assert.deepEqual(h.notices, []);
 });
+
+test("the main menu offers every action and Escape closes", async (t) => {
+    const h = harness(t, {});
+    withUi(h, []);
+    await h.result.bedrock("", h.ctx as never);
+    const options = (h.ctx.ui as any).calls[0].options as string[];
+    assert.deepEqual(
+        options.map((option) => option.split(" — ")[0]),
+        [
+            "Status",
+            "Check setup",
+            "Test one request",
+            "Models",
+            "Refresh models",
+            "Sign in again",
+            "Presets",
+            "Settings",
+            "Spend",
+            "Budget",
+            "Help",
+        ],
+    );
+    assert.deepEqual(h.notices, []);
+});
+
+test("each main-menu action reaches its command", async (t) => {
+    const cases: Array<[string, string[], string]> = [
+        ["Status", ["Status"], /Bedrock ·/],
+        ["Check setup", ["Check setup"], /Bedrock doctor/],
+        ["Test one request", ["Test one request"], /tiny request/],
+        ["Refresh models", ["Refresh models"], /Bedrock refresh/],
+        ["Sign in again", ["Sign in again"], /Bedrock login/],
+        ["Help", ["Help"], /Bedrock commands/],
+    ];
+    for (const [, selects, expected] of cases) {
+        const h = harness(t, {});
+        withUi(h, selects);
+        await h.result.bedrock("", h.ctx as never);
+        assert.match(h.notices.join("\n"), expected, selects[0]);
+    }
+    for (const [label, nested] of [
+        ["Models", "Back"],
+        ["Presets", "Back"],
+        ["Settings", "Back"],
+        ["Spend", "Back"],
+    ] as const) {
+        const h = harness(t, {});
+        withUi(h, [label, nested]);
+        await h.result.bedrock("", h.ctx as never);
+        assert.ok(((h.ctx.ui as any).calls as unknown[]).length >= 2, label);
+    }
+});
+
+test("Spend asks for a period and shows the existing report", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Spend", "Week"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /last 7 days/);
+});
+
+test("Budget sets, clears, rejects an invalid value and does nothing on empty", async (t) => {
+    const set = harness(t, {});
+    withUi(set, ["Budget"], ["250"]);
+    await set.result.bedrock("", set.ctx as never);
+    assert.match(set.notices.at(-1) ?? "", /Budget set to \$250/);
+    const clear = harness(t, {});
+    withUi(clear, ["Budget"], ["0"]);
+    await clear.result.bedrock("", clear.ctx as never);
+    assert.match(clear.notices.at(-1) ?? "", /Budget removed/);
+    const bad = harness(t, {});
+    withUi(bad, ["Budget"], ["nope"]);
+    await bad.result.bedrock("", bad.ctx as never);
+    assert.match(bad.notices.at(-1) ?? "", /at least \$1/);
+    const empty = harness(t, {});
+    withUi(empty, ["Budget"], [""]);
+    await empty.result.bedrock("", empty.ctx as never);
+    assert.deepEqual(empty.notices, []);
+});
+
+test("typed commands and no-UI mode do not open a menu", async (t) => {
+    const h = harness(t, {});
+    let selects = 0;
+    h.ctx.mode = "json";
+    h.ctx.hasUI = false;
+    h.ctx.ui.select = async () => {
+        selects++;
+        return undefined;
+    };
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        for (const args of ["status", "help", "models", "usage month", "budget 200", "settings"]) {
+            await h.result.bedrock(args, h.ctx as never);
+        }
+    } finally {
+        process.stdout.write = original;
+    }
+    assert.equal(selects, 0);
+    const text = writes.join("");
+    for (const expected of [
+        "Bedrock commands",
+        "Bedrock models",
+        "Bedrock spend",
+        "Bedrock budget",
+        "Bedrock settings",
+    ]) {
+        assert.match(text, new RegExp(expected), expected);
+    }
+});
