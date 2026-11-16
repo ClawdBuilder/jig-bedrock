@@ -1,0 +1,43 @@
+name: Bug
+description: Something in jig-bedrock does not work.
+labels: [bug]
+body:
+    - type: textarea
+      id: problem
+      attributes:
+          label: What happened?
+          description: What you expected, and what happened instead.
+      validations:
+          required: true
+    - type: textarea
+      id: doctor
+      attributes:
+          label: /bedrock doctor output
+          description: Paste the whole block. Remove account ids, ARNs and AWS profile names first.
+          render: text
+      validations:
+          required: true
+    - type: input
+      id: pi
+      attributes:
+          label: Pi version
+          placeholder: 1.5.2
+      validations:
+          required: true
+    - type: input
+      id: node
+      attributes:
+          label: Node version
+          placeholder: 22.19.0
+      validations:
+          required: true
+    - type: input
+      id: install
+      attributes:
+          label: How jig-bedrock was installed
+          placeholder: pi install npm:@clawdbuilder/jig-bedrock
+      validations:
+          required: true
+    - type: markdown
+      attributes:
+          value: Remove account ids, ARNs and AWS profile names before posting.

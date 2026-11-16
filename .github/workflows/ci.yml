@@ -4,6 +4,9 @@ on:
     push:
         branches: [main]
     pull_request:
+    schedule:
+        # Every Monday at 03:17 UTC; this tests Pi latest without a push.
+        - cron: "17 3 * * 1"
 
 permissions:
     contents: read
@@ -166,9 +169,37 @@ jobs:
         timeout-minutes: 5
         permissions: {}
         steps:
+            - name: Check workflows with actionlint
+              run: |
+                  curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- 1.7.7
+                  ./actionlint -color
             - name: Every job succeeded
               env:
                   NEEDS: ${{ toJSON(needs) }}
               run: |
                   echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
                   echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")' > /dev/null
+
+    scheduled-issue:
+        name: Scheduled failure issue
+        if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+        needs: [checks, pi-versions, packed-install, macos]
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            issues: write
+        steps:
+            - name: Open or update one issue
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              run: |
+                  title="Scheduled CI failed"
+                  body="The scheduled run failed: ${RUN_URL}. Fix it before the next release."
+                  number="$(gh issue list --state open --search "${title} in:title" --json number,title --jq ".[] | select(.title == "${title}") | .number" | head -n1)"
+                  if [ -n "${number}" ]; then
+                    gh issue comment "${number}" --body "${body}"
+                  else
+                    gh issue create --title "${title}" --body "${body}"
+                  fi

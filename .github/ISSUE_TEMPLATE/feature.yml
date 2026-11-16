@@ -1,0 +1,23 @@
+name: Feature
+description: Suggest a change to jig-bedrock.
+labels: [enhancement]
+body:
+    - type: textarea
+      id: problem
+      attributes:
+          label: The problem
+          description: What are you trying to do?
+      validations:
+          required: true
+    - type: textarea
+      id: proposal
+      attributes:
+          label: A possible change
+          description: What should happen instead?
+      validations:
+          required: true
+    - type: textarea
+      id: alternatives
+      attributes:
+          label: Alternatives
+          description: What else have you tried?
