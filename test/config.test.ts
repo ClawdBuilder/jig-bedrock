@@ -173,15 +173,34 @@ describe("converseModels and messagesModels", () => {
     });
 });
 
-test("a preset's own mode keys do not inherit conflicting top-level mode keys", () => {
+test("a preset with only a profile inherits the top-level tag discovery", () => {
     const resolved = loadConfig({
         raw: {
-            profiles: ["arn:top"],
-            presets: { system: { regions: ["eu-west-1"] } },
-            preset: "system",
+            tagKey: "Team",
+            tagValue: "fixture",
+            activeTagKey: "Active",
+            activeTagValue: "true",
+            presets: { account: { profile: "other" } },
+            preset: "account",
         },
         env: {},
     });
     assert.ok(resolved.config);
+    assert.equal(resolved.config.tagKey, "Team");
+    assert.equal(resolved.config.tagValue, "fixture");
+    assert.equal(resolved.config.activeTagKey, "Active");
+});
+
+test("a preset with its own tag mode does not inherit a top-level explicit list", () => {
+    const resolved = loadConfig({
+        raw: {
+            profiles: ["arn:top"],
+            presets: { tag: { tagKey: "Team", tagValue: "fixture" } },
+            preset: "tag",
+        },
+        env: {},
+    });
+    assert.ok(resolved.config);
+    assert.equal(resolved.config.tagKey, "Team");
     assert.equal(resolved.config.profiles, undefined);
 });

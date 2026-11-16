@@ -359,7 +359,7 @@ export function loadConfig(
     const modeKeys = ["team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
     const activeDefinesMode = modeKeys.some((key) => Object.hasOwn(active, key));
     const inherited =
-        requested === undefined
+        requested === undefined || !activeDefinesMode
             ? known
             : Object.fromEntries(
                   Object.entries(known).filter(([key]) => !(modeKeys as readonly string[]).includes(key)),
