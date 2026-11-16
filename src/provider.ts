@@ -1049,7 +1049,7 @@ export function createBedrockProvider(
                     signedFetch,
                     (_model, message) => {
                         rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, _model.arn, _model.id);
-                        return `AWS refused ${_model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
+                        return `AWS refused ${_model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
                     },
                 );
                 let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {};

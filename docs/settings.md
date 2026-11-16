@@ -46,7 +46,7 @@ A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `a
 
 When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
 
-A model AWS refuses with AccessDenied is remembered for seven days for that AWS profile and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date.
+A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again.
 
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 
