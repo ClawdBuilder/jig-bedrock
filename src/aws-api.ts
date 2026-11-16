@@ -21,6 +21,53 @@ const timeout = (options: AwsApiOptions): AbortSignal => {
 const host = (service: string, region: string): string =>
     service === "sts" ? `https://sts.${region}.amazonaws.com` : `https://${service}.${region}.amazonaws.com`;
 
+/** An AWS HTTP error with the code and status AWS sent, so discovery can give advice for the real cause. */
+export class AwsApiError extends Error {
+    readonly code: string;
+    readonly status: number;
+    constructor(code: string, status: number, message: string) {
+        super(`${code === "" ? `HTTP ${status}` : code}: ${message || `HTTP ${status}`}`);
+        this.name = "AwsApiError";
+        this.code = code;
+        this.status = status;
+    }
+}
+
+const decodeXml = (text: string): string =>
+    text
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, "&");
+
+/**
+ * The code and message of an AWS error. The Bedrock and tagging APIs answer JSON; STS answers XML. A body that is
+ * neither is kept as the message, so a proxy's or a gateway's answer is not lost.
+ */
+function errorFields(text: string): { code: string; message: string } {
+    const body = text.trim();
+    if (body === "") return { code: "", message: "" };
+    try {
+        const parsed = JSON.parse(body) as Record<string, unknown> | null;
+        if (typeof parsed === "object" && parsed !== null) {
+            const type = parsed.__type ?? parsed.code;
+            const message = parsed.message ?? parsed.Message;
+            if (typeof type === "string" || typeof message === "string")
+                return {
+                    code: typeof type === "string" ? type.replace(/^.*#/, "").trim() : "",
+                    message: typeof message === "string" ? message : "",
+                };
+        }
+    } catch {}
+    const code = /<Code>([^<]+)<\/Code>/.exec(body)?.[1];
+    if (code !== undefined) {
+        const message = /<Message>([^<]*)<\/Message>/.exec(body)?.[1];
+        return { code: code.trim(), message: message === undefined ? "" : decodeXml(message) };
+    }
+    return { code: "", message: body.slice(0, 500) };
+}
+
 async function call(
     service: string,
     region: string,
@@ -58,18 +105,8 @@ async function call(
         throw error;
     }
     if (!response.ok) {
-        let message = "";
-        let type = "";
-        try {
-            const text = await response.text();
-            const parsed = JSON.parse(text) as { message?: string; Message?: string; __type?: string; code?: string };
-            message = parsed.message ?? parsed.Message ?? text;
-            type = parsed.__type ?? parsed.code ?? "";
-        } catch {
-            message = response.statusText;
-        }
-        const prefix = type === "" ? `HTTP ${response.status}` : type.replace(/^.*#/, "");
-        throw new Error(`${prefix}: ${message || `HTTP ${response.status}`}`);
+        const fields = errorFields(await response.text());
+        throw new AwsApiError(fields.code, response.status, fields.message || response.statusText);
     }
     return response;
 }

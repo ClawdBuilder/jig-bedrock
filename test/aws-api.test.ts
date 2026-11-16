@@ -81,7 +81,7 @@ test("GetInferenceProfile URL-encodes the id", async () => {
     assert.equal(r.calls[0]?.url, "https://bedrock.us-east-1.amazonaws.com/inference-profiles/team%2Fa%20b");
 });
 
-test("AWS error kinds are classified by category()", async () => {
+test("AWS error kinds are classified from their code and HTTP status", async () => {
     const cases: Array<[number, string, string]> = [
         [
             403,
@@ -97,10 +97,21 @@ test("AWS error kinds are classified by category()", async () => {
                 __type: "UnrecognizedClientException",
                 message: "The security token included in the request is invalid.",
             }),
-            "permission_denied",
+            "invalid_credentials",
         ],
-        [400, JSON.stringify({ __type: "ThrottlingException", message: "Rate exceeded" }), "unavailable"],
-        [500, "oops", "unavailable"],
+        [400, JSON.stringify({ __type: "ThrottlingException", message: "Rate exceeded" }), "throttled"],
+        [400, JSON.stringify({ __type: "TooManyRequestsException", message: "Too many requests" }), "throttled"],
+        [429, "", "throttled"],
+        [500, "oops", "aws_error"],
+        [503, JSON.stringify({ __type: "ServiceUnavailableException", message: "Try again." }), "aws_error"],
+        [
+            403,
+            JSON.stringify({
+                __type: "ExpiredTokenException",
+                message: "The security token included in the request is expired",
+            }),
+            "expired_credentials",
+        ],
     ];
     for (const [status, body, expected] of cases) {
         const r = recorder(() => new Response(body, { status }));
@@ -111,6 +122,26 @@ test("AWS error kinds are classified by category()", async () => {
                 return true;
             },
         );
+    }
+});
+
+test("STS XML errors keep the AWS code and message for the advice", async () => {
+    for (const [code, message, expected] of [
+        ["InvalidClientTokenId", "The security token included in the request is invalid.", "invalid_credentials"],
+        ["ExpiredToken", "The security token included in the request is expired", "expired_credentials"],
+    ] as const) {
+        const r = recorder(
+            () =>
+                new Response(
+                    `<ErrorResponse><Error><Type>Sender</Type><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`,
+                    { status: 403 },
+                ),
+        );
+        await assert.rejects(getCallerIdentity("us-east-1", { credentials, fetch: r.fetch }), (error: unknown) => {
+            assert.equal(category(error), expected);
+            assert.ok(String(error).includes(`${code}: ${message}`), String(error));
+            return true;
+        });
     }
 });
 

@@ -570,16 +570,38 @@ export function createBedrockProvider(
                         firstRunNotice(ctx);
                     else {
                         const name = lastChoice.profile ?? config.profile ?? "the configured AWS profile";
-                        const message =
-                            status === "timeout"
-                                ? "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh."
-                                : status === "credentials"
-                                  ? `Bedrock: the AWS profile ${name} has no credentials.`
-                                  : status === "sso_expired"
-                                    ? `Bedrock: sign-in expired for the AWS profile ${name}.`
-                                    : status === "permission_denied"
-                                      ? `Bedrock: the AWS profile ${name} was refused by AWS.`
-                                      : `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
+                        let message: string;
+                        switch (status) {
+                            case "timeout":
+                                message =
+                                    "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
+                                break;
+                            case "credentials":
+                                message = `Bedrock: the AWS profile ${name} has no credentials.`;
+                                break;
+                            case "sso_expired":
+                                message = `Bedrock: sign-in expired for the AWS profile ${name}.`;
+                                break;
+                            case "permission_denied":
+                                message = `Bedrock: the AWS profile ${name} was refused by AWS.`;
+                                break;
+                            case "throttled":
+                                message = `Bedrock: AWS is limiting requests for the AWS profile ${name}; wait a minute, then /bedrock refresh.`;
+                                break;
+                            case "aws_error":
+                                message = `Bedrock: AWS had a problem on its side for the AWS profile ${name}; try again later.`;
+                                break;
+                            case "expired_credentials":
+                                message = isSsoProfile(name, profileEnv)
+                                    ? `Bedrock: sign-in expired for the AWS profile ${name}. Run /bedrock login, then /bedrock refresh.`
+                                    : `Bedrock: the AWS credentials for the AWS profile ${name} have expired. Refresh the keys, then /bedrock refresh.`;
+                                break;
+                            case "invalid_credentials":
+                                message = `Bedrock: AWS says the keys for the AWS profile ${name} are not valid: they may be revoked or wrong, or a region may not be enabled for the account. Check the keys and the region, then /bedrock refresh.`;
+                                break;
+                            default:
+                                message = `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
+                        }
                         ctx.ui.notify(message, "warning");
                     }
                 }

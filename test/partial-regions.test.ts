@@ -17,7 +17,7 @@ const profile = (region: string) => ({
 });
 
 function run(region: string, status = "ok"): Promise<string> {
-    if (status === "denied")
+    if (status === "invalid")
         return Promise.reject(
             new Error(
                 "An error occurred (UnrecognizedClientException): The security token included in the request is invalid.",
@@ -38,7 +38,7 @@ test("one failed region keeps the other region's models and warns", async () => 
                     ? JSON.stringify({ Account: account })
                     : run(
                           args[args.indexOf("--region") + 1] ?? "us-east-1",
-                          args.includes("eu-central-2") ? "denied" : "ok",
+                          args.includes("eu-central-2") ? "invalid" : "ok",
                       ),
             join(dir, "catalog.json"),
             () => Date.now(),
@@ -47,7 +47,11 @@ test("one failed region keeps the other region's models and warns", async () => 
         assert.equal(await source.refresh(true), "ok");
         const catalog = source.load();
         assert.equal(catalog?.profiles.length, 1);
-        assert.match(catalog?.warnings?.join("\n") ?? "", /eu-central-2 did not answer: the security token is invalid/);
+        assert.match(
+            catalog?.warnings?.join("\n") ?? "",
+            /eu-central-2 did not answer: the AWS credentials are not valid there; .*region may not be enabled/,
+        );
+        assert.doesNotMatch(catalog?.warnings?.join("\n") ?? "", /permission|administrator/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -87,7 +91,7 @@ test("when every region fails the refresh fails", async () => {
             async (_program, args) =>
                 args.includes("get-caller-identity")
                     ? JSON.stringify({ Account: account })
-                    : run(args[args.indexOf("--region") + 1] ?? "us-east-1", "denied"),
+                    : run(args[args.indexOf("--region") + 1] ?? "us-east-1", "invalid"),
             join(dir, "catalog.json"),
             () => Date.now(),
             { HOME: dir } as never,

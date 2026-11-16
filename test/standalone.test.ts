@@ -303,6 +303,26 @@ test("discovery rejects returned tags outside the configured team and safely dis
         assert.doesNotMatch(discoveryHelp(result), /private-canary/);
     }
 });
+test("AWS text from another source is classified with the same advice", async (t) => {
+    const file = join(directory(t), "catalog.json");
+    for (const [error, status, help] of [
+        ["ThrottlingException: Rate exceeded", "throttled", /limiting requests/],
+        ["InternalServerException: service error", "aws_error", /problem on its side/],
+        ["ExpiredToken: The security token included in the request is expired", "expired_credentials", /bedrock login/],
+        ["The security token included in the request is invalid.", "invalid_credentials", /keys are not valid/],
+    ] as const) {
+        const result = await createTestDiscovery(
+            config,
+            async () => {
+                throw new Error(error);
+            },
+            file,
+        ).refresh();
+        assert.equal(result, status);
+        assert.equal(category(new Error(error)), status);
+        assert.match(discoveryHelp(result), help);
+    }
+});
 test("team tag punctuation is passed as one JSON argv value", async (t) => {
     const team = "Platform / Core, Europe",
         file = join(directory(t), "catalog.json");

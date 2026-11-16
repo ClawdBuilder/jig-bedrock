@@ -1,6 +1,6 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
+import { AwsApiError, getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
@@ -18,6 +18,10 @@ export type Status =
     | "credentials"
     | "network"
     | "timeout"
+    | "throttled"
+    | "aws_error"
+    | "expired_credentials"
+    | "invalid_credentials"
     | "unavailable";
 export interface CatalogSource {
     load(): Catalog | undefined;
@@ -30,36 +34,64 @@ export interface CatalogSource {
 /** Plain reason for one region that did not answer; the region itself is named by the caller. */
 function regionReason(error: unknown): string {
     const cause = error instanceof StepError ? error.cause : error;
-    const text = String(cause);
-    if (/security token.*invalid|unrecognizedclientexception/i.test(text))
-        return "the security token is invalid there; the region may not be enabled for this account";
-    if (/timeout|timed out/i.test(text)) return "AWS timed out";
-    if (/access.?denied|not authorized to perform|unauthorizedoperation/i.test(text))
-        return "AWS refused the request; check permissions for this region";
-    return discoveryHelp(category(cause))
+    const status = category(cause);
+    if (status === "timeout") return "AWS timed out";
+    if (status === "invalid_credentials")
+        return "the AWS credentials are not valid there; they may be revoked or wrong, or the region may not be enabled for this account";
+    if (status === "expired_credentials") return "the AWS credentials have expired";
+    if (status === "throttled") return "AWS is limiting requests; try again in a minute";
+    if (status === "aws_error") return "AWS had a problem on its side; try again later";
+    if (status === "sso_expired") return "the sign-in has expired; run /bedrock login";
+    if (status === "permission_denied") return "AWS refused the request; check permissions for this region";
+    return discoveryHelp(status)
         .replace(/^./, (c) => c.toLowerCase())
         .replace(/\.$/, "");
 }
 
+/** The status of an AWS error from the code and HTTP status AWS sent; text is the fallback for other sources. */
 export function category(error: unknown): Status {
+    if (error instanceof AwsApiError) {
+        const status = statusFromAws(error.code, error.status);
+        if (status !== undefined) return status;
+    }
     const m = String(error).toLowerCase();
-    return /access.?denied|not authorized to perform|unauthorizedoperation|security token.*invalid|unrecognizedclientexception/.test(
-        m,
+    if (/throttl|too ?many requests|rate exceeded|requestlimitexceeded/.test(m)) return "throttled";
+    if (/internalserver|internal server|serviceunavailable|service unavailable|internalfailure|server error/.test(m))
+        return "aws_error";
+    if (/aws sso login|sso session|sso token|token for .* has expired/.test(m)) return "sso_expired";
+    if (
+        /expiredtoken|expired token|token (?:included in the request )?(?:is )?expired|temporary credentials? (?:have )?expired/.test(
+            m,
+        )
     )
-        ? "permission_denied"
-        : /aws sso login|sso session|token for .* has expired|sso token/i.test(String(error))
-          ? "sso_expired"
-          : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
-                  m,
-              )
-            ? "credentials"
-            : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
-              ? "configuration"
-              : /timeout|timed out/.test(m)
-                ? "timeout"
-                : /network|connect|dns|resolve|unreachable|proxy/.test(m)
-                  ? "network"
-                  : "unavailable";
+        return "expired_credentials";
+    if (/invalidclienttokenid|unrecognizedclient|invalidaccesskeyid|security token.*invalid/.test(m))
+        return "invalid_credentials";
+    if (/access.?denied|not authorized to perform|unauthorizedoperation/.test(m)) return "permission_denied";
+    if (
+        /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/.test(
+            m,
+        )
+    )
+        return "credentials";
+    if (/could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m))
+        return "configuration";
+    if (/timeout|timed out/.test(m)) return "timeout";
+    if (/network|connect|dns|resolve|unreachable|proxy/.test(m)) return "network";
+    return "unavailable";
+}
+
+/** The AWS code first, then the HTTP status when the code is unknown or absent. */
+function statusFromAws(code: string, status: number): Status | undefined {
+    const c = code.toLowerCase();
+    if (/throttl|toomanyrequests|requestlimitexceeded|slowdown/.test(c)) return "throttled";
+    if (/internalserver|serviceunavailable|internalfailure|serviceexception/.test(c)) return "aws_error";
+    if (/expiredtoken/.test(c)) return "expired_credentials";
+    if (/invalidclienttokenid|unrecognizedclient|invalidaccesskeyid/.test(c)) return "invalid_credentials";
+    if (/accessdenied|unauthorized|notauthorized|forbidden/.test(c)) return "permission_denied";
+    if (status === 429) return "throttled";
+    if (status >= 500) return "aws_error";
+    return undefined;
 }
 export function discoveryHelp(status: Status, mode?: string): string {
     switch (status) {
@@ -82,8 +114,16 @@ export function discoveryHelp(status: Status, mode?: string): string {
             return "Check network access to AWS, then /bedrock refresh.";
         case "timeout":
             return "AWS discovery timed out; check network access, then /bedrock refresh.";
+        case "throttled":
+            return "AWS is limiting requests; wait a minute, then run /bedrock refresh.";
+        case "aws_error":
+            return "AWS had a problem on its side; try again later, then run /bedrock refresh.";
+        case "expired_credentials":
+            return "Renew the AWS sign-in: run /bedrock login for an SSO profile, or refresh the keys for a keys profile. Then run /bedrock refresh.";
+        case "invalid_credentials":
+            return "The AWS keys are not valid: they may be revoked or wrong, or a region may not be enabled for the account. Check the AWS profile's keys and the region, then run /bedrock refresh.";
         default:
-            return "Check AWS access and the configuration in docs/settings.md (Every setting), then /bedrock refresh.";
+            return "Check the AWS profile and the regions in /bedrock settings, then run /bedrock refresh.";
     }
 }
 class StepError extends Error {
@@ -110,6 +150,11 @@ export function profileFailureMessage(error: unknown): string {
     if (/profile scope/.test(text)) return "its address is outside the configured account, region or kind";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
+    if (status === "throttled") return "AWS is limiting requests";
+    if (status === "aws_error") return "AWS had a problem on its side";
+    if (status === "expired_credentials") return "its AWS credentials have expired";
+    if (status === "invalid_credentials") return "its AWS credentials are not valid";
+    if (status === "sso_expired") return "the sign-in has expired";
     if (status === "configuration") return "its AWS configuration is missing or wrong";
     if (status === "network") return "AWS could not be reached";
     if (status === "timeout") return "AWS timed out";
@@ -129,6 +174,11 @@ function reasonOf(error: unknown): string {
     if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
+    if (status === "throttled") return "AWS is limiting requests";
+    if (status === "aws_error") return "AWS had a problem on its side";
+    if (status === "expired_credentials") return "the AWS credentials have expired";
+    if (status === "invalid_credentials") return "the AWS credentials are not valid";
+    if (status === "sso_expired") return "your sign-in has expired";
     if (status === "credentials") return "the AWS profile has no credentials";
     if (status === "configuration") return "the AWS configuration is missing or wrong";
     if (status === "network") return "AWS could not be reached";
