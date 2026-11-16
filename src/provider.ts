@@ -616,6 +616,13 @@ export function createBedrockProvider(
                     ctx &&
                     (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
+                    if (warnings.length > 0 || problems.length > 0)
+                        ctx.ui.notify(
+                            [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
+                                .filter((part): part is string => part !== undefined)
+                                .join(" "),
+                            "warning",
+                        );
                     if (settingsChanged && (change.added > 0 || change.removed > 0)) {
                         ctx.ui.notify(
                             `Bedrock: ${models.length} models in /model (${Math.max(0, beforeCount - models.length)} left).`,
@@ -638,13 +645,6 @@ export function createBedrockProvider(
                             settingsChanged
                                 ? `Bedrock: ${selected.id} is not in the list for the new settings; choose another with /model.`
                                 : `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
-                            "warning",
-                        );
-                    } else if (change.added === 0 && change.removed === 0) {
-                        ctx.ui.notify(
-                            [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
-                                .filter((part): part is string => part !== undefined)
-                                .join(" "),
                             "warning",
                         );
                     }
