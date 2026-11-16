@@ -114,6 +114,7 @@ export interface BedrockCommandSources {
     loading?: () => boolean;
     doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
     discoveryStatus?: () => Status | undefined;
+    discoveryMode?: () => string | undefined;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
     clearRefusals?: () => number;
     refused?: () => Array<{ arn: string; id: string; date: string }>;
@@ -495,7 +496,7 @@ export function registerBedrockCommands(
             const advice = sources.discoveryStatus?.() ?? status;
             emit(ctx, "Bedrock refresh", [
                 `${m.fail} ${sources.failure?.() ?? "The models could not be read from AWS."}`,
-                `Next: ${discoveryHelp(advice)}`,
+                `Next: ${discoveryHelp(advice, sources.discoveryMode?.())}`,
             ]);
             return;
         }
@@ -643,12 +644,12 @@ export function registerBedrockCommands(
             if (failed.includes("AWS CLI")) return "Next: install AWS CLI v2";
             if (failed.includes("AWS profile")) return "Next: /login, choose Amazon Bedrock (jig-bedrock)";
             if (failed.includes("Sign-in")) return "Next: /bedrock login";
-            if (failed.includes("inference profile"))
-                return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
             if (failed.includes("Models")) {
                 const status = sources.discoveryStatus?.();
-                return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status)}`;
+                return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status, sources.discoveryMode?.())}`;
             }
+            if (failed.includes("inference profile"))
+                return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
             if (failed.includes("Spend command")) return "Next: see docs/spend-command.md";
             if (failed.includes("Request")) {
                 if (/data retention mode .* is not available for this model/i.test(requestError))

@@ -44,6 +44,7 @@ async function doctor(
             | { ok: true; route: string; ms: number; cacheRead: number; cacheWrite: number }
             | { ok: false; error: string };
         args?: string;
+        mode?: string;
     } = {},
 ) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-doctor-case-"));
@@ -69,6 +70,7 @@ async function doctor(
         unavailable: () => [],
         doctorAws: async () => options.aws ?? [],
         discoveryStatus: options.status === undefined ? undefined : () => options.status,
+        discoveryMode: options.mode === undefined ? undefined : () => options.mode,
         doctorCall:
             options.call === undefined
                 ? undefined
@@ -233,4 +235,24 @@ test("a Fable data-retention refusal gets the model-specific next step", async (
     assert.match(text, /data retention mode/);
     assert.match(text, /needs an AWS account data-retention setting/);
     assert.match(text, /A Fable model is refused/);
+});
+
+test("a tag permission failure asks for tag:GetResources, not ListInferenceProfiles", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Models: Could not list tagged inference profiles: AWS denied access." }],
+    });
+    assert.match(text, /tag:GetResources/);
+    assert.doesNotMatch(text, /ListInferenceProfiles|GetInferenceProfile/);
+});
+
+test("an empty tag result is a settings problem, not a permission", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "ok",
+        aws: [{ ok: false, text: "Models: no inference profiles with tag Team=payments in us-east-1" }],
+    });
+    assert.match(text, /check regions and the tag or explicit list/);
+    assert.doesNotMatch(text, /GetInferenceProfile|ListInferenceProfiles/);
 });
