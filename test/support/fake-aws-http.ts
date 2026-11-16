@@ -76,7 +76,7 @@ export function fakeAwsHttp(options: FakeAwsOptions = {}) {
                 ? Array.from({ length: 13 }, (_, index) =>
                       profile(`p${index + 1}`, { Team: "fixture-team", Active: "true" }),
                   )
-                : profiles.filter((entry) => entry.kind !== "system");
+                : profiles.filter((entry) => entry.kind !== "system" && entry.region === region);
             const rows = source.filter((entry) =>
                 filters.every(
                     (filter) => entry.tags[filter.Key] !== undefined && filter.Values.includes(entry.tags[filter.Key]!),
@@ -92,7 +92,7 @@ export function fakeAwsHttp(options: FakeAwsOptions = {}) {
         if (operation === "list")
             return Response.json({
                 inferenceProfileSummaries: profiles
-                    .filter((entry) => entry.kind === "system")
+                    .filter((entry) => entry.kind === "system" && entry.region === region)
                     .map((entry) => ({
                         inferenceProfileArn: entry.arn,
                         inferenceProfileName: entry.name,

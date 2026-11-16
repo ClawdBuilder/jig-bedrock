@@ -12,7 +12,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
+import { category, createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -1076,7 +1076,7 @@ export function createBedrockProvider(
                         const expired =
                             !check.ok &&
                             (isSsoProfile(choice, profileEnv) ?? false) &&
-                            /expired|token|sso|sign-in/i.test(check.message ?? "");
+                            category(check.message ?? "") === "sso_expired";
                         rows.push({
                             ok: check.ok,
                             check: "sign-in",
