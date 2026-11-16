@@ -180,7 +180,8 @@ test("discovery bounds bytes, pagination and deadline and never publishes raw fa
         );
     };
     assert.equal(await createAwsDiscovery(config, repeating, file).refresh(), "unavailable");
-    assert.ok(calls <= 12);
+    // One STS call, then two regions; each region's repeated pagination token costs two calls (first page + repeated token).
+    assert.equal(calls, 7);
 });
 test("config precedence and invalid or missing teams fail closed without throwing", () => {
     assert.equal(resolveConfig(undefined)?.mode, "system");
