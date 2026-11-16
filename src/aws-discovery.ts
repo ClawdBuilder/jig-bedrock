@@ -74,12 +74,19 @@ export function category(error: unknown): Status {
                   ? "network"
                   : "unavailable";
 }
-export function discoveryHelp(status: Status): string {
+export function discoveryHelp(status: Status, mode?: string): string {
     switch (status) {
         case "sso_expired":
             return "Run /bedrock login, finish browser sign-in, then /bedrock refresh.";
-        case "permission_denied":
-            return "Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured AWS profile; then /bedrock refresh.";
+        case "permission_denied": {
+            const permission =
+                mode === "tag"
+                    ? "tag:GetResources"
+                    : mode === "explicit"
+                      ? "bedrock:GetInferenceProfile"
+                      : "bedrock:ListInferenceProfiles";
+            return `Ask your AWS administrator for ${permission} on the configured AWS profile; then /bedrock refresh.`;
+        }
         case "configuration":
             return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
         case "credentials":
@@ -551,6 +558,7 @@ export function createAwsDiscovery(
             if (typeof file === "function") pruneCatalogFiles(dirname(readFrom()));
             invalidAccount = false;
             lastFailure = undefined;
+            lastStatus = undefined;
             return "ok";
         } catch (e) {
             lastFailure = failureText(e);

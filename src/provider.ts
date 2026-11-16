@@ -903,6 +903,7 @@ export function createBedrockProvider(
             refresh: () => refresh(true, true, true),
             failure: () => catalog.failure?.(),
             discoveryStatus: () => catalog.status?.(),
+            discoveryMode: () => config.mode,
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
@@ -954,7 +955,7 @@ export function createBedrockProvider(
                         rows.push({ ok: false, text: "Sign-in: did not answer" });
                     }
                 }
-                const status = await catalog.refresh(true);
+                const status = await refresh(true, false, true);
                 const reason = catalog.failure?.();
                 rows.push({
                     ok: status === "ok" && models.length > 0,

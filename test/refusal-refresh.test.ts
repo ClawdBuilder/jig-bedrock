@@ -1,6 +1,6 @@
 // A refusal hides a model until an explicit refresh clears the store; automatic refreshes keep it hidden.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -123,4 +123,69 @@ test("Pi's /model refresh keeps the refusal hidden", async (t) => {
         latest(s.providers).some((model: any) => model.id === "claude-opus-5"),
         false,
     );
+});
+
+test("the doctor fills the model list and does not repeat a stale network next step", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-doctor-refresh-"));
+    try {
+        writeFileSync(join(dir, "bedrock.json"), JSON.stringify({ profile: "fixture", regions: [region] }));
+        mkdirSync(join(dir, "bin"), { recursive: true });
+        writeFileSync(join(dir, "bin", "aws"), "#!/bin/sh\necho aws-cli/2.34.46\n", { mode: 0o755 });
+        const env = { HOME: dir, PI_CODING_AGENT_DIR: dir, PATH: `${join(dir, "bin")}:${process.env.PATH}` };
+        const config = loadConfig({
+            raw: { profile: "fixture", regions: [region] },
+            env,
+            agentDir: dir,
+        });
+        assert.ok(config.config);
+        let current: Catalog | undefined;
+        const source: CatalogSource = {
+            load: () => current,
+            refresh: async () => {
+                current = catalog;
+                return "ok";
+            },
+            status: () => undefined,
+        };
+        const notices: string[] = [];
+        const providers: any[] = [];
+        const commands = new Map<string, any>();
+        const pi = {
+            on() {},
+            registerProvider(provider: any) {
+                providers.push(provider);
+            },
+            registerCommand(name: string, value: any) {
+                commands.set(name, value);
+            },
+            events: { emit() {} },
+            setModel: () => false,
+        };
+        await createBedrockProvider({
+            env,
+            config: config.config,
+            catalog: source,
+            listProfiles: async () => ["fixture"],
+            verifyProfile: async () => ({ ok: true }),
+            backgroundRefresh: false,
+        })(pi as never);
+        assert.equal(latest(providers).length, 0);
+        await commands.get("bedrock").handler("doctor", {
+            hasUI: true,
+            mode: "rpc",
+            signal: new AbortController().signal,
+            ui: { notify: (text: string) => notices.push(text), setStatus() {} },
+            sessionManager: { getSessionId: () => "s" },
+            modelRegistry: { find: () => undefined },
+        });
+        assert.equal(
+            latest(providers).length,
+            1,
+            JSON.stringify({ notices, current: current?.profiles?.length, providers: providers.length }),
+        );
+        assert.match(notices.join("\n"), /Models: 1 found/);
+        assert.doesNotMatch(notices.join("\n"), /Check network access/);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });
