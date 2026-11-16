@@ -130,8 +130,9 @@ test("unset monthlyBudgetUsd removes the budget in memory", async (t) => {
     const s = await start({ monthlyBudgetUsd: 200 });
     try {
         await s.commands.get("bedrock").handler("unset monthlyBudgetUsd", s.ctx);
-        await s.commands.get("bedrock").handler("settings", s.ctx);
-        assert.match(s.notices.join("\n"), /monthlyBudgetUsd: not set/);
+        await s.commands.get("bedrock").handler("status", s.ctx);
+        assert.doesNotMatch(s.notices.join("\n"), /of \$200/);
+        assert.doesNotMatch(s.notices.join("\n"), /Budget: \$200/);
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }
