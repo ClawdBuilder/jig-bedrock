@@ -576,9 +576,13 @@ test("the tag lookup receives the profile and regions chosen in this login", asy
 test("a failed tag lookup skips the second tag but still saves the login", async () => {
     const fake = interaction(tagAnswer);
     let saved = false;
+    let reported = "";
     const value = await runLoginFlow(
         fake.value as never,
         options({
+            reportNote: (message) => {
+                reported = message;
+            },
             tagMatches: async () => {
                 throw new Error("Unable to locate credentials");
             },
@@ -590,10 +594,7 @@ test("a failed tag lookup skips the second tag but still saves the login", async
     );
     assert.equal(value.type, "api_key");
     assert.equal(saved, true);
-    assert.match(
-        fake.notices.map((notice) => notice.message).join("\n"),
-        /Could not read the tags .*Unable to locate credentials/,
-    );
+    assert.match(reported, /Could not read the tags .*Unable to locate credentials/);
 });
 
 const methodSelect = (prompt: Prompt) =>
@@ -673,4 +674,26 @@ test("no SSO profiles is carried into the next method prompt", async () => {
     await runLoginFlow(fake.value as never, options({ listProfiles: async () => [] }));
     const next = prompts.filter((message) => message.includes("How do you sign in to AWS?")).at(-1) ?? "";
     assert.match(next, /No IAM Identity Center \(SSO\) profiles are configured/);
+});
+
+test("a second login starts with no note from the first, and its own failure appears", async () => {
+    const run = async (url: string) => {
+        let method = 0;
+        const fake = interaction((prompt) => {
+            if (methodSelect(prompt)) {
+                method++;
+                return method === 1 ? "sso-new" : "chain";
+            }
+            if (prompt.message === "New AWS SSO profile name") return "demo-sso";
+            if (prompt.message === "SSO start URL") return url;
+            if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+            return "";
+        });
+        await runLoginFlow(fake.value as never, options());
+        return fake.prompts.map((prompt) => prompt.message ?? "").join("\n");
+    };
+    await run("http://first");
+    const second = await run("http://second");
+    assert.match(second, /SSO start URL must start with https:\/\//);
+    assert.doesNotMatch(second, /http:\/\/first/);
 });

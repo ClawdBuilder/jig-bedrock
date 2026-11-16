@@ -25,6 +25,8 @@ export interface LoginFlowOptions {
     /** Append the confirmed sections; without it the create-a-profile methods are unavailable. */
     writeConfig?: (sections: ConfigSection[]) => ConfigWriteResult;
     /** The tags of the application profiles matching the chosen tag, for choosing a second filter. */
+    /** A note that has no next prompt (for example a failed tag lookup): show it after the login dialog closes. */
+    reportNote?: (message: string) => void;
     tagMatches?: (
         profile: string | undefined,
         regions: string[],
@@ -106,9 +108,10 @@ const regionPattern = /^[a-z]{2}(?:-[a-z]+)+-\d$/;
 const roleNamePattern = /^[\w+=,.@-]{1,64}$/;
 const roleArnPattern = /^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]+$/;
 
-let noteSink: ((message: string) => void) | undefined;
+const activeNotes = new WeakSet<object>();
+const noteTexts = new WeakMap<object, string>();
 function say(interaction: ProviderAuthInteraction, message: string): void {
-    if (noteSink !== undefined) noteSink(message);
+    if (activeNotes.has(interaction)) noteTexts.set(interaction, message);
     else interaction.notify({ type: "info", message });
 }
 
@@ -212,10 +215,9 @@ async function askDiscovery(
                 interaction.signal,
             );
         } catch (error) {
-            interaction.notify({
-                type: "info",
-                message: `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`,
-            });
+            const message = `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`;
+            say(interaction, message);
+            options.reportNote?.(message);
         }
         const counts = new Map<string, Map<string, number>>();
         for (const tags of matches)
@@ -256,7 +258,7 @@ async function askDiscovery(
 }
 
 /** Ask how to sign in, verify, ask discovery, and return the credential Pi stores. */
-export async function runLoginFlow(
+async function runLoginFlowInner(
     interaction: ProviderAuthInteraction,
     options: LoginFlowOptions,
 ): Promise<ApiKeyCredential> {
@@ -264,11 +266,10 @@ export async function runLoginFlow(
     interaction.notify({ type: "progress", message: "Looking up your AWS profiles…" });
     let listed = await options.listProfiles(interaction.signal);
     let note = "";
-    noteSink = (message) => {
-        note = message;
-    };
     for (let attempt = 0; attempt < 10; attempt++) {
         interaction.signal.throwIfAborted();
+        note = noteTexts.get(interaction) ?? note;
+        noteTexts.delete(interaction);
         const method = (await interaction.prompt({
             type: "select",
             message: note === "" ? "How do you sign in to AWS?" : `${note}\n\nHow do you sign in to AWS?`,
@@ -573,4 +574,17 @@ export async function runLoginFlow(
         return profileCredential(name);
     }
     throw new Error("Too many sign-in attempts. Run /login again.");
+}
+
+export async function runLoginFlow(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+): Promise<ApiKeyCredential> {
+    activeNotes.add(interaction);
+    try {
+        return await runLoginFlowInner(interaction, options);
+    } finally {
+        activeNotes.delete(interaction);
+        noteTexts.delete(interaction);
+    }
 }

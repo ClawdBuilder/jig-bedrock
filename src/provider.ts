@@ -318,7 +318,8 @@ export function createBedrockProvider(
                     "AWS CLI v2 is required: install it from https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html, then run /login again.",
                 );
             }
-            return runLoginFlow(interaction, {
+            let saveFailure: string | undefined;
+            const credential = await runLoginFlow(interaction, {
                 listProfiles: loginListProfiles,
                 refreshProfiles: () => createListProfiles(profileEnv)(),
                 isSso: (profile) => isSsoProfile(profile, profileEnv),
@@ -326,10 +327,16 @@ export function createBedrockProvider(
                     options.verifyProfile?.(profile, signal) ?? verifyAwsProfile(profile, { env: profileEnv, signal }),
                 signIn: (profile, signal) =>
                     options.signInProfile?.(profile, signal) ?? recoveryForLogin(profile, signal, "manual"),
-                saveDiscovery: (settings) => saveDiscoverySettings(profileEnv, settings),
+                saveDiscovery: (settings) => {
+                    const result = saveDiscoverySettings(profileEnv, settings, config.preset);
+                    if (!result.written)
+                        saveFailure = `Bedrock settings were not saved: ${result.error ?? result.file}`;
+                    return result;
+                },
                 regions: config.regions,
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
+                reportNote: (message) => setTimeout(() => ctx?.ui.notify(message, "warning"), 0),
                 tagMatches: async (profile, regions, key, value, signal) => {
                     const all: Array<Array<{ Key: string; Value: string }>> = [];
                     const run = (args: string[]) =>
@@ -375,6 +382,8 @@ export function createBedrockProvider(
                     return all;
                 },
             });
+            if (saveFailure !== undefined) setTimeout(() => ctx?.ui.notify(saveFailure!, "warning"), 0);
+            return credential;
         };
         const auth = createProfileAuth(profiles, loginListProfiles, {
             unavailable: () => autoProfileFailed,
@@ -664,7 +673,7 @@ export function createBedrockProvider(
                     });
             }
             if (profile !== undefined) {
-                const savedProfile = saveProfileSetting(profileEnv, profile);
+                const savedProfile = saveProfileSetting(profileEnv, profile, config.preset);
                 if (!savedProfile.ok)
                     interaction.notify({
                         type: "info",
@@ -699,7 +708,8 @@ export function createBedrockProvider(
             if (config.preset !== undefined && config.profileSource === "preset") {
                 interaction.notify({
                     type: "info",
-                    message: `Preset ${config.preset} is active; its AWS profile ${config.profile} is used. /bedrock preset add ${config.preset} saves this sign-in as a preset.`,
+                    message:
+                        config.preset === undefined ? `Saved to bedrock.json.` : `Saved to preset ${config.preset}.`,
                 });
             }
             // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
