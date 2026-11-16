@@ -1002,7 +1002,7 @@ export function registerBedrockCommands(
     // A sub-menu that ends on Back returns true, so this menu shows again; Escape (undefined) or a finished action
     // closes the whole menu.
     const menu = async (ctx: ExtensionCommandContext): Promise<void> => {
-        const actions: Array<{ label: string; run: () => Promise<boolean | void> | boolean | void }> = [
+        const actions: Array<{ label: string; run: () => unknown }> = [
             { label: "Status — profile, models, spend", run: () => status(ctx) },
             { label: "Check setup — doctor", run: () => doctor("", ctx) },
             { label: "Test one request — doctor call", run: () => doctor("call", ctx) },
@@ -1028,7 +1028,7 @@ export function registerBedrockCommands(
     };
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<boolean> => {
         const list = sources.presetList?.() ?? [];
-        const actions = new Map<string, () => Promise<boolean | void> | boolean | void>();
+        const actions = new Map<string, () => unknown>();
         for (const entry of list) {
             const active = entry.active ? `${m.ok} ` : "";
             const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
@@ -1190,10 +1190,13 @@ export function registerBedrockCommands(
     };
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<boolean> => {
         const list = sources.models();
+        const rejected = sources.unavailable?.() ?? [];
         const refused = sources.refused?.() ?? [];
-        const actions = new Map<string, () => Promise<boolean | void> | boolean | void>();
+        const priceOf = (model: BedrockModel): string =>
+            model.rateSource === "no price" ? "price unknown" : `$${model.cost.input}/$${model.cost.output}`;
+        const actions = new Map<string, () => unknown>();
         for (const model of list)
-            actions.set(`${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`, () => {
+            actions.set(`${model.id} — ${route(model, config)} · ${priceOf(model)}`, () => {
                 const region =
                     /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(model.baseUrl)?.[1] ??
                     model.arn.split(":")[3] ??
@@ -1202,7 +1205,11 @@ export function registerBedrockCommands(
                     `${model.id}`,
                     `${route(model, config)} route · ${routeReason(model, config)}`,
                     `Region: ${region}`,
-                    `Price per million tokens: $${model.cost.input} in / $${model.cost.output} out`,
+                    `Price per million tokens: ${
+                        model.rateSource === "no price"
+                            ? "price unknown (Pi lists no price for this model)"
+                            : `$${model.cost.input} in / $${model.cost.output} out`
+                    }`,
                     `Inference profile: ${model.arn.slice(model.arn.lastIndexOf("/") + 1)}`,
                     ctx.model?.provider === "jig-bedrock" && ctx.model.id === model.id
                         ? "This is the session's model."
@@ -1213,10 +1220,35 @@ export function registerBedrockCommands(
                     if (action === undefined) return false;
                     if (action === "Back") return true;
                     const target = ctx.modelRegistry.find("jig-bedrock", model.id);
-                    if (target !== undefined) await pi.setModel(target);
+                    if (target === undefined) {
+                        emit(ctx, "Bedrock models", [
+                            `${m.fail} Pi has no entry for ${clean(model.id, 60)}; run /bedrock refresh, then try again.`,
+                        ]);
+                        return false;
+                    }
+                    const switched = await pi.setModel(target);
+                    emit(ctx, "Bedrock models", [
+                        switched === false
+                            ? `${m.fail} Pi did not switch to ${clean(model.id, 60)}; it may have left /model. Run /bedrock refresh, then choose it with /model.`
+                            : `${m.ok} Using ${clean(model.id, 60)} for this session.`,
+                    ]);
                     return false;
                 });
             });
+        if (rejected.length > 0) {
+            actions.set("Not loaded by this Pi", () => false);
+            for (const entry of rejected)
+                actions.set(
+                    `${clean(entry.profile, 60)} · ${clean(entry.region, 20)} — ${clean(entry.reason.split(";")[0] ?? entry.reason, 70)}`,
+                    async () => {
+                        const action = await ctx.ui.select(`${entry.profile} · ${entry.region}\n${entry.reason}`, [
+                            "Back",
+                        ]);
+                        if (action === undefined) return false;
+                        return true;
+                    },
+                );
+        }
         if (refused.length > 0) {
             actions.set("Refused by AWS for your role", () => false);
             for (const entry of refused)

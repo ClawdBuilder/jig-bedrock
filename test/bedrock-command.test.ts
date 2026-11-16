@@ -616,6 +616,59 @@ test("the models menu shows refused models and Try again clears them", async (t)
     assert.equal(clears, 1);
 });
 
+test("the models menu lists the models this Pi rejected, with the reason", async (t) => {
+    const reason = "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.";
+    const h = harness(
+        t,
+        {},
+        {
+            models: () => [],
+            unavailable: () => [{ profile: "orders-api", region: "us-east-1", reason }],
+        },
+    );
+    withUi(h, ["Models", "orders-api", "Back"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.ok(calls[1], "the models menu opened");
+    assert.ok(calls[1]!.options.includes("Not loaded by this Pi"), JSON.stringify(calls[1]!.options));
+    const row = calls[1]!.options.find((option) => option.includes("orders-api"));
+    assert.ok(row, JSON.stringify(calls[1]!.options));
+    assert.match(row, /us-east-1/);
+    assert.match(row, /Pi registry has no exact metadata for anthropic\.claude-opus-6/);
+    assert.match(calls[2]?.title ?? "", /Pi registry has no exact metadata for anthropic\.claude-opus-6/);
+    assert.match(calls[2]?.title ?? "", /update Pi to use this profile/);
+});
+
+test("the models menu says price unknown instead of $0/$0", async (t) => {
+    const unpriced = { ...model, rateSource: "no price", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+    const h = harness(t, {}, { models: () => [unpriced] });
+    withUi(h, ["Models", "claude-sonnet-5-5"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    const row = calls[1]?.options.find((option) => option.startsWith("claude-sonnet-5-5"));
+    assert.ok(row, JSON.stringify(calls[1]?.options));
+    assert.match(row, /price unknown/);
+    assert.doesNotMatch(row, /\$0\/\$0/);
+    assert.match(calls[2]?.title ?? "", /price unknown/);
+    assert.doesNotMatch(calls[2]?.title ?? "", /\$0 in/);
+});
+
+test("the models menu confirms a session switch, or says why not", async (t) => {
+    const h = harness(t, {}, { models: () => [model] });
+    (h.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...model, id });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /Using claude-sonnet-5-5 for this session\./);
+    assert.equal(h.ctx.model?.id, "claude-sonnet-5-5");
+    const refused = harness(t, {}, { models: () => [model] });
+    (refused.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...model, id });
+    refused.pi.setModel = async () => false;
+    withUi(refused, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await refused.result.bedrock("", refused.ctx as never);
+    assert.match(refused.notices.join("\n"), /Pi did not switch to claude-sonnet-5-5/);
+    assert.doesNotMatch(refused.notices.join("\n"), /Using claude-sonnet-5-5 for this session/);
+});
+
 test("the models menu Escape does nothing", async (t) => {
     const h = harness(t, {});
     withUi(h, ["Models"]);
