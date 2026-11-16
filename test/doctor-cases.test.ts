@@ -218,3 +218,9 @@ test("every doctor block in troubleshooting.md is the block the code prints", as
     });
     assert.ok(page.includes(block(none)), block(none));
 });
+
+test("a long doctor row is shown whole, not cut at 100 characters", async (t) => {
+    const row = `Identity: ${"x".repeat(140)}`;
+    const text = await doctor(t, { aws: [{ ok: true, text: row }] });
+    assert.ok(text.includes(row), "the row was cut");
+});

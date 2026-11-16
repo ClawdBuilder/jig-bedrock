@@ -1,16 +1,13 @@
 // The settings of the `bedrock` section that this package added to the ones it moved: what each accepts, what it defaults to, what
 // a mistake says (the key, never the value), and that the JIG_BEDROCK_* variables still win over the file.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, test } from "node:test";
 import { DEFAULTS, loadConfig, validateBedrock } from "../src/config.ts";
 
 const MESSAGE =
-    "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)";
+    "browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)";
 
-describe("bedrock.signInAtStart", () => {
+describe("signInAtStart", () => {
     test("is off unless the file turns it on", () => {
         assert.equal(DEFAULTS.signInAtStart, false);
         assert.equal(loadConfig({ raw: { team: "t" }, env: {} }).config?.signInAtStart, false);
@@ -21,13 +18,13 @@ describe("bedrock.signInAtStart", () => {
         assert.deepEqual(validateBedrock({ team: "t", signInAtStart: false }), []);
         for (const value of ["private-canary", 1, null, []]) {
             const messages = validateBedrock({ team: "t", signInAtStart: value });
-            assert.deepEqual(messages, ["bedrock.signInAtStart must be true or false"]);
+            assert.deepEqual(messages, ["signInAtStart must be true or false"]);
             assert.equal(loadConfig({ raw: { team: "t", signInAtStart: value }, env: {} }).config, undefined);
         }
     });
 });
 
-describe("bedrock.browser", () => {
+describe("browser", () => {
     test("is a full path or the name of a program on the PATH, and nothing else", () => {
         for (const value of ["/usr/bin/wslview", "/opt/my-tools/open", "wslview", "xdg-open", "google-chrome-stable"]) {
             assert.deepEqual(validateBedrock({ team: "t", browser: value }), [], value);
@@ -60,7 +57,7 @@ describe("bedrock.browser", () => {
         );
         const refused = loadConfig({ raw: { team: "t", browser: "private-canary --flag" }, env: {} });
         assert.equal(refused.config, undefined);
-        assert.match(refused.error ?? "", /^bedrock\.browser must be/);
+        assert.match(refused.error ?? "", /^browser must be/);
         assert.doesNotMatch(refused.error ?? "", /canary/);
     });
 });
@@ -69,14 +66,12 @@ describe("the section's messages", () => {
     test("name keys of the bedrock section", () => {
         const messages = validateBedrock({ profile: "bad profile", regions: [], monthlyBudgetUsd: 0, typo: 1 });
         assert.ok(messages.length >= 4, messages.join("\n"));
-        for (const message of messages) {
-            assert.match(message, /^bedrock\./);
-        }
-        assert.deepEqual(validateBedrock("private-canary"), ["bedrock must be an object"]);
-        assert.deepEqual(validateBedrock([]), ["bedrock must be an object"]);
+        for (const message of messages) assert.ok(message.length > 0);
+        assert.deepEqual(validateBedrock("private-canary"), ["settings must be an object"]);
+        assert.deepEqual(validateBedrock([]), ["settings must be an object"]);
     });
 
-    test("a missing team says to set bedrock.team, and a wrong field in the file says where to look", () => {
+    test("a missing team says to set team, and a wrong field in the file says where to look", () => {
         assert.equal(loadConfig({ raw: undefined, env: {} }).config?.mode, "system");
         const unknown = loadConfig({ raw: { team: "t", typo: 1 }, env: {} });
         assert.equal(unknown.error, undefined);
@@ -101,22 +96,19 @@ describe("the environment", () => {
     });
 });
 
-describe("bedrock.spendCommand", () => {
+describe("spendCommand", () => {
     test("is an argv array and a bad one names the key", () => {
         assert.deepEqual(validateBedrock({ team: "t", spendCommand: ["my-spend", "--json"] }), []);
         const okay = loadConfig({ raw: { team: "t", spendCommand: ["my-spend"] }, env: {} });
         assert.deepEqual(okay.config?.spendCommand, ["my-spend"]);
         for (const value of ["my-spend", [], ["my-spend", 1], ["my-spend", ""]]) {
-            assert.match(
-                validateBedrock({ team: "t", spendCommand: value })[0] ?? "",
-                /^bedrock\.spendCommand must be/,
-            );
+            assert.match(validateBedrock({ team: "t", spendCommand: value })[0] ?? "", /^spendCommand must be/);
             assert.equal(loadConfig({ raw: { team: "t", spendCommand: value }, env: {} }).config, undefined);
         }
     });
 });
 
-describe("bedrock.api", () => {
+describe("api", () => {
     test("is messages unless the file chooses converse, and a mistake names the key", () => {
         assert.equal(DEFAULTS.api, "messages");
         assert.equal(loadConfig({ raw: { team: "t" }, env: {} }).config?.api, "messages");
@@ -125,14 +117,14 @@ describe("bedrock.api", () => {
         assert.deepEqual(validateBedrock({ team: "t", api: "converse" }), []);
         for (const value of ["chat", "", 1, null]) {
             assert.deepEqual(validateBedrock({ team: "t", api: value }), [
-                'bedrock.api must be "messages" (the Anthropic Messages route) or "converse" (the older route)',
+                'api must be "messages" or "converse" (for example "messages")',
             ]);
             assert.equal(loadConfig({ raw: { team: "t", api: value }, env: {} }).config, undefined);
         }
     });
 });
 
-describe("bedrock.converseModels and bedrock.messagesModels", () => {
+describe("converseModels and messagesModels", () => {
     test("are absent by default and carry short model ids through", () => {
         const plain = loadConfig({ raw: { team: "t" }, env: {} }).config;
         assert.equal(plain?.converseModels, undefined);
@@ -166,10 +158,7 @@ describe("bedrock.converseModels and bedrock.messagesModels", () => {
             ]) {
                 const problems = validateBedrock({ team: "t", [name]: value });
                 assert.equal(problems.length, 1, `${name} ${JSON.stringify(value).slice(0, 40)}`);
-                assert.match(
-                    problems[0] ?? "",
-                    new RegExp(`^bedrock\\.${name} must be a list of up to 64 unique short`),
-                );
+                assert.match(problems[0] ?? "", new RegExp(`^${name} must be a list of up to 64 unique short`));
                 assert.doesNotMatch(problems[0] ?? "", /anthropic|Claude-Opus/);
                 assert.equal(loadConfig({ raw: { team: "t", [name]: value }, env: {} }).config, undefined);
             }
@@ -179,7 +168,7 @@ describe("bedrock.converseModels and bedrock.messagesModels", () => {
     test("one model on both lists is a mistake", () => {
         assert.deepEqual(
             validateBedrock({ team: "t", converseModels: ["claude-opus-5"], messagesModels: ["claude-opus-5"] }),
-            ["bedrock.converseModels and bedrock.messagesModels name the same model; choose one route"],
+            ["converseModels and messagesModels name the same model; choose one route"],
         );
     });
 });

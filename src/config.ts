@@ -152,14 +152,13 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         team !== undefined &&
         (typeof team !== "string" || team.trim() === "" || team.length > 256 || control.test(team))
     ) {
-        problems.push("bedrock.team must be your exact AWS tag value (1-256 characters, no control characters)");
+        problems.push("team must be your exact AWS tag value (for example Team=payments; 1-256 characters)");
     }
     if (team !== undefined && (tagKey !== undefined || tagValue !== undefined))
-        problems.push("bedrock.team cannot be combined with bedrock.tagKey or bedrock.tagValue");
-    if ((tagKey === undefined) !== (tagValue === undefined))
-        problems.push("bedrock.tagKey and bedrock.tagValue must be set together");
+        problems.push("team cannot be combined with tagKey or tagValue");
+    if ((tagKey === undefined) !== (tagValue === undefined)) problems.push("tagKey and tagValue must be set together");
     if ((activeTagKey === undefined) !== (activeTagValue === undefined))
-        problems.push("bedrock.activeTagKey and bedrock.activeTagValue must be set together");
+        problems.push("activeTagKey and activeTagValue must be set together");
     for (const [name, value] of [
         ["tagKey", tagKey],
         ["tagValue", tagValue],
@@ -170,7 +169,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
             value !== undefined &&
             (typeof value !== "string" || value.trim() === "" || value.length > 256 || control.test(value))
         )
-            problems.push(`bedrock.${name} must be a tag name or value of 1-256 characters`);
+            problems.push(`${name} must be a tag name or value of 1-256 characters`);
     if (
         profiles !== undefined &&
         (!Array.isArray(profiles) ||
@@ -187,11 +186,11 @@ export function problemsOf(c: Record<string, unknown>): string[] {
             ) ||
             new Set(profiles).size !== profiles.length)
     ) {
-        problems.push("bedrock.profiles must be a nonempty list of up to 256 unique inference-profile ARNs or ids");
+        problems.push("profiles must be a nonempty list of up to 256 unique inference-profile ARNs or ids");
     }
     if (profile !== undefined && (typeof profile !== "string" || !profilePattern.test(profile))) {
         problems.push(
-            "bedrock.profile must be an AWS profile name: 1-128 letters, digits, underscores, dots or hyphens, starting with a letter or digit",
+            "profile must be an AWS profile name, such as company-profile (1-128 letters, digits, underscores, dots or hyphens, starting with a letter or digit)",
         );
     }
     if (
@@ -201,7 +200,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         regions.some((region) => typeof region !== "string" || !regionPattern.test(region)) ||
         new Set(regions).size !== regions.length
     ) {
-        problems.push("bedrock.regions must contain 1-16 unique AWS region names");
+        problems.push(`regions must contain 1-16 unique AWS region names (for example ["us-east-1"])`);
     }
     if (
         spendCommand !== undefined &&
@@ -212,13 +211,13 @@ export function problemsOf(c: Record<string, unknown>): string[] {
                 (part) => typeof part !== "string" || part === "" || part.length > 4096 || control.test(part),
             ))
     ) {
-        problems.push("bedrock.spendCommand must be a nonempty argv array of strings, without a shell");
+        problems.push("spendCommand must be a nonempty argv array of strings, without a shell");
     }
     if (
         monthlyBudgetUsd !== undefined &&
         (typeof monthlyBudgetUsd !== "number" || !Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd <= 0)
     ) {
-        problems.push("bedrock.monthlyBudgetUsd must be a positive finite number, or omitted");
+        problems.push("monthlyBudgetUsd must be a positive finite number, such as 200, or omitted");
     }
     if (
         !Array.isArray(ssoLoginCommand) ||
@@ -234,17 +233,17 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         ) ||
         String(ssoLoginCommand[0]).includes("{profile}")
     ) {
-        problems.push("bedrock.ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
+        problems.push("ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
     }
-    if (typeof signInAtStart !== "boolean") problems.push("bedrock.signInAtStart must be true or false");
-    if (typeof debug !== "boolean") problems.push("bedrock.debug must be true or false");
+    if (typeof signInAtStart !== "boolean") problems.push("signInAtStart must be true or false");
+    if (typeof debug !== "boolean") problems.push("debug must be true or false");
     if (browser !== undefined && (typeof browser !== "string" || !browserPattern.test(browser))) {
         problems.push(
-            "bedrock.browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)",
+            "browser must be the full path of a program that opens an address, or the name of one on the PATH (no spaces or arguments)",
         );
     }
     if (api !== undefined && api !== "messages" && api !== "converse") {
-        problems.push('bedrock.api must be "messages" (the Anthropic Messages route) or "converse" (the older route)');
+        problems.push('api must be "messages" or "converse" (for example "messages")');
     }
     for (const [name, value] of [
         ["converseModels", converseModels],
@@ -258,21 +257,21 @@ export function problemsOf(c: Record<string, unknown>): string[] {
                 new Set(value).size !== value.length)
         )
             problems.push(
-                `bedrock.${name} must be a list of up to 64 unique short model ids such as claude-opus-5 (no region, no provider prefix, no version suffix)`,
+                `${name} must be a list of up to 64 unique short model ids, such as claude-opus-5 (no region, provider prefix or version suffix)`,
             );
     if (
         Array.isArray(converseModels) &&
         Array.isArray(messagesModels) &&
         converseModels.some((id) => messagesModels.includes(id))
     )
-        problems.push("bedrock.converseModels and bedrock.messagesModels name the same model; choose one route");
+        problems.push("converseModels and messagesModels name the same model; choose one route");
     return problems;
 }
 
 /** Validate a settings object; the package defaults fill what is left out. */
 export const checkBedrock: Check = (raw, errors) => {
     if (!isObject(raw)) {
-        errors.push("bedrock must be an object");
+        errors.push("settings must be an object");
         return;
     }
     knownKeys(raw, FIELDS, "bedrock", errors);
@@ -289,21 +288,21 @@ export function validateBedrock(raw: unknown): string[] {
 /** The presets object, or the problem with it. Machine-wide keys are refused inside a preset. */
 function readPresets(value: unknown): { presets?: Record<string, Record<string, unknown>>; error?: string } {
     if (value === undefined) return { presets: {} };
-    if (!isObject(value)) return { error: "bedrock.presets must be an object of named presets" };
+    if (!isObject(value)) return { error: "presets must be an object of named presets" };
     const presets: Record<string, Record<string, unknown>> = {};
     for (const [name, body] of Object.entries(value)) {
         if (!presetNamePattern.test(name))
             return {
-                error: `bedrock.presets.${name} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
+                error: `presets.${name} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
             };
-        if (!isObject(body)) return { error: `bedrock.presets.${name} must be an object` };
+        if (!isObject(body)) return { error: `presets.${name} must be an object` };
         const machine = Object.keys(body).find((key) => (MACHINE_FIELDS as readonly string[]).includes(key));
         if (machine !== undefined)
-            return { error: `bedrock.presets.${name}.${machine} is machine-wide; keep it at the top level` };
+            return { error: `presets.${name}.${machine} is machine-wide; keep it at the top level` };
         const unknown = Object.keys(body).find((key) => !(PRESET_FIELDS as readonly string[]).includes(key));
-        if (unknown !== undefined) return { error: `bedrock.presets.${name}.${unknown} is not a preset setting` };
+        if (unknown !== undefined) return { error: `presets.${name}.${unknown} is not a preset setting` };
         const [problem] = problemsOf({ ...DEFAULTS, ...body } as Record<string, unknown>);
-        if (problem !== undefined) return { error: `bedrock.presets.${name}: ${problem}` };
+        if (problem !== undefined) return { error: `presets.${name}: ${problem}` };
         presets[name] = body;
     }
     return { presets };
@@ -343,7 +342,7 @@ export function loadConfig(
               ? known.preset
               : undefined);
     if (requested !== undefined && !presetNamePattern.test(requested))
-        return { error: `bedrock.preset must be a preset name: ${requested}` };
+        return { error: `preset must be a preset name: ${requested}` };
     if (requested !== undefined && presets[requested] === undefined)
         return {
             config: {

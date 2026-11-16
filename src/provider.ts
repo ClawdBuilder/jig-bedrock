@@ -41,6 +41,7 @@ import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { runLoginFlow } from "./login-flow.ts";
+import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
 import {
     createListProfiles,
@@ -62,6 +63,25 @@ import { registerSwitchNotice } from "./switch-cost.ts";
 
 type Json = Record<string, unknown>;
 const routeOf = (model: BedrockModel): string => (model.api === "anthropic-messages" ? "Messages" : "Converse");
+/** The nearest name within two edits, for a misspelt preset. */
+function _nearName(value: string, names: readonly string[]): string | undefined {
+    let best: string | undefined;
+    let bestDistance = Infinity;
+    for (const name of names) {
+        const row = Array.from({ length: value.length + 1 }, (_, i) => [i, ...Array(name.length).fill(0)]);
+        for (let j = 1; j <= name.length; j++) (row[0] as number[])[j] = j;
+        for (let i = 1; i <= value.length; i++)
+            for (let j = 1; j <= name.length; j++)
+                (row[i] as number[])[j] = Math.min(
+                    (row[i - 1]?.[j] ?? 0) + 1,
+                    (row[i]?.[j - 1] ?? 0) + 1,
+                    (row[i - 1]?.[j - 1] ?? 0) + (value[i - 1] === name[j - 1] ? 0 : 1),
+                );
+        const distance = row[value.length]?.[name.length] ?? Infinity;
+        if (distance < bestDistance) [best, bestDistance] = [name, distance];
+    }
+    return bestDistance <= 2 ? best : undefined;
+}
 
 export type { CatalogSource, Recover, ResolvedConfig };
 
@@ -172,7 +192,7 @@ function registerMigration(
         // The only jig.json wording in the package: a one-release migration notice.
         pi.on("session_start", (_event, context) =>
             context.ui.notify(
-                "Your Bedrock settings are in jig.json. This version reads bedrock.json only. Run /bedrock migrate to copy them.",
+                "Your Bedrock settings are in jig.json. This version reads bedrock.json only. Run /bedrock migrate to copy them; this stays until 0.6.0.",
                 "warning",
             ),
         );
@@ -256,6 +276,7 @@ export function createBedrockProvider(
         // Where the profile comes from, resolved once a session starts: the setting, /login's credential, the AWS
         // environment, then the default profile. Pi's credential is read through its registry, never from auth.json.
         const profileEnv = options.env ?? (options.config === undefined ? process.env : {});
+        const m = markers(profileEnv);
         const profiles = new ProfileResolver({
             settings: { setting: config.profile, settingSource: config.profileSource, env: profileEnv },
             ...(options.listProfiles === undefined ? {} : { listProfiles: options.listProfiles }),
@@ -532,13 +553,13 @@ export function createBedrockProvider(
             profiles.stored = profile;
             lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
-            // A bedrock.profile setting still wins over the profile just chosen, as it does everywhere else.
+            // A profile setting still wins over the profile just chosen, as it does everywhere else.
             if (profile !== undefined && ctx) {
                 const resolved = await resolveProfile(ctx);
                 if (resolved.profile !== undefined && resolved.profile !== profile)
                     interaction.notify({
                         type: "info",
-                        message: `bedrock.profile ${resolved.profile} overrides the profile chosen at /login.`,
+                        message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
                     });
             }
             let settled = true;
@@ -609,7 +630,7 @@ export function createBedrockProvider(
             Object.assign(config, next);
             profiles.updateSetting(config.profile, config.profileSource);
         };
-        const reloadForPreset = (name: string | undefined, context?: ExtensionCommandContext): ConfigResult => {
+        const reloadForPreset = (name: string | undefined, _context?: ExtensionCommandContext): ConfigResult => {
             const raw = userSettings(profileEnv) ?? {};
             const env = { ...profileEnv };
             if (name !== undefined && env.JIG_BEDROCK_PRESET !== undefined) env.JIG_BEDROCK_PRESET = name;
@@ -625,7 +646,7 @@ export function createBedrockProvider(
             const before = new Set(config.presetNames ?? []);
             if (!before.has(name)) {
                 emitPreset(context, [
-                    `✗ Unknown preset ${name}.`,
+                    `${m.fail} Unknown preset ${name}.`,
                     `Known presets: ${[...before].sort().join(", ") || "none"}.`,
                 ]);
                 return;
@@ -636,14 +657,14 @@ export function createBedrockProvider(
                     document.target.preset = name;
                     const error = saveSettings(document.document);
                     if (error !== undefined) {
-                        emitPreset(context, [`✗ ${error}`]);
+                        emitPreset(context, [`${m.fail} ${error}`]);
                         return;
                     }
                 }
             }
             const next = reloadForPreset(name, context);
             if (!next.config) {
-                emitPreset(context, [`✗ ${next.error}`]);
+                emitPreset(context, [`${m.fail} ${next.error}`]);
                 return;
             }
             applyConfig(next.config);
@@ -710,17 +731,17 @@ export function createBedrockProvider(
         };
         const addPreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
             if (!presetNamePattern.test(name)) {
-                emitPreset(context, [`✗ ${name} is not a preset name.`]);
+                emitPreset(context, [`${m.fail} ${name} is not a preset name.`]);
                 return;
             }
             const document = readSettingsDocument(profileEnv);
             if ("error" in document) {
-                emitPreset(context, [`✗ ${document.error}`]);
+                emitPreset(context, [`${m.fail} ${document.error}`]);
                 return;
             }
             const presets = isObject(document.target.presets) ? { ...document.target.presets } : {};
             if (presets[name] !== undefined) {
-                emitPreset(context, [`✗ Preset ${name} already exists.`]);
+                emitPreset(context, [`${m.fail} Preset ${name} already exists.`]);
                 return;
             }
             const body: Record<string, unknown> = {};
@@ -734,27 +755,27 @@ export function createBedrockProvider(
             document.target.preset = name;
             const error = saveSettings(document.document);
             if (error !== undefined) {
-                emitPreset(context, [`✗ ${error}`]);
+                emitPreset(context, [`${m.fail} ${error}`]);
                 return;
             }
             const next = reloadForPreset(name);
             if (!next.config) {
-                emitPreset(context, [`✗ ${next.error}`]);
+                emitPreset(context, [`${m.fail} ${next.error}`]);
                 return;
             }
             applyConfig(next.config);
             lastChoice = { profile: config.profile, source: "preset", exists: true };
-            emitPreset(context, [`✓ Preset ${name} saved and active.`]);
+            emitPreset(context, [`${m.ok} Preset ${name} saved and active.`]);
         };
         const removePreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
             const document = readSettingsDocument(profileEnv);
             if ("error" in document) {
-                emitPreset(context, [`✗ ${document.error}`]);
+                emitPreset(context, [`${m.fail} ${document.error}`]);
                 return;
             }
             const presets = isObject(document.target.presets) ? { ...document.target.presets } : {};
             if (presets[name] === undefined) {
-                emitPreset(context, [`✗ Preset ${name} does not exist.`]);
+                emitPreset(context, [`${m.fail} Preset ${name} does not exist.`]);
                 return;
             }
             delete presets[name];
@@ -762,12 +783,12 @@ export function createBedrockProvider(
             if (document.target.preset === name) delete document.target.preset;
             const error = saveSettings(document.document);
             if (error !== undefined) {
-                emitPreset(context, [`✗ ${error}`]);
+                emitPreset(context, [`${m.fail} ${error}`]);
                 return;
             }
             const next = reloadForPreset(undefined);
             if (next.config) applyConfig(next.config);
-            emitPreset(context, [`✓ Preset ${name} removed.`]);
+            emitPreset(context, [`${m.ok} Preset ${name} removed.`]);
         };
         const emitPreset = (context: ExtensionCommandContext, rows: string[]): void => {
             const text = ["Bedrock presets", ...rows].join("\n");

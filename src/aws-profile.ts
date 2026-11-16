@@ -85,7 +85,7 @@ export async function profileProblem(
         if (listed === undefined)
             return "Could not list your AWS profiles. Check that the AWS CLI v2 is installed (aws configure list-profiles), then run /bedrock login again.";
         if (!listed.includes(profile))
-            return `${profile} is not in aws configure list-profiles. Run ${LOGIN_PATH} to choose a profile, or set bedrock.profile.`;
+            return `${profile} is not in aws configure list-profiles. Run ${LOGIN_PATH} to choose a profile, or set profile.`;
     }
     let text: string;
     try {
@@ -99,7 +99,7 @@ export async function profileProblem(
         return `${profile} has no profile section in the AWS config, so it is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions.`;
     const session = section.get("sso_session");
     if (session === undefined && section.get("sso_start_url") === undefined)
-        return `${profile} is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions; a profile with keys or a role does not need it.`;
+        return `${profile} is not an IAM Identity Center (SSO) profile. /bedrock login only renews SSO sessions; an AWS profile with keys or a role does not need it.`;
     if (session !== undefined && session !== "" && !sections.has(`sso-session:${session}`))
         return `${profile} names the SSO session ${session}, but [sso-session ${session}] is not in the AWS config. Run aws configure sso again.`;
     return undefined;

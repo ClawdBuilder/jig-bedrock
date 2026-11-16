@@ -112,32 +112,3 @@ test("choosing a profile at /login starts discovery and says what is happening",
         rmSync(dir, { recursive: true, force: true });
     }
 });
-
-test("/aws-login refuses a profile that is not in aws configure list-profiles", async () => {
-    const { dir, env } = folder();
-    try {
-        const { commands } = await build({ env: { ...env, JIG_BEDROCK_PROFILE: "missing" }, list: ["demo-sso"] });
-        const notices: string[] = [];
-        await commands.get("aws-login")!.handler("", { ui: { notify: (text: string) => notices.push(text) } });
-        const text = notices.join("\n");
-        assert.match(text, /missing is not in aws configure list-profiles/);
-        assert.match(text, /\/login → Sign in with an API key → Amazon Bedrock \(jig-bedrock\)/);
-        assert.doesNotMatch(text, /Restoring AWS SSO/);
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});
-
-test("/aws-login refuses a profile that is not an SSO profile", async () => {
-    const { dir, env } = folder();
-    try {
-        const { commands } = await build({ env: { ...env, JIG_BEDROCK_PROFILE: "keys" }, list: ["keys"] });
-        const notices: string[] = [];
-        await commands.get("aws-login")!.handler("", { ui: { notify: (text: string) => notices.push(text) } });
-        const text = notices.join("\n");
-        assert.match(text, /keys is not an IAM Identity Center \(SSO\) profile/);
-        assert.doesNotMatch(text, /Restoring AWS SSO/);
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-});

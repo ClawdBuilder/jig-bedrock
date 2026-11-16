@@ -65,7 +65,7 @@ test("a known field with a bad value still names the field and disables the prov
     assert.equal(handle, undefined);
     const warning = notices.find((notice) => notice.type === "warning");
     assert.ok(warning);
-    assert.match(warning.text, /bedrock\.regions/);
+    assert.match(warning.text, /regions/);
 });
 
 test("a file that is not valid JSON is reported and the defaults still run", async (t) => {

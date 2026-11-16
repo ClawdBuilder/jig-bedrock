@@ -2,14 +2,14 @@
 // child process only, never for Pi itself:
 //
 //   The browser.  `aws sso login` opens $BROWSER. Inside WSL there is usually none, so the sign-in prints a link nobody sees.
-//                 With no BROWSER set (by the user, or by bedrock.browser) the child gets bin/windows-browser, which hands the
-//                 address to the Windows default browser. bedrock.browser names another program and wins everywhere.
+//                 With no BROWSER set (by the user, or by browser) the child gets bin/windows-browser, which hands the
+//                 address to the Windows default browser. browser names another program and wins everywhere.
 //   The interop.  WSL_INTEROP names the socket through which Linux starts Windows programs. A long-lived terminal or tmux server
 //                 can hold the socket of a session that is gone, and then every Windows program, the browser among them, hangs
 //                 and fails. A live socket answers `cmd.exe /c exit` in well under a second. When it does not, the child gets
 //                 the distro's own socket, which lives as long as WSL does. This follows the same rule.
 //
-// Outside WSL nothing here changes anything, except that bedrock.browser, which the user wrote, is still used.
+// Outside WSL nothing here changes anything, except that browser, which the user wrote, is still used.
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

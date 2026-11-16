@@ -21,7 +21,7 @@ export interface ProfileChoice {
 }
 
 export interface ProfileSettings {
-    /** `bedrock.profile` from the settings file. */
+    /** `profile` from the settings file. */
     setting?: string;
     /** `env` when JIG_BEDROCK_PROFILE supplied the setting; `setting` otherwise. */
     settingSource?: "setting" | "env" | "preset";
@@ -34,12 +34,12 @@ export type ListProfiles = (signal?: AbortSignal) => Promise<string[] | undefine
 /** The route Pi's /login actually takes to this provider, written out wherever a message sends someone there. */
 export const LOGIN_PATH = "/login → Sign in with an API key → Amazon Bedrock (jig-bedrock)";
 /** The one line every command says when no profile is configured. */
-export const NO_PROFILE = `No AWS profile is configured for Bedrock. Run ${LOGIN_PATH}, or set bedrock.profile.`;
+export const NO_PROFILE = `No AWS profile is configured for Bedrock. Run ${LOGIN_PATH}, or set profile.`;
 
 export function sourceLabel(source: ProfileSource | undefined): string {
     switch (source) {
         case "setting":
-            return "bedrock.profile";
+            return "profile";
         case "preset":
             return "active preset";
         case "env":

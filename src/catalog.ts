@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProviderAuth } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
@@ -542,7 +542,7 @@ export function bedrockStream(
                     (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== current)))
         )
             throw new Error(
-                "That Bedrock authentication scope is not supported; choose the configured profile with /model.",
+                "That Bedrock authentication scope is not supported; choose the configured AWS profile with /model.",
             );
         const scoped = {
             ...options,
