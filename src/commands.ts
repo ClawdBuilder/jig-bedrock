@@ -113,10 +113,14 @@ export interface BedrockCommandSources {
     presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
-    doctorAws?: (
-        signal: AbortSignal,
-    ) => Promise<
-        Array<{ ok: boolean; warn?: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>
+    doctorAws?: (signal: AbortSignal) => Promise<
+        Array<{
+            ok: boolean;
+            warn?: boolean;
+            text: string;
+            check: "sign-in" | "models" | "one-profile" | "save";
+            next?: string;
+        }>
     >;
     discoveryStatus?: () => Status | undefined;
     discoveryMode?: () => string | undefined;
@@ -612,10 +616,12 @@ export function registerBedrockCommands(
         }
         const catalog = sources.catalog?.load();
         const warnings = catalog?.warnings ?? [];
+        const save = sources.catalog?.saveFailure?.();
         if (after.length === 0 && warnings.length > 0) {
             emit(ctx, "Bedrock refresh", [
                 `${m.warn} ${warnings.join(" ")}`,
                 "Next: fix the tag or list in /bedrock settings, then /bedrock refresh.",
+                ...(save === undefined ? [] : [`${m.warn} ${save.message}`]),
             ]);
             return;
         }
@@ -642,6 +648,7 @@ export function registerBedrockCommands(
             for (const warning of partial.warnings) rows.push(`${m.warn} ${warning}`);
             rows.push("Next: check the failed profile or region in /bedrock settings, then /bedrock refresh.");
         }
+        if (save !== undefined) rows.push(`${m.warn} ${save.message}`);
         emit(ctx, "Bedrock refresh", rows);
     };
     const login = async (ctx: ExtensionCommandContext): Promise<void> => {
@@ -727,7 +734,7 @@ export function registerBedrockCommands(
             ok: boolean;
             warn?: boolean;
             text: string;
-            check: "sign-in" | "models" | "one-profile";
+            check: "sign-in" | "models" | "one-profile" | "save";
             next?: string;
         }> = [];
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);

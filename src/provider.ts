@@ -554,12 +554,18 @@ export function createBedrockProvider(
         let noticeFailureOnce = false;
         let settingsChanged = false;
         let settingsBaseline: number | undefined;
+        let saveWarned = false;
         const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> => {
             noticeFailureOnce ||= notifyFailure;
             if (refreshInFlight !== undefined) return refreshInFlight;
             refreshInFlight = (async (): Promise<Status> => {
                 const status = await catalog.refresh(force);
                 if (disposed) return status;
+                const save = catalog.saveFailure?.();
+                if (save !== undefined && ctx !== undefined && !quiet && !saveWarned) {
+                    saveWarned = true;
+                    ctx.ui.notify(save.message, "warning");
+                } else if (save === undefined) saveWarned = false;
                 discoverySlow = status === "timeout";
                 autoProfileFailed = autoProfile && status !== "ok";
                 let failureNotice = false;
@@ -1071,7 +1077,7 @@ export function createBedrockProvider(
                     ok: boolean;
                     warn?: boolean;
                     text: string;
-                    check: "sign-in" | "models" | "one-profile";
+                    check: "sign-in" | "models" | "one-profile" | "save";
                     next?: string;
                 }> = [];
                 if (!choice)
@@ -1151,6 +1157,15 @@ export function createBedrockProvider(
                                 : `Models: ${models.length} found in ${config.regions.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`
                             : `Models: ${reason ?? "could not list"}`),
                 });
+                const save = catalog.saveFailure?.();
+                if (save !== undefined)
+                    rows.push({
+                        ok: false,
+                        warn: true,
+                        check: "save",
+                        next: "Next: check the folder's permissions, then /bedrock refresh.",
+                        text: save.message,
+                    });
                 return rows;
             },
             clearRefusals: () => clearRefusals(profileEnv, config.profile, refusalAccount),

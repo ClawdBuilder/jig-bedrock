@@ -1,5 +1,5 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { AwsApiError, getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
@@ -23,6 +23,14 @@ export type Status =
     | "expired_credentials"
     | "invalid_credentials"
     | "unavailable";
+export interface SaveFailure {
+    /** The cache folder, with the home directory shown as ~. */
+    folder: string;
+    /** The operating system's reason for the failed write. */
+    reason: string;
+    /** The whole warning, ready to show. */
+    message: string;
+}
 export interface CatalogSource {
     load(): Catalog | undefined;
     refresh(force?: boolean): Promise<Status>;
@@ -30,6 +38,21 @@ export interface CatalogSource {
     failure?(): string | undefined;
     /** The category of the last refresh, for the doctor's next step. */
     status?(): Status | undefined;
+    /** Why the last successful list could not be saved; undefined after a save succeeds. */
+    saveFailure?(): SaveFailure | undefined;
+}
+/** A path with the home directory replaced by ~, so a warning about it stays short. */
+function homeDisplay(target: string, env: NodeJS.ProcessEnv): string {
+    const home = env.HOME;
+    if (home === undefined || home === "") return target;
+    const prefix = home.endsWith(sep) ? home : `${home}${sep}`;
+    return target === home || target.startsWith(prefix) ? `~${target.slice(home.length)}` : target;
+}
+/** The operating system's reason, without the path Node repeats in its message. */
+function saveReason(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    const comma = raw.indexOf(",");
+    return comma === -1 ? raw : raw.slice(0, comma);
 }
 /** Plain reason for one region that did not answer; the region itself is named by the caller. */
 function regionReason(error: unknown): string {
@@ -269,7 +292,9 @@ export function createAwsDiscovery(
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
         lastFailure: string | undefined,
-        lastStatus: Status | undefined;
+        lastStatus: Status | undefined,
+        lastSaveFailure: SaveFailure | undefined,
+        memory: { file: string; catalog: Catalog } | undefined;
     // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and the settings
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
@@ -288,7 +313,11 @@ export function createAwsDiscovery(
         if (current !== undefined || (file !== undefined && typeof file === "string")) return current;
         return readCatalog(catalogFile(env), scope(), now());
     };
-    const load = () => readCurrent();
+    const load = () => {
+        if (invalidAccount) return undefined;
+        if (lastSaveFailure !== undefined && memory !== undefined && memory.file === readFrom()) return memory.catalog;
+        return readCurrent();
+    };
     const perform = async (force = false): Promise<Status> => {
         const mode = modeFor();
         const activeKey = activeKeyFor();
@@ -665,8 +694,24 @@ export function createAwsDiscovery(
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             };
-            atomicCache(readFrom(), catalog);
-            if (typeof file === "function") pruneCatalogFiles(dirname(readFrom()));
+            const target = readFrom();
+            try {
+                atomicCache(target, catalog);
+                lastSaveFailure = undefined;
+                memory = undefined;
+                if (typeof file === "function") pruneCatalogFiles(dirname(target));
+            } catch (error) {
+                // A safety refusal (a link, too large) is still a discovery failure; an OS write error is not.
+                if ((error as NodeJS.ErrnoException).code === undefined) throw error;
+                memory = { file: target, catalog };
+                const folder = homeDisplay(dirname(target), env);
+                const reason = saveReason(error);
+                lastSaveFailure = {
+                    folder,
+                    reason,
+                    message: `Could not save the model list in ${folder}: ${reason}. The models are loaded for this session; the next start reads AWS again.`,
+                };
+            }
             invalidAccount = false;
             lastFailure = undefined;
             lastStatus = undefined;
@@ -685,5 +730,6 @@ export function createAwsDiscovery(
             })),
         failure: () => lastFailure,
         status: () => lastStatus,
+        saveFailure: () => lastSaveFailure,
     };
 }
