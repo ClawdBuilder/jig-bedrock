@@ -348,7 +348,7 @@ export function registerBedrockCommands(
         if (key === "monthlyBudgetUsd") return Number(value);
         return value;
     };
-    const set = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const set = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
         const parts = args.trim().split(/\s+/);
         if (parts.length < 2 || parts.length % 2 !== 0) {
             emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
@@ -416,10 +416,12 @@ export function registerBedrockCommands(
         );
         emit(ctx, "Bedrock settings", [
             `${m.ok} ${shown} (saved to bedrock.json)`,
-            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+            ...(needsRefresh && fromMenu ? ["Saved. Loading models for the new settings…"] : []),
+            ...(needsRefresh && !fromMenu ? ["Next: /bedrock refresh"] : []),
         ]);
+        if (needsRefresh && fromMenu) await refresh("", ctx);
     };
-    const unset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const unset = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
         const keys = args.trim().split(/\s+/).filter(Boolean);
         if (keys.length === 0) {
             emit(ctx, "Bedrock settings", [
@@ -475,8 +477,10 @@ export function registerBedrockCommands(
         );
         emit(ctx, "Bedrock settings", [
             `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
-            ...(needsRefresh ? ["Next: /bedrock refresh"] : []),
+            ...(needsRefresh && fromMenu ? ["Saved. Loading models for the new settings…"] : []),
+            ...(needsRefresh && !fromMenu ? ["Next: /bedrock refresh"] : []),
         ]);
+        if (needsRefresh && fromMenu) await refresh("", ctx);
     };
     const refresh = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         if (args.trim() !== "") {
@@ -823,7 +827,10 @@ export function registerBedrockCommands(
             );
         }
         actions.set("Save current settings as a preset…", async () => {
-            const name = await ctx.ui.input("Preset name", "work");
+            const name = await ctx.ui.input(
+                `Preset name · now: ${sources.activePreset?.().name ?? "none"} · e.g. work · empty cancels`,
+                "work",
+            );
             if (name === undefined) return;
             if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
                 emit(ctx, "Bedrock presets", [
@@ -858,24 +865,39 @@ export function registerBedrockCommands(
             regions: "JIG_BEDROCK_REGIONS",
             debug: "JIG_BEDROCK_DEBUG",
         };
-        const labels = FIELDS.filter((key) => key !== "presets").map((key) => {
+        const sourceOf = (key: string): string => {
+            if (key === "preset") return config.presetSource === "env" ? "JIG_BEDROCK_PRESET variable" : "bedrock.json";
+            if (envNames[key] !== undefined && env[envNames[key] as string] !== undefined)
+                return `${envNames[key]} variable`;
+            if (!("error" in doc) && Object.hasOwn(doc.target, key)) return "bedrock.json";
+            if (Object.hasOwn(DEFAULTS as Record<string, unknown>, key)) return "default";
+            return "";
+        };
+        const labels: Array<{ key: string; label: string }> = [];
+        for (const key of FIELDS.filter((key) => key !== "presets")) {
+            if (key === "tagValue" || key === "activeTagValue") continue;
+            const pair = key === "tagKey" ? "tagValue" : key === "activeTagKey" ? "activeTagValue" : undefined;
+            if (pair !== undefined) {
+                const name = key === "tagKey" ? "Tag" : "Second tag";
+                const left = values[key];
+                const right = values[pair];
+                if (left === undefined && right === undefined) labels.push({ key, label: `${name}: not set` });
+                else
+                    labels.push({
+                        key,
+                        label: `${name}: ${String(left ?? "?")} = ${String(right ?? "?")} (${sourceOf(key)})`,
+                    });
+                continue;
+            }
             const value =
                 key === "preset" ? config.preset : (values[key] ?? (DEFAULTS as Record<string, unknown>)[key]);
-            const from =
-                key === "preset" && config.preset !== undefined
-                    ? config.presetSource === "env"
-                        ? "environment"
-                        : "file"
-                    : envNames[key] !== undefined && env[envNames[key] as string] !== undefined
-                      ? "environment"
-                      : !("error" in doc) && Object.hasOwn(doc.target, key)
-                        ? "file"
-                        : Object.hasOwn(DEFAULTS as Record<string, unknown>, key)
-                          ? "default"
-                          : "unset";
-            const shown = Array.isArray(value) ? value.join(",") : value === undefined ? "unset" : String(value);
-            return { key, label: `${key}: ${shown} (${from})` };
-        });
+            if (value === undefined || (Array.isArray(value) && value.length === 0)) {
+                labels.push({ key, label: `${key}: not set` });
+                continue;
+            }
+            const shown = Array.isArray(value) ? value.join(",") : String(value);
+            labels.push({ key, label: `${key}: ${shown} (${sourceOf(key)})` });
+        }
         const choice = await ctx.ui.select("Bedrock settings", [...labels.map((entry) => entry.label), "Back"]);
         if (choice === undefined || choice === "Back") return;
         const key = labels.find((entry) => entry.label === choice)?.key;
@@ -888,26 +910,26 @@ export function registerBedrockCommands(
         );
         if (action === undefined || action === "Back") return;
         if (action === "Unset") {
-            await unset(pair === undefined ? key : `${key} ${pair}`, ctx);
+            await unset(pair === undefined ? key : `${key} ${pair}`, ctx, true);
             return;
         }
         if (key === "api") {
             const answer = await ctx.ui.select("api (example: messages)", ["messages", "converse"]);
-            if (answer !== undefined) await set(`api ${answer}`, ctx);
+            if (answer !== undefined) await set(`api ${answer}`, ctx, true);
             return;
         }
         if (key === "signInAtStart" || key === "debug") {
             const answer = await ctx.ui.select(`${key} (current: ${String(current ?? "unset")})`, ["on", "off"]);
-            if (answer !== undefined) await set(`${key} ${answer === "on" ? "true" : "false"}`, ctx);
+            if (answer !== undefined) await set(`${key} ${answer === "on" ? "true" : "false"}`, ctx, true);
             return;
         }
         if (pair !== undefined) {
             const answer = await ctx.ui.input(
-                `${key} and ${pair} (current: ${String(current ?? "unset")}; example: Team my-team)`,
+                `${key === "tagKey" ? "Tag" : "Second tag"} · now: ${String(current ?? "not set")} · e.g. Team my-team · empty cancels`,
                 "Team my-team",
             );
             const [left, right] = (answer ?? "").trim().split(/\s+/);
-            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx);
+            if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx, true);
             return;
         }
         const examples: Record<string, string> = {
@@ -921,14 +943,14 @@ export function registerBedrockCommands(
             browser: "/usr/bin/xdg-open",
         };
         const answer = await ctx.ui.input(
-            `${key} (current: ${Array.isArray(current) ? current.join(",") : (current ?? "unset")}; example: ${examples[key] ?? "value"})`,
+            `${key} · now: ${Array.isArray(current) ? current.join(",") : (current ?? "not set")} · e.g. ${examples[key] ?? "value"} · empty keeps it · Unset removes it`,
             current === undefined
                 ? (examples[key] ?? "value")
                 : Array.isArray(current)
                   ? current.join(",")
                   : String(current),
         );
-        if (answer !== undefined && answer !== "") await set(`${key} ${answer}`, ctx);
+        if (answer !== undefined && answer !== "") await set(`${key} ${answer}`, ctx, true);
     };
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.models();
@@ -983,7 +1005,7 @@ export function registerBedrockCommands(
     };
     const budgetMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const answer = await ctx.ui.input(
-            "Monthly budget in USD",
+            `Monthly budget in USD · now: ${config.monthlyBudgetUsd === undefined ? "none" : `$${config.monthlyBudgetUsd}`} · e.g. 200 · 0 or off clears · empty keeps it`,
             config.monthlyBudgetUsd === undefined ? "200" : String(config.monthlyBudgetUsd),
         );
         if (answer === undefined || answer === "") return;

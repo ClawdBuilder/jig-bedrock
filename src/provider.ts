@@ -507,6 +507,7 @@ export function createBedrockProvider(
             failed = true;
         }
         let noticeFailureOnce = false;
+        let settingsChanged = false;
         const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> => {
             noticeFailureOnce ||= notifyFailure;
             if (refreshInFlight !== undefined) return refreshInFlight;
@@ -565,7 +566,7 @@ export function createBedrockProvider(
                     ctx &&
                     (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    if (selectedGone && selected !== undefined) {
+                    if (selectedGone && selected !== undefined && (updated.length > 0 || !settingsChanged)) {
                         ctx.ui.notify(
                             `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
                             "warning",
@@ -589,6 +590,7 @@ export function createBedrockProvider(
                         );
                     }
                 }
+                settingsChanged = false;
                 if (change.changed && native) {
                     await registerBedrockProvider(
                         pi,
@@ -923,10 +925,8 @@ export function createBedrockProvider(
             apply: () => {
                 const next = reloadSettings();
                 if (!applyResolved(next)) return;
-                if (ctx) {
-                    spend.updateFooter(ctx);
-                    void refresh(false).catch(() => {});
-                }
+                settingsChanged = true;
+                if (ctx) spend.updateFooter(ctx);
             },
             doctorAws: async (signal) => {
                 const choice = lastChoice.profile ?? config.profile;

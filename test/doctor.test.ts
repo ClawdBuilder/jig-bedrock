@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test doubles */
 // The doctor now checks only Node and the AWS CLI: the old shell dependencies are gone with it.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";

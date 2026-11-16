@@ -246,7 +246,7 @@ function orderCatalog(ids: string[]): Catalog {
         regions: [region],
         fetched_at: Math.floor(Date.now() / 1000),
         profiles: ids.map((id, n) => ({
-            arn: `arn:aws:bedrock:${region}:123456789012:${id.startsWith("amazon.") ? "application-inference-profile/p" + n : `inference-profile/global.${id}`}`,
+            arn: `arn:aws:bedrock:${region}:123456789012:${id.startsWith("amazon.") ? `application-inference-profile/p${n}` : `inference-profile/global.${id}`}`,
             profile_name: `Fixture ${n}`,
             foundation_model_id: id,
             region,

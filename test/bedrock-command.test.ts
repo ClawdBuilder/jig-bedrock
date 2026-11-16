@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test UI doubles */
 /* biome-ignore-all lint/style/noNonNullAssertion: test assertions */
 // The one command: every sub-command, the completions, the old names and the always-present broken settings path.
 import assert from "node:assert/strict";
@@ -338,7 +339,10 @@ function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string
         if (wanted === undefined) return undefined;
         return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
     };
-    h.ctx.ui.input = async () => inputs.shift();
+    h.ctx.ui.input = async (title: string) => {
+        (h.ctx.ui as any).calls.push({ title, options: [] });
+        return inputs.shift();
+    };
     return () => selectCalls;
 }
 
@@ -351,7 +355,7 @@ test("/bedrock alone opens the action menu", async (t) => {
 
 test("the settings menu edits a tag pair in one step", async (t) => {
     const h = harness(t, {});
-    withUi(h, ["Settings", "activeTagKey", "Set"], ["Active true"]);
+    withUi(h, ["Settings", "Second tag", "Set"], ["Active true"]);
     await h.result.bedrock("", h.ctx as never);
     const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
     assert.equal(saved.activeTagKey, "Active");
@@ -383,7 +387,7 @@ test("the settings menu refuses an invalid value and writes nothing", async (t) 
 test("the settings menu unsets both halves of a pair", async (t) => {
     const h = harness(t, {});
     writeFileSync(join(h.root, "bedrock.json"), JSON.stringify({ activeTagKey: "Active", activeTagValue: "true" }));
-    withUi(h, ["Settings", "activeTagKey", "Unset"]);
+    withUi(h, ["Settings", "Second tag", "Unset"]);
     await h.result.bedrock("", h.ctx as never);
     const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
     assert.equal("activeTagKey" in saved, false);
@@ -715,4 +719,42 @@ test("the models menu picks a model id that shares a prefix", async (t) => {
     await h.result.bedrock("", h.ctx as never);
     const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
     assert.match(calls[2]?.title ?? "", /^claude-sonnet-5-5/);
+});
+
+test("the settings list shows pairs once in plain words and inputs carry their hint", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "Tag", "Set"], ["Team fixture-team"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    const settingsOptions = calls.flatMap((call) => call.options);
+    assert.ok(
+        settingsOptions.some((option) => option.startsWith("Tag:")),
+        JSON.stringify(settingsOptions),
+    );
+    assert.equal(
+        settingsOptions.some((option) => option.startsWith("tagValue:")),
+        false,
+    );
+    assert.ok(calls.some((call) => /e\.g\. Team my-team/.test(call.title) && /empty cancels/.test(call.title)));
+});
+
+test("a menu save that changes discovery refreshes and does not claim the model left", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "Tag", "Set"], ["Team fixture-team"]);
+    await h.result.bedrock("", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /Saved\. Loading models for the new settings/);
+    assert.match(text, /Bedrock refresh/);
+    assert.doesNotMatch(text, /no longer in your account/);
+});
+
+test("the budget input title shows the current value, example and clear rule", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Budget"], [""]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string }>;
+    const title = calls.find((call) => /Monthly budget/.test(call.title))?.title ?? "";
+    assert.match(title, /now: (\$100|none)/, JSON.stringify(calls));
+    assert.match(title, /e\.g\. 200/);
+    assert.match(title, /0 or off clears/);
 });

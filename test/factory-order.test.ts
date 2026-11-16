@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test doubles */
 // The saved catalog is turned into models at the factory, before session_start. Its order must be the same
 // Sonnet-first order the refresh path uses, or Pi starts on AWS's first profile.
 import assert from "node:assert/strict";
