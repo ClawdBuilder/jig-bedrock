@@ -8,7 +8,7 @@ It gets Pi's environment plus `AWS_PROFILE`, the first `regions` entry as `AWS_R
 { "month": "2026-11", "spentUsd": 203.4 }
 ```
 
-`month` is the current UTC month; `spentUsd` is zero or more. A failure, 30 seconds, or other output keeps this machine's figure; `/bedrock doctor` names the reason. The footer and `/bedrock usage` then show both figures. It is not an AWS limit and blocks nothing.
+`month` is the current UTC month; `spentUsd` is zero or more. A failure, 30 seconds, or other output keeps this machine's figure; `/bedrock doctor` names the reason. The footer shows the command's figure when it worked, and this machine's when it did not; `/bedrock usage` shows both. It is not an AWS limit and blocks nothing.
 
 ## Example
 

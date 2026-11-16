@@ -138,6 +138,7 @@ test("access-key guidance waits for confirmation before listing, and the new pro
         }
         if (prompt.message?.includes("How do you sign in to AWS?")) return "keys";
         if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "";
         return "profile:new-keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -168,6 +169,7 @@ test("Back on the guidance returns to the methods without listing again", async 
         if (isGuidance(prompt)) return "back";
         if (prompt.message?.includes("How do you sign in to AWS?")) return methods++ === 0 ? "role" : "existing";
         if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -192,7 +194,9 @@ test("an SSO profile signs in first, then verifies, and only SSO profiles are li
             ? "sso"
             : prompt.message === "Which inference profiles should Bedrock list?"
               ? "system"
-              : "profile:demo-sso",
+              : prompt.message === "AWS regions for discovery (comma separated)"
+                ? ""
+                : "profile:demo-sso",
     );
     const signed: string[] = [];
     const credential = await runLoginFlow(fake.value as never, {
@@ -259,6 +263,7 @@ test("a Bedrock API key is refused, and the flow offers the methods again", asyn
     const fake = interaction((prompt) => {
         if (prompt.message?.includes("How do you sign in to AWS?")) return method++ === 0 ? "key" : "existing";
         if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, options());
@@ -275,6 +280,7 @@ test("a failed check says so and asks again", async () => {
     const fake = interaction((prompt) => {
         if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
         if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "";
         return "profile:keys";
     });
     const credential = await runLoginFlow(fake.value as never, {
@@ -287,6 +293,55 @@ test("a failed check says so and asks again", async () => {
     assert.equal(attempt, 2);
     assert.deepEqual(credential.env, { AWS_PROFILE: "keys" });
     assert.match(fake.prompts.map((prompt) => prompt.message ?? "").join("\n"), /AWS did not answer for keys/);
+});
+
+test("a typo in the login region prompt is asked again with the closest region", async () => {
+    const saved: DiscoverySettings[] = [];
+    let answers = 0;
+    const fake = interaction((prompt) => {
+        if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
+        if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)")
+            return ++answers === 1 ? "us-east-9" : "us-east-1";
+        return "";
+    });
+    await runLoginFlow(fake.value as never, {
+        ...options(),
+        saveDiscovery: (settings) => {
+            saved.push(settings);
+            return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+        },
+    });
+    assert.equal(answers, 2, "the region prompt was asked again");
+    assert.deepEqual(saved[0]?.regions, ["us-east-1"]);
+    assert.match(
+        fake.notices.map((notice) => notice.message).join("\n"),
+        /us-east-9 is not an AWS region; did you mean us-east-1/,
+    );
+});
+
+test("a new-looking region at login is accepted with a warning", async () => {
+    const saved: DiscoverySettings[] = [];
+    const fake = interaction((prompt) => {
+        if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
+        if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+        if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+        if (prompt.message === "AWS regions for discovery (comma separated)") return "eu-west-4";
+        return "";
+    });
+    await runLoginFlow(fake.value as never, {
+        ...options(),
+        saveDiscovery: (settings) => {
+            saved.push(settings);
+            return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+        },
+    });
+    assert.deepEqual(saved[0]?.regions, ["eu-west-4"]);
+    assert.match(
+        fake.notices.map((notice) => notice.message).join("\n"),
+        /eu-west-4 is not in the known AWS region list; using it anyway/,
+    );
 });
 
 test("tag and explicit discovery choices are saved with the regions", async () => {
@@ -330,6 +385,7 @@ test("no prompt ever asks for a secret and no credential carries a key", async (
             if (isGuidance(prompt)) return "ready";
             if (prompt.message?.includes("How do you sign in to AWS?")) return method;
             if (prompt.message === "Which inference profiles should Bedrock list?") return "system";
+            if (prompt.message === "AWS regions for discovery (comma separated)") return "";
             return method === "sso" ? "profile:demo-sso" : "profile:keys";
         });
         const credential = await runLoginFlow(fake.value as never, options());

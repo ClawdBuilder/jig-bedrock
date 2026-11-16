@@ -1,10 +1,12 @@
-import { execFile } from "node:child_process";
 import { readdirSync, rmSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
+import { AwsApiError, getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { loadCredentialProvider } from "./credential-provider.ts";
+import type { AwsCredentials } from "./sigv4.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI, checked field by field where it is used
 type Json = any;
@@ -16,7 +18,19 @@ export type Status =
     | "credentials"
     | "network"
     | "timeout"
+    | "throttled"
+    | "aws_error"
+    | "expired_credentials"
+    | "invalid_credentials"
     | "unavailable";
+export interface SaveFailure {
+    /** The cache folder, with the home directory shown as ~. */
+    folder: string;
+    /** The operating system's reason for the failed write. */
+    reason: string;
+    /** The whole warning, ready to show. */
+    message: string;
+}
 export interface CatalogSource {
     load(): Catalog | undefined;
     refresh(force?: boolean): Promise<Status>;
@@ -24,55 +38,83 @@ export interface CatalogSource {
     failure?(): string | undefined;
     /** The category of the last refresh, for the doctor's next step. */
     status?(): Status | undefined;
+    /** Why the last successful list could not be saved; undefined after a save succeeds. */
+    saveFailure?(): SaveFailure | undefined;
 }
-export type Runner = (
-    program: string,
-    args: string[],
-    options: { timeout: number; maxBuffer: number },
-) => Promise<string>;
-export const runFile: Runner = (program, args, options) =>
-    new Promise((resolve, reject) => {
-        execFile(
-            program,
-            args,
-            { ...options, encoding: "utf8", env: { ...process.env, AWS_CLI_AUTO_PROMPT: "off", AWS_PAGER: "" } },
-            (error, stdout, stderr) =>
-                error ? reject(new Error(error.killed ? "timeout" : stderr || error.message)) : resolve(stdout),
-        );
-    });
+/** A path with the home directory replaced by ~, so a warning about it stays short. */
+function homeDisplay(target: string, env: NodeJS.ProcessEnv): string {
+    const home = env.HOME;
+    if (home === undefined || home === "") return target;
+    const prefix = home.endsWith(sep) ? home : `${home}${sep}`;
+    return target === home || target.startsWith(prefix) ? `~${target.slice(home.length)}` : target;
+}
+/** The operating system's reason, without the path Node repeats in its message. */
+function saveReason(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    const comma = raw.indexOf(",");
+    return comma === -1 ? raw : raw.slice(0, comma);
+}
 /** Plain reason for one region that did not answer; the region itself is named by the caller. */
 function regionReason(error: unknown): string {
     const cause = error instanceof StepError ? error.cause : error;
-    const text = String(cause);
-    if (/security token.*invalid|unrecognizedclientexception/i.test(text))
-        return "the security token is invalid there; the region may not be enabled for this account";
-    if (/timeout|timed out/i.test(text)) return "AWS timed out";
-    if (/access.?denied|not authorized to perform|unauthorizedoperation/i.test(text))
-        return "AWS refused the request; check permissions for this region";
-    return discoveryHelp(category(cause))
+    const status = category(cause);
+    if (status === "timeout") return "AWS timed out";
+    if (status === "invalid_credentials")
+        return "the AWS credentials are not valid there; they may be revoked or wrong, or the region may not be enabled for this account";
+    if (status === "expired_credentials") return "the AWS credentials have expired";
+    if (status === "throttled") return "AWS is limiting requests; try again in a minute";
+    if (status === "aws_error") return "AWS had a problem on its side; try again later";
+    if (status === "sso_expired") return "the sign-in has expired; run /bedrock login";
+    if (status === "permission_denied") return "AWS refused the request; check permissions for this region";
+    return discoveryHelp(status)
         .replace(/^./, (c) => c.toLowerCase())
         .replace(/\.$/, "");
 }
 
+/** The status of an AWS error from the code and HTTP status AWS sent; text is the fallback for other sources. */
 export function category(error: unknown): Status {
+    if (error instanceof AwsApiError) {
+        const status = statusFromAws(error.code, error.status);
+        if (status !== undefined) return status;
+    }
     const m = String(error).toLowerCase();
-    return /access.?denied|not authorized to perform|unauthorizedoperation|security token.*invalid|unrecognizedclientexception/.test(
-        m,
+    if (/throttl|too ?many requests|rate exceeded|requestlimitexceeded/.test(m)) return "throttled";
+    if (/internalserver|internal server|serviceunavailable|service unavailable|internalfailure|server error/.test(m))
+        return "aws_error";
+    if (/aws sso login|sso session|sso token|token for .* has expired/.test(m)) return "sso_expired";
+    if (
+        /expiredtoken|expired token|token (?:included in the request )?(?:is )?expired|temporary credentials? (?:have )?expired/.test(
+            m,
+        )
     )
-        ? "permission_denied"
-        : /aws sso login|sso session|token for .* has expired|sso token/i.test(String(error))
-          ? "sso_expired"
-          : /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/i.test(
-                  m,
-              )
-            ? "credentials"
-            : /could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m)
-              ? "configuration"
-              : /timeout|timed out/.test(m)
-                ? "timeout"
-                : /network|connect|dns|resolve|unreachable|proxy/.test(m)
-                  ? "network"
-                  : "unavailable";
+        return "expired_credentials";
+    if (/invalidclienttokenid|unrecognizedclient|invalidaccesskeyid|security token.*invalid/.test(m))
+        return "invalid_credentials";
+    if (/access.?denied|not authorized to perform|unauthorizedoperation/.test(m)) return "permission_denied";
+    if (
+        /unable to locate credentials|no credentials|credentials? (?:not found|missing|unavailable)|could not load credentials/.test(
+            m,
+        )
+    )
+        return "credentials";
+    if (/could not be found|config profile|profile.*not found|missing.*(?:sso|region)|enoent/.test(m))
+        return "configuration";
+    if (/timeout|timed out/.test(m)) return "timeout";
+    if (/network|connect|dns|resolve|unreachable|proxy/.test(m)) return "network";
+    return "unavailable";
+}
+
+/** The AWS code first, then the HTTP status when the code is unknown or absent. */
+function statusFromAws(code: string, status: number): Status | undefined {
+    const c = code.toLowerCase();
+    if (/throttl|toomanyrequests|requestlimitexceeded|slowdown/.test(c)) return "throttled";
+    if (/internalserver|serviceunavailable|internalfailure|serviceexception/.test(c)) return "aws_error";
+    if (/expiredtoken/.test(c)) return "expired_credentials";
+    if (/invalidclienttokenid|unrecognizedclient|invalidaccesskeyid/.test(c)) return "invalid_credentials";
+    if (/accessdenied|unauthorized|notauthorized|forbidden/.test(c)) return "permission_denied";
+    if (status === 429) return "throttled";
+    if (status >= 500) return "aws_error";
+    return undefined;
 }
 export function discoveryHelp(status: Status, mode?: string): string {
     switch (status) {
@@ -95,8 +137,16 @@ export function discoveryHelp(status: Status, mode?: string): string {
             return "Check network access to AWS, then /bedrock refresh.";
         case "timeout":
             return "AWS discovery timed out; check network access, then /bedrock refresh.";
+        case "throttled":
+            return "AWS is limiting requests; wait a minute, then run /bedrock refresh.";
+        case "aws_error":
+            return "AWS had a problem on its side; try again later, then run /bedrock refresh.";
+        case "expired_credentials":
+            return "Renew the AWS sign-in: run /bedrock login for an SSO profile, or refresh the keys for a keys profile. Then run /bedrock refresh.";
+        case "invalid_credentials":
+            return "The AWS keys are not valid: they may be revoked or wrong, or a region may not be enabled for the account. Check the AWS profile's keys and the region, then run /bedrock refresh.";
         default:
-            return "Check AWS access and the configuration in docs/settings.md (Every setting), then /bedrock refresh.";
+            return "Check the AWS profile and the regions in /bedrock settings, then run /bedrock refresh.";
     }
 }
 class StepError extends Error {
@@ -111,6 +161,8 @@ class StepError extends Error {
 
 /** A short, plain reason for one profile that could not be read. Never includes an account id. */
 export function profileFailureMessage(error: unknown): string {
+    if (error instanceof AwsApiError && error.code === "ResourceNotFoundException")
+        return "AWS has no inference profile with that ARN in this region";
     const text = String(error);
     if (/model ARN/.test(text)) return "its model address has an unexpected form";
     if (/model ID/.test(text)) return "its model id is empty or invalid";
@@ -123,6 +175,11 @@ export function profileFailureMessage(error: unknown): string {
     if (/profile scope/.test(text)) return "its address is outside the configured account, region or kind";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
+    if (status === "throttled") return "AWS is limiting requests";
+    if (status === "aws_error") return "AWS had a problem on its side";
+    if (status === "expired_credentials") return "its AWS credentials have expired";
+    if (status === "invalid_credentials") return "its AWS credentials are not valid";
+    if (status === "sso_expired") return "the sign-in has expired";
     if (status === "configuration") return "its AWS configuration is missing or wrong";
     if (status === "network") return "AWS could not be reached";
     if (status === "timeout") return "AWS timed out";
@@ -138,10 +195,47 @@ export function problemSummary(errors: Array<{ profile: string; message: string 
     return `Could not read ${shown.join("; ")}${rest}.`;
 }
 
+/** What a catalog loaded and what it could not, when some profiles or regions failed. */
+export interface PartialDiscovery {
+    /** "1 of 2 inference profiles loaded" or "1 model loaded from 1 of 2 regions". */
+    line: string;
+    /** The unread profiles, at most three; undefined when every profile was read. */
+    errors?: string;
+    /** Every warning in the catalog, including each failed region. */
+    warnings: string[];
+}
+
+export function partialDiscovery(catalog: Catalog | undefined): PartialDiscovery | undefined {
+    if (catalog === undefined) return;
+    const errors = catalog.errors ?? [];
+    const warnings = catalog.warnings ?? [];
+    const failedRegions = warnings.filter((warning) => /^[a-z0-9-]+ did not answer:/.test(warning));
+    if (errors.length === 0 && failedRegions.length === 0) return;
+    const loaded = catalog.profiles.length;
+    const parts: string[] = [];
+    if (errors.length > 0) {
+        const total = loaded + errors.length;
+        parts.push(`${loaded} of ${total} inference profile${total === 1 ? "" : "s"} loaded`);
+    }
+    if (failedRegions.length > 0) {
+        const answered = Math.max(0, catalog.regions.length - failedRegions.length);
+        const regions = catalog.regions.length;
+        parts.push(
+            `${loaded} model${loaded === 1 ? "" : "s"} loaded from ${answered} of ${regions} region${regions === 1 ? "" : "s"}`,
+        );
+    }
+    return { line: parts.join("; "), errors: problemSummary(errors), warnings };
+}
+
 function reasonOf(error: unknown): string {
     if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
     const status = category(error);
     if (status === "permission_denied") return "AWS denied access";
+    if (status === "throttled") return "AWS is limiting requests";
+    if (status === "aws_error") return "AWS had a problem on its side";
+    if (status === "expired_credentials") return "the AWS credentials have expired";
+    if (status === "invalid_credentials") return "the AWS credentials are not valid";
+    if (status === "sso_expired") return "your sign-in has expired";
     if (status === "credentials") return "the AWS profile has no credentials";
     if (status === "configuration") return "the AWS configuration is missing or wrong";
     if (status === "network") return "AWS could not be reached";
@@ -179,15 +273,28 @@ export function pruneCatalogFiles(folder: string, keep = 8): void {
 
 export function createAwsDiscovery(
     config: ResolvedConfig,
-    runner: Runner = runFile,
     file?: string | (() => string),
     now = Date.now,
     env: NodeJS.ProcessEnv = process.env,
+    options: {
+        api?: {
+            getCallerIdentity: typeof getCallerIdentity;
+            getResources: typeof getResources;
+            listInferenceProfiles: typeof listInferenceProfiles;
+            getInferenceProfile: typeof getInferenceProfile;
+        };
+        credentials?: () => Promise<AwsCredentials>;
+        fetch?: typeof globalThis.fetch;
+        /** Tests can force the HTTPS path while passing a sentinel runner. */
+        useApi?: boolean;
+    } = {},
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
         lastFailure: string | undefined,
-        lastStatus: Status | undefined;
+        lastStatus: Status | undefined,
+        lastSaveFailure: SaveFailure | undefined,
+        memory: { file: string; catalog: Catalog } | undefined;
     // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and the settings
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
@@ -206,7 +313,11 @@ export function createAwsDiscovery(
         if (current !== undefined || (file !== undefined && typeof file === "string")) return current;
         return readCatalog(catalogFile(env), scope(), now());
     };
-    const load = () => readCurrent();
+    const load = () => {
+        if (invalidAccount) return undefined;
+        if (lastSaveFailure !== undefined && memory !== undefined && memory.file === readFrom()) return memory.catalog;
+        return readCurrent();
+    };
     const perform = async (force = false): Promise<Status> => {
         const mode = modeFor();
         const activeKey = activeKeyFor();
@@ -214,24 +325,75 @@ export function createAwsDiscovery(
         let remaining = 8 * 1_048_576,
             pages = 0,
             deadline = now() + 90_000;
-        const aws = async (args: string[]) => {
-            const timeout = Math.min(20_000, deadline - now());
-            if (timeout <= 0) throw new Error("timeout");
-            const output = await runner(
-                "aws",
-                [
-                    ...args,
-                    ...(config.profile ? ["--profile", config.profile] : []),
-                    "--output",
-                    "json",
-                    "--no-cli-pager",
-                ],
-                { timeout, maxBuffer: Math.min(remaining, 1_048_576) },
-            );
-            remaining -= Buffer.byteLength(output);
-            if (remaining < 0 || Buffer.byteLength(output) > 1_048_576) throw new Error("byte limit");
+        const api = options.api ?? { getCallerIdentity, getResources, listInferenceProfiles, getInferenceProfile };
+        let credentialsPromise: Promise<AwsCredentials> | undefined;
+        const credentials = () => {
+            credentialsPromise ??= (async () => {
+                if (options.credentials !== undefined) return options.credentials();
+                const provider = await loadCredentialProvider();
+                const value = (await provider(
+                    config.profile === undefined ? {} : { profile: config.profile },
+                )()) as AwsCredentials;
+                if (typeof value?.accessKeyId !== "string" || typeof value.secretAccessKey !== "string")
+                    throw new Error("Could not load credentials from any providers");
+                return value;
+            })();
+            return credentialsPromise;
+        };
+        const common = async (region: string) => {
+            const timeoutMs = Math.min(20_000, deadline - now());
+            if (timeoutMs <= 0) throw new Error("timeout");
+            return {
+                credentials: await credentials(),
+                timeoutMs,
+                ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            };
+        };
+        const checkBytes = (value: unknown): void => {
+            const bytes = Buffer.byteLength(JSON.stringify(value));
+            if (bytes > 1_048_576) throw new Error("byte limit");
+            remaining -= bytes;
+            if (remaining < 0) throw new Error("byte limit");
+        };
+        const sts = async () => {
+            const region = config.regions[0] ?? "us-east-1";
+            const result = await api.getCallerIdentity(region, await common(region));
             if (now() > deadline) throw new Error("timeout");
-            return JSON.parse(output);
+            checkBytes(result);
+            return result;
+        };
+        const resources = async (
+            region: string,
+            tagFilters: Array<{ Key: string; Values: string[] }>,
+            paginationToken?: string,
+        ) => {
+            const result = await api.getResources(
+                region,
+                {
+                    tagFilters,
+                    ...(paginationToken === undefined ? {} : { paginationToken }),
+                },
+                await common(region),
+            );
+            if (now() > deadline) throw new Error("timeout");
+            return result;
+        };
+        const list = async (region: string, nextToken?: string) => {
+            const result = await api.listInferenceProfiles(
+                region,
+                {
+                    ...(nextToken === undefined ? {} : { nextToken }),
+                },
+                await common(region),
+            );
+            if (now() > deadline) throw new Error("timeout");
+            return result;
+        };
+        const profile = async (region: string, id: string) => {
+            const result = await api.getInferenceProfile(region, id, await common(region));
+            if (now() > deadline) throw new Error("timeout");
+            checkBytes(result);
+            return result;
         };
         const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
             try {
@@ -243,9 +405,10 @@ export function createAwsDiscovery(
         try {
             if (!force && !invalidAccount) {
                 const cached = readCurrent();
-                if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
+                const incomplete = (cached?.warnings ?? []).some((warning) => /did not answer/.test(warning));
+                if (cached && !incomplete && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
-            const account = (await step("check the AWS account", () => aws(["sts", "get-caller-identity"]))).Account;
+            const account = (await step("check the AWS account", sts)).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
             const old = readCatalog(readFrom(), scope(), now());
             if (old && old.account_id !== account) {
@@ -256,8 +419,8 @@ export function createAwsDiscovery(
                 seen = new Set<string>(),
                 explicitErrors: { profile: string; message: string }[] = [],
                 warnings: string[] = [];
-            const info = (arn: string, region: string) =>
-                aws(["bedrock", "get-inference-profile", "--inference-profile-identifier", arn, "--region", region]);
+            let firstErrorStatus: Status | undefined;
+            const info = (arn: string, region: string) => profile(region, arn);
             const foundation = async (value: Json, depth = 0): Promise<string> => {
                 if (!Array.isArray(value.models) || !value.models.length || value.models.length > 32)
                     throw new Error("models");
@@ -342,21 +505,14 @@ export function createAwsDiscovery(
                         for (let page = 0; page < 32; page++) {
                             if (++pages > 64) throw new Error("pagination");
                             const result = await step("list tagged inference profiles", () =>
-                                aws([
-                                    "resourcegroupstaggingapi",
-                                    "get-resources",
-                                    "--region",
+                                resources(
                                     region,
-                                    "--resource-type-filters",
-                                    "bedrock:application-inference-profile",
-                                    "--tag-filters",
-                                    JSON.stringify([
-                                        { Key: tagKeyFor(), Values: [tagValueFor()] },
+                                    [
+                                        { Key: tagKeyFor()!, Values: [tagValueFor()!] },
                                         ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
-                                    ]),
-                                    "--no-paginate",
-                                    ...(token ? ["--pagination-token", token] : []),
-                                ]),
+                                    ],
+                                    token === "" ? undefined : token,
+                                ),
                             );
                             if (
                                 !Array.isArray(result.ResourceTagMappingList) ||
@@ -405,15 +561,7 @@ export function createAwsDiscovery(
                         for (let page = 0; page < 32; page++) {
                             if (++pages > 64) throw new Error("pagination");
                             const result = await step("list inference profiles", () =>
-                                aws([
-                                    "bedrock",
-                                    "list-inference-profiles",
-                                    "--type-equals",
-                                    "SYSTEM_DEFINED",
-                                    "--region",
-                                    region,
-                                    ...(token ? ["--next-token", token] : []),
-                                ]),
+                                list(region, token === "" ? undefined : token),
                             );
                             const rows = result.inferenceProfileSummaries;
                             if (!Array.isArray(rows) || rows.length > 256) throw new Error("profiles");
@@ -468,6 +616,7 @@ export function createAwsDiscovery(
                     }
                 } catch (error) {
                     explicitErrors.push({ profile: candidate.profile, message: profileFailureMessage(error) });
+                    firstErrorStatus ??= category(error);
                 }
             });
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
@@ -484,22 +633,12 @@ export function createAwsDiscovery(
                     let field: "tagKey" | "tagValue" = "tagKey";
                     for (const region of config.regions) {
                         try {
-                            const result = await step("find a tag with different case", () =>
-                                aws([
-                                    "resourcegroupstaggingapi",
-                                    "get-resources",
-                                    "--region",
-                                    region,
-                                    "--resource-type-filters",
-                                    "bedrock:application-inference-profile",
-                                    "--no-paginate",
-                                ]),
-                            );
+                            const result = await step("find a tag with different case", () => resources(region, []));
                             const rows = result.ResourceTagMappingList;
                             if (!Array.isArray(rows)) continue;
                             for (const row of rows) {
                                 if (!Array.isArray(row?.Tags)) continue;
-                                const tag = row.Tags.find(
+                                const tag: { Key: string; Value: string } | undefined = row.Tags.find(
                                     (entry: Json) =>
                                         typeof entry?.Key === "string" && entry.Key.toLowerCase() === key.toLowerCase(),
                                 );
@@ -524,7 +663,7 @@ export function createAwsDiscovery(
                         hint = ` ${count} have ${actualKey}=${actualValue}. Run /bedrock set ${field} ${field === "tagKey" ? actualKey : actualValue}.`;
                 }
                 warnings.push(
-                    `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue.${hint}`,
+                    `No application inference profiles matched ${key}=${value}${active} in ${config.regions.join(", ")}. Check tagKey/tagValue${activeKey === undefined ? "" : " and the second tag"}.${hint}`,
                 );
             }
             if (mode === "system" && profiles.length === 0 && regionFailures.length < config.regions.length)
@@ -539,6 +678,7 @@ export function createAwsDiscovery(
                 throw regionFailures[0].error;
             if (failed) {
                 lastFailure = problemSummary(explicitErrors) ?? "Could not read any Bedrock profile.";
+                lastStatus = firstErrorStatus ?? "unavailable";
                 return "unavailable";
             }
             const catalog: Catalog = {
@@ -554,8 +694,24 @@ export function createAwsDiscovery(
                 profiles,
                 ...(explicitErrors.length > 0 ? { errors: explicitErrors } : {}),
             };
-            atomicCache(readFrom(), catalog);
-            if (typeof file === "function") pruneCatalogFiles(dirname(readFrom()));
+            const target = readFrom();
+            try {
+                atomicCache(target, catalog);
+                lastSaveFailure = undefined;
+                memory = undefined;
+                if (typeof file === "function") pruneCatalogFiles(dirname(target));
+            } catch (error) {
+                // A safety refusal (a link, too large) is still a discovery failure; an OS write error is not.
+                if ((error as NodeJS.ErrnoException).code === undefined) throw error;
+                memory = { file: target, catalog };
+                const folder = homeDisplay(dirname(target), env);
+                const reason = saveReason(error);
+                lastSaveFailure = {
+                    folder,
+                    reason,
+                    message: `Could not save the model list in ${folder}: ${reason}. The models are loaded for this session; the next start reads AWS again.`,
+                };
+            }
             invalidAccount = false;
             lastFailure = undefined;
             lastStatus = undefined;
@@ -574,5 +730,6 @@ export function createAwsDiscovery(
             })),
         failure: () => lastFailure,
         status: () => lastStatus,
+        saveFailure: () => lastSaveFailure,
     };
 }

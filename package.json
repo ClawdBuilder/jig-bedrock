@@ -1,6 +1,6 @@
 {
     "name": "@clawdbuilder/jig-bedrock",
-    "version": "0.6.1",
+    "version": "0.6.2",
     "description": "Claude and other Bedrock models in Pi, signed in with your AWS profile: finds your models, keeps the prompt cache, renews SSO, shows spend.",
     "type": "module",
     "license": "MIT",

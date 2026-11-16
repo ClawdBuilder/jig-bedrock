@@ -221,7 +221,7 @@ test("every doctor block in troubleshooting.md is the block the code prints", as
     assert.ok(page.includes(block(signIn)), block(signIn));
     const denied = await doctor(t, {
         status: "permission_denied",
-        aws: [{ ok: false, text: "Inference profiles: access denied while listing" }],
+        aws: [{ ok: false, text: "Models: Could not list inference profiles: AWS denied access." }],
     });
     assert.ok(page.includes(block(denied)), block(denied));
     const none = await doctor(t, {

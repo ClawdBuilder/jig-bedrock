@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAwsDiscovery } from "../src/aws-discovery.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 
 const account = "123456789012";
 const arn = (region: string) =>
@@ -16,7 +17,7 @@ const profile = (region: string) => ({
 });
 
 function run(region: string, status = "ok"): Promise<string> {
-    if (status === "denied")
+    if (status === "invalid")
         return Promise.reject(
             new Error(
                 "An error occurred (UnrecognizedClientException): The security token included in the request is invalid.",
@@ -30,14 +31,14 @@ test("one failed region keeps the other region's models and warns", async () => 
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")
                     ? JSON.stringify({ Account: account })
                     : run(
                           args[args.indexOf("--region") + 1] ?? "us-east-1",
-                          args.includes("eu-central-2") ? "denied" : "ok",
+                          args.includes("eu-central-2") ? "invalid" : "ok",
                       ),
             join(dir, "catalog.json"),
             () => Date.now(),
@@ -46,7 +47,11 @@ test("one failed region keeps the other region's models and warns", async () => 
         assert.equal(await source.refresh(true), "ok");
         const catalog = source.load();
         assert.equal(catalog?.profiles.length, 1);
-        assert.match(catalog?.warnings?.join("\n") ?? "", /eu-central-2 did not answer: the security token is invalid/);
+        assert.match(
+            catalog?.warnings?.join("\n") ?? "",
+            /eu-central-2 did not answer: the AWS credentials are not valid there; .*region may not be enabled/,
+        );
+        assert.doesNotMatch(catalog?.warnings?.join("\n") ?? "", /permission|administrator/);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -56,7 +61,7 @@ test("a timeout in one region keeps the other region's models", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")
@@ -81,12 +86,12 @@ test("when every region fails the refresh fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")
                     ? JSON.stringify({ Account: account })
-                    : run(args[args.indexOf("--region") + 1] ?? "us-east-1", "denied"),
+                    : run(args[args.indexOf("--region") + 1] ?? "us-east-1", "invalid"),
             join(dir, "catalog.json"),
             () => Date.now(),
             { HOME: dir } as never,

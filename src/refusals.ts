@@ -1,7 +1,7 @@
 // Models AWS refused for this AWS profile, remembered for seven days. The file holds no account id.
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { cacheRoot, realCacheRoot } from "./cache-root.ts";
 
 interface Refusal {
@@ -10,6 +10,27 @@ interface Refusal {
     date: string;
 }
 type Book = Record<string, Refusal>;
+
+export interface RefusalSaveFailure {
+    /** The cache folder, with the home directory shown as ~. */
+    folder: string;
+    /** The operating system's reason for the failed write. */
+    reason: string;
+    /** The whole line, ready to show after the refusal. */
+    message: string;
+}
+
+const homeDisplay = (target: string, env: NodeJS.ProcessEnv): string => {
+    const home = env.HOME;
+    if (home === undefined || home === "") return target;
+    const prefix = home.endsWith(sep) ? home : `${home}${sep}`;
+    return target === home || target.startsWith(prefix) ? `~${target.slice(home.length)}` : target;
+};
+const saveReason = (error: unknown): string => {
+    const raw = error instanceof Error ? error.message : String(error);
+    const comma = raw.indexOf(",");
+    return comma === -1 ? raw : raw.slice(0, comma);
+};
 
 function file(env: NodeJS.ProcessEnv, profile: string, account: string): string {
     const name = createHash("sha256").update(`${profile}\0${account}`).digest("hex").slice(0, 12);
@@ -41,16 +62,30 @@ export function rememberRefusal(
     arn: string,
     id: string,
     now = Date.now(),
-): void {
-    if (profile === undefined || account === undefined) return;
+): RefusalSaveFailure | undefined {
+    if (profile === undefined || account === undefined) return undefined;
     const book = read(env, profile, account);
     book[arn] = { id, until: now + 7 * 86_400_000, date: new Date(now).toISOString() };
     const path = file(env, profile, account);
-    mkdirSync(join(realCacheRoot(env, true), "jig-bedrock"), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${process.pid}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify(book)}\n`, { mode: 0o600 });
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, path);
+    try {
+        mkdirSync(join(realCacheRoot(env, true), "jig-bedrock"), { recursive: true, mode: 0o700 });
+        writeFileSync(temporary, `${JSON.stringify(book)}\n`, { mode: 0o600 });
+        chmodSync(temporary, 0o600);
+        renameSync(temporary, path);
+    } catch (error) {
+        try {
+            rmSync(temporary, { force: true });
+        } catch {}
+        const folder = homeDisplay(dirname(path), env);
+        const reason = saveReason(error);
+        return {
+            folder,
+            reason,
+            message: `Could not remember this refusal in ${folder}: ${reason}.`,
+        };
+    }
+    return undefined;
 }
 export function refusedModels(
     env: NodeJS.ProcessEnv,

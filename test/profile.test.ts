@@ -14,6 +14,7 @@ import {
     ProfileResolver,
     type ProfileSettings,
 } from "../src/profile.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 
 /** A resolver with a fixed AWS profile listing, and a count of how often the listing was asked for. */
 function resolver(settings: ProfileSettings, listing: string[] | undefined = []) {
@@ -304,7 +305,7 @@ test("discovery omits --profile when there is none", async () => {
         assert.ok(loaded.config);
         assert.equal(loaded.config.profile, undefined);
         const calls: string[][] = [];
-        const discovery = createAwsDiscovery(
+        const discovery = createTestDiscovery(
             loaded.config,
             async (_program, args) => {
                 calls.push(args);

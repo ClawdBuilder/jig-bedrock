@@ -13,14 +13,14 @@ Next: /bedrock login
 
 **Run:** `/bedrock login`
 
-**Still wrong?** Finish the browser sign-in. Only SSO sign-ins are repaired. For keys or a role, fix the AWS profile in the AWS CLI.
+**Still wrong?** Finish the browser sign-in. An SSO sign-in and a role over SSO are repaired. Keys, or a role over keys, get the AWS CLI check instead: `aws sts get-caller-identity --profile <name>`, or fresh keys. `/bedrock login` never sends those in a circle.
 
 ## Access denied
 
 **You see**
 
 ```text
-✗ Models: access denied while listing
+✗ Models: Could not list inference profiles: AWS denied access.
 Next: Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured AWS profile; then /bedrock refresh.
 ```
 
@@ -51,7 +51,20 @@ In tag mode the row says `no inference profiles with tag Team=payments`.
 
 **Run:** `/bedrock refresh`
 
-**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. If one region fails, the others still load and the warning names the failed region. Then run `/bedrock models`.
+**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. If one region fails, the others still load and the row says `N models loaded from X of Y regions`; the failed region is tried again at the next start. Then run `/bedrock models`.
+
+## AWS did not answer
+
+**You see** (from `/bedrock refresh`)
+
+```text
+✗ Could not list inference profiles: AWS is limiting requests.
+Next: AWS is limiting requests; wait a minute, then run /bedrock refresh.
+```
+
+**Run:** wait a minute, then `/bedrock refresh`.
+
+**Still wrong?** The first line names the cause and the next line says what to do: an AWS problem on its side wants a later retry; expired credentials want the sign-in renewed; invalid credentials want the AWS profile's keys and region checked; unreachable AWS wants the network checked. `/bedrock doctor` names the same cause. In tag mode the first line says `tagged inference profiles`.
 
 ## AccessDenied for a model
 
@@ -82,12 +95,12 @@ Bedrock: preset work is not defined; known: personal.
 **You see**
 
 ```text
-– This Pi does not know the model: arn:aws:bedrock:us-east-1:…:inference-profile/orders-api, us-east-1
+– This Pi does not know the model: orders-api, us-east-1 · update Pi
 ```
 
 **Run:** `/bedrock refresh`
 
-**Still wrong?** Update Pi; its model list may be older. Add the missing region to `regions`. A model with no price is still listed as “no price”.
+**Still wrong?** Update Pi; its model list may be older. `/bedrock refresh` and `/bedrock status` count these models. Add the missing region to `regions`. A model with no price is still listed as “no price”.
 
 ## The footer shows no amount
 
@@ -107,7 +120,7 @@ No spend line under Pi's footer.
 400: tool_addition/tool_removal requires a model that supports mid-conversation system content
 ```
 
-**Run:** `/bedrock set converseModels <short id>`
+**Run:** add the id to the list: `/bedrock set converseModels <ids already there>,<short id>`. The value replaces the whole list, so keep the ids already in it.
 
 **Still wrong?** Run `/bedrock models` and use its short id. The route rule is [here](how-it-works.md#which-route-a-model-gets).
 
@@ -128,9 +141,9 @@ No spend line under Pi's footer.
 – File: ~/.pi/agent/bedrock.json
 ```
 
-**Run:** `/bedrock settings`
+**Run:** `/bedrock settings` shows the file path.
 
-**Still wrong?** Fix one key with `/bedrock set <key> <value>` or `/bedrock unset <key>`; see [Settings](settings.md).
+**Still wrong?** Fix the JSON by hand, or move the file aside and run `/login` again. `/bedrock set` and `/bedrock unset` refuse a file that is not valid JSON; see [Settings](settings.md).
 
 ## Your settings are in jig.json
 

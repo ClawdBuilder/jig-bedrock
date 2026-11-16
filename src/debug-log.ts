@@ -270,6 +270,7 @@ export function withDebugCatalog(
         load: () => catalog.load(),
         failure: () => catalog.failure?.(),
         status: () => catalog.status?.(),
+        saveFailure: () => catalog.saveFailure?.(),
         async refresh(force) {
             const started = clock();
             const before = catalog.load()?.fetched_at;

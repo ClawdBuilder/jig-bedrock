@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { saveDiscoverySettings } from "../src/settings-write.ts";
+import { saveDiscoverySettings, saveProfileSetting } from "../src/settings-write.ts";
 
 function folder(): { dir: string; env: NodeJS.ProcessEnv; file: string } {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-settings-"));
@@ -103,6 +103,18 @@ test("unreadable JSON is reported and not overwritten", () => {
         assert.equal(result.written, false);
         assert.match(result.error ?? "", /could not be read as JSON/);
         assert.equal(readFileSync(file, "utf8"), "{ not json");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("saving no profile removes the saved profile from the top level", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bedrock-profile-"));
+    try {
+        writeFileSync(join(dir, "bedrock.json"), JSON.stringify({ profile: "old", regions: ["us-east-1"] }));
+        const env = { HOME: dir, PI_CODING_AGENT_DIR: dir };
+        assert.equal(saveProfileSetting(env, undefined).ok, true);
+        assert.equal(JSON.parse(readFileSync(join(dir, "bedrock.json"), "utf8")).profile, undefined);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

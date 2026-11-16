@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -29,9 +29,9 @@ function catalogFor(region: string): Catalog {
     };
 }
 
-async function start(initial: Record<string, unknown>) {
+async function start(initial: Record<string, unknown>, envExtra: Record<string, string> = {}) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-settings-memory-"));
-    const env = { HOME: dir, PI_CODING_AGENT_DIR: dir };
+    const env = { HOME: dir, PI_CODING_AGENT_DIR: dir, ...envExtra };
     const raw = { profile: "keys", regions: ["us-east-1"], ...initial };
     writeFileSync(join(dir, "bedrock.json"), JSON.stringify(raw));
     const resolved = loadConfig({ raw, env, agentDir: dir });
@@ -144,6 +144,121 @@ test("unset spendCommand removes it from the running settings", async (t) => {
         await s.commands.get("bedrock").handler("unset spendCommand", s.ctx);
         await s.commands.get("bedrock").handler("doctor offline", s.ctx);
         assert.match(s.notices.join("\n"), /Spend command: not set/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a route save re-registers the models with the new route", async (t) => {
+    const s = await start({});
+    try {
+        const id = s.providers.at(-1)?.getModels?.()[0]?.id;
+        assert.ok(id);
+        await s.commands.get("bedrock").handler(`set converseModels ${id}`, s.ctx);
+        assert.equal(s.providers.at(-1)?.getModels?.()[0]?.api, "bedrock-converse-stream");
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a quoted value with spaces is saved whole", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler('set tagKey Team tagValue "Team A"', s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.tagValue, "Team A");
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("booleans accept words and unknown presets are refused without writing", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("set debug yes", s.ctx);
+        let saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.debug, true);
+        await s.commands.get("bedrock").handler("set preset nosuch", s.ctx);
+        saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.preset, undefined);
+        assert.match(s.notices.join("\n"), /Unknown preset nosuch/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("every settings-menu example is a value its own key accepts", async (t) => {
+    const { SETTING_EXAMPLES } = await import("../src/commands.ts");
+    for (const [key, example] of Object.entries(SETTING_EXAMPLES)) {
+        const s = await start({});
+        try {
+            await s.commands.get("bedrock").handler(`set ${key} ${example}`, s.ctx);
+            const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+            assert.ok(saved[key] !== undefined, `${key}=${example}: ${s.notices.join("\n")}`);
+            assert.doesNotMatch(s.notices.join("\n"), /not accepted|Unknown preset/, key);
+        } finally {
+            rmSync(s.dir, { recursive: true, force: true });
+        }
+    }
+});
+
+test("a set under an active preset writes into the preset", async (t) => {
+    const s = await start({ preset: "work", presets: { work: { profile: "old" } }, regions: ["us-east-1"] });
+    try {
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.regions, ["us-east-1"]);
+        assert.match(s.notices.join("\n"), /saved to preset work/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("setting a profile that is not in the AWS config shows it in status", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("set profile ghost", s.ctx);
+        await s.commands.get("bedrock").handler("status", s.ctx);
+        assert.match(s.notices.join("\n"), /ghost is not in the AWS config/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("preset add announces the active preset and reloads models", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("preset add extra", s.ctx);
+        assert.match(s.notices.join("\n"), /Preset extra saved and active; models reloaded/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a preset chosen for the session survives an env preset on the next save", async (t) => {
+    const s = await start(
+        { preset: "work", presets: { work: { regions: ["us-east-1"] }, personal: { regions: ["us-east-1"] } } },
+        { JIG_BEDROCK_PRESET: "work" },
+    );
+    try {
+        await s.commands.get("bedrock").handler("use personal", s.ctx);
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.presets.personal.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.presets.work.regions, ["us-east-1"]);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a set overridden by an environment variable says so", async (t) => {
+    const s = await start({}, { JIG_BEDROCK_REGIONS: "us-east-1" });
+    try {
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        assert.match(s.notices.join("\n"), /JIG_BEDROCK_REGIONS=us-east-1 is in use for this session/);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["eu-west-1"]);
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }

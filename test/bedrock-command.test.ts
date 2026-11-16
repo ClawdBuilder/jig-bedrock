@@ -101,6 +101,104 @@ test("every sub-command prints a titled block and usage has no stale Next", asyn
     );
 });
 
+test("status counts no models as a problem and tells the config fact from a signed-in answer", async (t) => {
+    const empty = harness(t, {}, { models: () => [] });
+    await empty.result.bedrock("status", empty.ctx as never);
+    const none = empty.notices.at(-1) ?? "";
+    assert.match(none, /^Bedrock · 1 problem$/m, none);
+    assert.match(none, /✗ Models: not loaded/, none);
+    assert.match(none, /Next: \/bedrock refresh/, none);
+    const config = harness(t, {});
+    await config.result.bedrock("status", config.ctx as never);
+    const row = config.notices.at(-1) ?? "";
+    assert.match(row, /AWS profile: fixture · in the AWS config/, row);
+    assert.doesNotMatch(row, /signed in/, row);
+    const signed = harness(t, {}, { signedIn: () => true });
+    await signed.result.bedrock("status", signed.ctx as never);
+    assert.match(signed.notices.at(-1) ?? "", /AWS profile: fixture · signed in/);
+});
+
+test("refresh and status name the models this Pi cannot use", async (t) => {
+    const rejected = [1, 2, 3].map((number) => ({
+        profile: `orders-${number}`,
+        region: "us-east-1",
+        reason: "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.",
+    }));
+    const h = harness(t, {}, { unavailable: () => rejected });
+    await h.result.bedrock("refresh", h.ctx as never);
+    assert.match(
+        h.notices.at(-1) ?? "",
+        /3 more are not usable by this Pi: \/bedrock models lists them\./,
+        h.notices.at(-1),
+    );
+    h.notices.length = 0;
+    await h.result.bedrock("status", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /3 more are not usable by this Pi/, h.notices.at(-1));
+});
+
+test("an empty model list gives the Next that fits the catalog status", async (t) => {
+    const ok = harness(t, {}, { models: () => [] });
+    await ok.result.bedrock("models", ok.ctx as never);
+    const fine = ok.notices.at(-1) ?? "";
+    assert.match(fine, /No models loaded\./, fine);
+    assert.match(fine, /Next: \/bedrock refresh\./, fine);
+    const denied = harness(
+        t,
+        {},
+        { models: () => [], discoveryStatus: () => "permission_denied", discoveryMode: () => "tag" },
+    );
+    await denied.result.bedrock("models", denied.ctx as never);
+    assert.match(
+        denied.notices.at(-1) ?? "",
+        /Next: Ask your AWS administrator for tag:GetResources/,
+        denied.notices.at(-1),
+    );
+});
+
+test("a model this Pi does not know says to update Pi", async (t) => {
+    const h = harness(
+        t,
+        {},
+        {
+            unavailable: () => [
+                {
+                    profile: "orders-api",
+                    region: "us-east-1",
+                    reason: "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.",
+                },
+            ],
+        },
+    );
+    await h.result.bedrock("models", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /This Pi does not know the model: orders-api, us-east-1 · update Pi/);
+});
+
+test("a settings change counts new and gone against the list before it", async (t) => {
+    const eight = Array.from({ length: 8 }, (_, index) => ({ ...model, id: `claude-model-${index + 1}` }));
+    const thirteen = [
+        ...eight,
+        ...Array.from({ length: 5 }, (_, index) => ({ ...model, id: `claude-extra-${index + 1}` })),
+    ];
+    let current = eight;
+    const h = harness(
+        t,
+        {},
+        {
+            models: () => current,
+            // apply() empties the list for the new scope; discovery then finds thirteen.
+            apply: () => {
+                current = [];
+            },
+            refresh: async () => {
+                current = thirteen;
+                return "ok";
+            },
+        },
+    );
+    await h.result.bedrock("unset activeTagKey activeTagValue", h.ctx as never);
+    assert.match(h.notices.join("\n"), /13 models loaded \(5 new, 0 gone\)/, h.notices.join("\n"));
+});
+
 test("set and unset write the settings file and apply", async (t) => {
     const h = harness(t, {});
     await h.result.bedrock("set api converse", h.ctx as never);
@@ -189,7 +287,7 @@ test("the status screen is one whole block with no spend-command row", async (t)
         h.notices.at(-1),
         [
             "Bedrock · ready",
-            "✓ AWS profile: fixture · signed in",
+            "✓ AWS profile: fixture · in the AWS config",
             "✓ Models: 1 loaded",
             "– Selected model: none chosen",
             "✓ Spend: Nov $0.00 of $100",
@@ -223,7 +321,8 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
     );
     await noProfile.result.bedrock("login", noProfile.ctx as never);
     const text = noProfile.notices.join("\n");
-    assert.match(text, /AWS SSO recovery did not complete/);
+    assert.match(text, /No AWS profile is chosen/);
+    assert.match(text, /Next: \/login and choose Amazon Bedrock/);
     assert.doesNotMatch(text, /my-profile/);
     assert.doesNotMatch(text, /aws sso login --profile fixture/);
 });
@@ -380,7 +479,7 @@ test("the settings menu refuses an invalid value and writes nothing", async (t) 
     const h = harness(t, {});
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
     await h.result.bedrock("", h.ctx as never);
-    assert.match(h.notices.join("\n"), /value not accepted/);
+    assert.match(h.notices.join("\n"), /nowhere-1 is not an AWS region/);
     assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });
 
@@ -514,6 +613,68 @@ test("the presets menu Escape writes and switches nothing", async (t) => {
     assert.equal(used, "");
 });
 
+test("the presets menu says there are no presets and offers only what makes sense", async (t) => {
+    const h = harness(t, {}, { presetList: () => [] });
+    withUi(h, ["Presets"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.equal(calls.length, 2);
+    assert.match(calls[1]!.title, /No presets yet\. Save the current settings as one first\./);
+    assert.deepEqual(calls[1]!.options, ["Save current settings as a preset…", "Back"]);
+});
+
+test("Back returns to the menu above, and Escape closes everything", async (t) => {
+    const back = harness(
+        t,
+        {},
+        { presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }] },
+    );
+    withUi(back, ["Presets", "Back"]);
+    await back.result.bedrock("", back.ctx as never);
+    const titles = ((back.ctx.ui as any).calls as Array<{ title: string }>).map((call) => call.title);
+    assert.deepEqual(titles, ["Bedrock", "Bedrock presets", "Bedrock"]);
+    const esc = harness(
+        t,
+        {},
+        { presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }] },
+    );
+    withUi(esc, ["Presets"]);
+    await esc.result.bedrock("", esc.ctx as never);
+    const closed = ((esc.ctx.ui as any).calls as Array<{ title: string }>).map((call) => call.title);
+    assert.deepEqual(closed, ["Bedrock", "Bedrock presets"]);
+});
+
+test("a preset named Back can be switched to and removed", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "Back", profile: "keys", mode: "by tag", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Back — keys"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "Back");
+    let removed = "";
+    const r = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "Back", profile: "keys", mode: "by tag", active: false }],
+            presetRemove: async (name: string) => {
+                removed = name;
+            },
+        },
+    );
+    withUi(r, ["Presets", "Remove", "Back — remove"], [], [true]);
+    await r.result.bedrock("", r.ctx as never);
+    assert.equal(removed, "Back");
+});
+
 test("the models menu lists registered order, shows details, and uses a model", async (t) => {
     const first = { ...model, id: "claude-sonnet-5-5" };
     const second = { ...model, id: "claude-opus-5" };
@@ -551,6 +712,59 @@ test("the models menu shows refused models and Try again clears them", async (t)
     assert.ok(calls[1]?.options.includes("Refused by AWS for your role"));
     assert.ok(calls[1]?.options.some((option) => option.startsWith("claude-opus-5 · 2026-11-16")));
     assert.equal(clears, 1);
+});
+
+test("the models menu lists the models this Pi rejected, with the reason", async (t) => {
+    const reason = "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.";
+    const h = harness(
+        t,
+        {},
+        {
+            models: () => [],
+            unavailable: () => [{ profile: "orders-api", region: "us-east-1", reason }],
+        },
+    );
+    withUi(h, ["Models", "orders-api", "Back"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.ok(calls[1], "the models menu opened");
+    assert.ok(calls[1]!.options.includes("Not loaded by this Pi"), JSON.stringify(calls[1]!.options));
+    const row = calls[1]!.options.find((option) => option.includes("orders-api"));
+    assert.ok(row, JSON.stringify(calls[1]!.options));
+    assert.match(row, /us-east-1/);
+    assert.match(row, /Pi registry has no exact metadata for anthropic\.claude-opus-6/);
+    assert.match(calls[2]?.title ?? "", /Pi registry has no exact metadata for anthropic\.claude-opus-6/);
+    assert.match(calls[2]?.title ?? "", /update Pi to use this profile/);
+});
+
+test("the models menu says price unknown instead of $0/$0", async (t) => {
+    const unpriced = { ...model, rateSource: "no price", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+    const h = harness(t, {}, { models: () => [unpriced] });
+    withUi(h, ["Models", "claude-sonnet-5-5"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    const row = calls[1]?.options.find((option) => option.startsWith("claude-sonnet-5-5"));
+    assert.ok(row, JSON.stringify(calls[1]?.options));
+    assert.match(row, /price unknown/);
+    assert.doesNotMatch(row, /\$0\/\$0/);
+    assert.match(calls[2]?.title ?? "", /price unknown/);
+    assert.doesNotMatch(calls[2]?.title ?? "", /\$0 in/);
+});
+
+test("the models menu confirms a session switch, or says why not", async (t) => {
+    const h = harness(t, {}, { models: () => [model] });
+    (h.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...model, id });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.match(h.notices.join("\n"), /Using claude-sonnet-5-5 for this session\./);
+    assert.equal(h.ctx.model?.id, "claude-sonnet-5-5");
+    const refused = harness(t, {}, { models: () => [model] });
+    (refused.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...model, id });
+    refused.pi.setModel = async () => false;
+    withUi(refused, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await refused.result.bedrock("", refused.ctx as never);
+    assert.match(refused.notices.join("\n"), /Pi did not switch to claude-sonnet-5-5/);
+    assert.doesNotMatch(refused.notices.join("\n"), /Using claude-sonnet-5-5 for this session/);
 });
 
 test("the models menu Escape does nothing", async (t) => {
@@ -804,4 +1018,69 @@ test("an invalid menu value followed by Escape writes nothing", async (t) => {
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
     await h.result.bedrock("", h.ctx as never);
     assert.equal(existsSync(join(h.root, "bedrock.json")), false);
+});
+
+test("broken settings repair writes typed multi-key values", async (t) => {
+    const h = harness(t, {});
+    const file = join(h.root, "bedrock.json");
+    writeFileSync(file, JSON.stringify({ regions: [] }));
+    const handler = registerBrokenCommands({ registerCommand() {} } as never, {
+        file,
+        error: "regions must contain 1-16 unique AWS region names.",
+        env: h.settings,
+    });
+    await handler("set tagKey Team tagValue fixture-team", h.ctx as never);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(saved.tagKey, "Team");
+    assert.equal(saved.tagValue, "fixture-team");
+    await handler("set converseModels claude-opus-5,claude-sonnet-5-5", h.ctx as never);
+    const list = JSON.parse(readFileSync(file, "utf8"));
+    assert.deepEqual(list.converseModels, ["claude-opus-5", "claude-sonnet-5-5"]);
+});
+
+test("broken settings repair refuses an unclear boolean without writing", async (t) => {
+    const h = harness(t, {});
+    const file = join(h.root, "bedrock.json");
+    writeFileSync(file, JSON.stringify({ regions: [] }));
+    const before = readFileSync(file, "utf8");
+    const handler = registerBrokenCommands({ registerCommand() {} } as never, {
+        file,
+        error: "regions must contain 1-16 unique AWS region names.",
+        env: h.settings,
+    });
+    await handler("set debug maybe", h.ctx as never);
+    assert.equal(readFileSync(file, "utf8"), before);
+    assert.match(h.notices.at(-1) ?? "", /accepts true, false, on, off, yes or no; nothing was written/);
+});
+
+test("login with no profile says exactly what to run, without a doctor loop", async (t) => {
+    const h = harness(
+        t,
+        {},
+        {
+            login: async () => {
+                throw new Error("No AWS profile is chosen. Run /login first.");
+            },
+        },
+    );
+    await h.result.bedrock("login", h.ctx as never);
+    const text = h.notices.join("\n");
+    assert.match(text, /No AWS profile is chosen/);
+    assert.match(text, /Next: \/login and choose Amazon Bedrock \(jig-bedrock\)\./);
+    assert.doesNotMatch(text, /\/bedrock doctor/);
+});
+
+test("status says how to stop using the saved profile after a real /logout", async (t) => {
+    const h = harness(t, {}, { storedAuthLost: () => true });
+    await h.result.bedrock("status", h.ctx as never);
+    assert.match(h.notices.join("\n"), /\/bedrock unset profile/);
+});
+
+test("the /logout note appears only when a stored credential was lost in this session", async (t) => {
+    const kept = harness(t, {}, { storedAuthLost: () => false });
+    await kept.result.bedrock("status", kept.ctx as never);
+    assert.doesNotMatch(kept.notices.join("\n"), /\/bedrock unset profile/);
+    const lost = harness(t, {}, { storedAuthLost: () => true });
+    await lost.result.bedrock("status", lost.ctx as never);
+    assert.match(lost.notices.join("\n"), /\/bedrock unset profile/);
 });

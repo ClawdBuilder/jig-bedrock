@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { CatalogSource } from "../src/aws-discovery.ts";
 import { jigBedrock } from "../src/index.ts";
+import { fakeAwsHttp } from "./support/fake-aws-http.ts";
 
 type Hook = (...args: any[]) => any;
 
@@ -57,6 +58,7 @@ async function build(options: {
     list: string[];
     loginList?: string[];
     catalog?: CatalogSource;
+    fetch?: typeof globalThis.fetch;
 }) {
     const { pi, commands, providers } = harness();
     await (
@@ -65,6 +67,8 @@ async function build(options: {
             listProfiles: async () => options.list,
             loginListProfiles: async () => options.loginList ?? options.list,
             ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            discoveryCredentials: async () => ({ accessKeyId: "AKIAFIXTURE", secretAccessKey: "secret" }),
             verifyProfile: async () => ({ ok: true }),
             check: async () =>
                 ({
@@ -160,18 +164,15 @@ async function loginWithDiscovery(
     options: { tagKey?: string; caseMismatch?: boolean } = {},
 ): Promise<{ models: string[]; catalogs: Array<Record<string, unknown>>; notices: string[]; dir: string }> {
     const { dir, env } = folder();
-    const bin = fakeAws(dir, options.caseMismatch);
     const cache = join(dir, "cache");
     const loginEnv = {
         ...env,
-        PATH: `${bin}:${process.env.PATH}`,
         XDG_CACHE_HOME: cache,
         JIG_BEDROCK_PROFILE: undefined,
     };
-    const { provider } = await build({ env: loginEnv, list: ["work"] });
+    const fake = fakeAwsHttp({ caseMismatch: options.caseMismatch });
+    const { provider } = await build({ env: loginEnv, list: ["work"], fetch: fake.fetch });
     const notices: string[] = [];
-    const oldPath = process.env.PATH;
-    process.env.PATH = `${bin}:${oldPath ?? ""}`;
     try {
         await provider.auth.apiKey.login({
             signal: new AbortController().signal,
@@ -190,7 +191,7 @@ async function loginWithDiscovery(
             notify: (event: any) => notices.push(event.message ?? ""),
         });
     } finally {
-        process.env.PATH = oldPath;
+        /* no process path to restore */
     }
     const catalogs = readdirSync(dir, { recursive: true })
         .filter(
@@ -242,16 +243,14 @@ test("a tag key in the wrong case shows the warning and the exact fix after /log
 
 test("a tag key in the wrong case shows the same warning after /bedrock refresh", async () => {
     const { dir, env } = folder();
-    const bin = fakeAws(dir, true);
-    const oldPath = process.env.PATH;
-    process.env.PATH = `${bin}:${oldPath ?? ""}`;
     try {
         mkdirSync(env.PI_CODING_AGENT_DIR as string, { recursive: true });
         writeFileSync(
             join(env.PI_CODING_AGENT_DIR as string, "bedrock.json"),
             JSON.stringify({ profile: "work", tagKey: "team", tagValue: "fixture-team", regions: ["us-east-1"] }),
         );
-        const { commands } = await build({ env, list: ["work"] });
+        const fake = fakeAwsHttp({ caseMismatch: true });
+        const { commands } = await build({ env, list: ["work"], fetch: fake.fetch });
         const notices: string[] = [];
         const ctx = {
             hasUI: true,
@@ -265,7 +264,6 @@ test("a tag key in the wrong case shows the same warning after /bedrock refresh"
         assert.match(text, /13 have Team=fixture-team/);
         assert.doesNotMatch(text, /0 models loaded/);
     } finally {
-        process.env.PATH = oldPath;
         rmSync(dir, { recursive: true, force: true });
     }
 });

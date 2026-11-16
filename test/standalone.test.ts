@@ -17,6 +17,7 @@ import { category, createAwsDiscovery, discoveryHelp, type Runner } from "../src
 import { bedrockStream, discoveredProfiles, registerBedrockSelectionGuard, usePiRegistry } from "../src/catalog.ts";
 import { checkBedrock, loadConfig } from "../src/config.ts";
 import { createRecovery } from "../src/login.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 import { elsewhere } from "./support/wsl.ts";
 
 type Hook = (...args: any[]) => any;
@@ -93,7 +94,7 @@ function fixture() {
 test("discovery paginates all regions, filters ACTIVE and atomically caches normalized metadata", async (t) => {
     const f = fixture(),
         file = join(directory(t), "catalog.json"),
-        source = createAwsDiscovery(config, f.runner, file);
+        source = createTestDiscovery(config, f.runner, file);
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 1);
     assert.equal(source.load()?.profiles[0]?.foundation_model_id, "fixture.model");
@@ -105,7 +106,7 @@ test("catalog TTL, single flight, empty catalogs and partial failure preserve th
     const f = fixture(),
         file = join(directory(t), "catalog.json");
     let now = Date.now();
-    const source = createAwsDiscovery(config, f.runner, file, () => now);
+    const source = createTestDiscovery(config, f.runner, file, () => now);
     const first = source.refresh();
     assert.equal(first, source.refresh());
     await first;
@@ -134,22 +135,22 @@ test("catalog TTL, single flight, empty catalogs and partial failure preserve th
 test("scope and caller-account changes invalidate cached approvals even on partial failure", async (t) => {
     const f = fixture(),
         file = join(directory(t), "catalog.json"),
-        source = createAwsDiscovery(config, f.runner, file);
+        source = createTestDiscovery(config, f.runner, file);
     await source.refresh();
     for (const changes of [{ team: "other" }, { profile: "other" }, { regions: ["eu-west-1"] }])
-        assert.equal(createAwsDiscovery({ ...config, ...changes }, f.runner, file).load(), undefined);
+        assert.equal(createTestDiscovery({ ...config, ...changes }, f.runner, file).load(), undefined);
     f.state.account = "999999999999";
     assert.equal(await source.refresh(true), "unavailable");
     assert.equal(source.load(), undefined);
-    assert.equal(createAwsDiscovery(config, f.runner, file).load(), undefined);
+    assert.equal(createTestDiscovery(config, f.runner, file).load(), undefined);
 });
 test("discovery bounds bytes, pagination and deadline and never publishes raw failure text", async (t) => {
     const file = join(directory(t), "catalog.json");
-    assert.equal(await createAwsDiscovery(config, async () => "x".repeat(1048577), file).refresh(), "unavailable");
+    assert.equal(await createTestDiscovery(config, async () => "x".repeat(1048577), file).refresh(), "unavailable");
     const f = fixture();
     let now = Date.now();
     assert.equal(
-        await createAwsDiscovery(
+        await createTestDiscovery(
             config,
             async (...args) => {
                 now += 91000;
@@ -161,7 +162,7 @@ test("discovery bounds bytes, pagination and deadline and never publishes raw fa
         "timeout",
     );
     assert.equal(
-        await createAwsDiscovery(
+        await createTestDiscovery(
             config,
             async () => {
                 throw new Error("private-canary");
@@ -179,8 +180,9 @@ test("discovery bounds bytes, pagination and deadline and never publishes raw fa
                 : { ResourceTagMappingList: [], PaginationToken: "same" },
         );
     };
-    assert.equal(await createAwsDiscovery(config, repeating, file).refresh(), "unavailable");
-    // One STS call, then two regions; each region's repeated pagination token costs two calls (first page + repeated token).
+    assert.equal(await createTestDiscovery(config, repeating, file).refresh(), "unavailable");
+    // One STS call, then two regions: each costs two paginated GetResources attempts plus the one unfiltered
+    // diagnostic GetResources call that looks for a differently-cased tag key. 1 + 2 * (2 + 1) = 7.
     assert.equal(calls, 7);
 });
 test("config precedence and invalid or missing teams fail closed without throwing", () => {
@@ -269,7 +271,7 @@ test("the bedrock section is checked: each problem names its key and none repeat
 test("discovery rejects returned tags outside the configured team and safely distinguishes setup failures", async (t) => {
     const f = fixture(),
         file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         config,
         async (...args) => {
             const value = JSON.parse(await f.runner(...args));
@@ -288,7 +290,7 @@ test("discovery rejects returned tags outside the configured team and safely dis
         ["SSO token expired private-canary", "sso_expired", /bedrock login/],
         ["Could not connect private-canary", "network", /network/],
     ] as const) {
-        const result = await createAwsDiscovery(
+        const result = await createTestDiscovery(
             config,
             async () => {
                 throw new Error(error);
@@ -301,10 +303,30 @@ test("discovery rejects returned tags outside the configured team and safely dis
         assert.doesNotMatch(discoveryHelp(result), /private-canary/);
     }
 });
+test("AWS text from another source is classified with the same advice", async (t) => {
+    const file = join(directory(t), "catalog.json");
+    for (const [error, status, help] of [
+        ["ThrottlingException: Rate exceeded", "throttled", /limiting requests/],
+        ["InternalServerException: service error", "aws_error", /problem on its side/],
+        ["ExpiredToken: The security token included in the request is expired", "expired_credentials", /bedrock login/],
+        ["The security token included in the request is invalid.", "invalid_credentials", /keys are not valid/],
+    ] as const) {
+        const result = await createTestDiscovery(
+            config,
+            async () => {
+                throw new Error(error);
+            },
+            file,
+        ).refresh();
+        assert.equal(result, status);
+        assert.equal(category(new Error(error)), status);
+        assert.match(discoveryHelp(result), help);
+    }
+});
 test("team tag punctuation is passed as one JSON argv value", async (t) => {
     const team = "Platform / Core, Europe",
         file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, team },
         async (_program, args) => {
             if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
@@ -347,7 +369,7 @@ test("SSO lock shares one browser, cleans stale owners, ignores output and bound
 test("standalone stream blocks unknown, removed and cross-scope profiles before transport", async (t) => {
     const f = fixture(),
         file = join(directory(t), "catalog.json"),
-        source = createAwsDiscovery(config, f.runner, file);
+        source = createTestDiscovery(config, f.runner, file);
     await source.refresh();
     usePiRegistry({
         getModels: () => [
@@ -451,7 +473,7 @@ test("catalog rejects symlinks, loose permissions, duplicate ARNs and future tim
     const dir = directory(t),
         file = join(dir, "catalog.json"),
         f = fixture();
-    const source = createAwsDiscovery(config, f.runner, file);
+    const source = createTestDiscovery(config, f.runner, file);
     await source.refresh();
     const cached = readFileSync(file, "utf8");
     chmodSync(file, 0o644);
@@ -477,7 +499,7 @@ test("catalog uses exact Pi registry metadata and marks a model with no price", 
     const dir = directory(t),
         file = join(dir, "catalog.json"),
         f = fixture();
-    const source = createAwsDiscovery(config, f.runner, file);
+    const source = createTestDiscovery(config, f.runner, file);
     await source.refresh();
     usePiRegistry({
         getModels: () => [
@@ -559,13 +581,13 @@ test("system mode lists system-defined Claude profiles, paginates and drops non-
     };
     const file = join(directory(t), "catalog.json");
     const system = { ...config, team: undefined, mode: "system" as const };
-    const source = createAwsDiscovery(system, runner, file);
+    const source = createTestDiscovery(system, runner, file);
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 1);
     assert.equal(source.load()?.profiles[0]?.kind, "system");
     assert.ok(calls.filter((a) => a.includes("list-inference-profiles")).length >= 2);
     assert.equal(calls.filter((a) => a.includes("get-inference-profile")).length, 0, "the listing row is enough");
-    assert.equal(createAwsDiscovery({ ...system, mode: "tag", team: "fixture-team" }, runner, file).load(), undefined);
+    assert.equal(createTestDiscovery({ ...system, mode: "tag", team: "fixture-team" }, runner, file).load(), undefined);
 });
 
 test("explicit list reads the named profile and reports an unknown ARN without a tag search", async (t) => {
@@ -587,18 +609,18 @@ test("explicit list reads the named profile and reports an unknown ARN without a
     };
     const file = join(directory(t), "catalog.json");
     const explicit = { ...config, team: undefined, mode: "explicit" as const, profiles: [id] };
-    const source = createAwsDiscovery(explicit, runner, file);
+    const source = createTestDiscovery(explicit, runner, file);
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles[0]?.arn, id);
     assert.ok(calls.every((a) => !a.includes("get-resources") && !a.includes("list-inference-profiles")));
-    const missing = createAwsDiscovery({ ...explicit, profiles: [id.replace("listed", "missing")] }, runner, file);
+    const missing = createTestDiscovery({ ...explicit, profiles: [id.replace("listed", "missing")] }, runner, file);
     assert.equal(await missing.refresh(true), "unavailable");
 });
 
 test("legacy team settings keep the exact tag argv, Active=true and the model ids", async (t) => {
     const f = fixture();
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(config, f.runner, file);
+    const source = createTestDiscovery(config, f.runner, file);
     assert.equal(await source.refresh(), "ok");
     const tagCall = f.calls.find((args) => args.includes("get-resources"))!;
     assert.deepEqual(JSON.parse(tagCall[tagCall.indexOf("--tag-filters") + 1]!), [
@@ -618,11 +640,11 @@ test("tag mode uses any key and only adds Active when configured", async (t) => 
     };
     const file = join(directory(t), "catalog.json");
     const plain = { ...config, team: undefined, tagKey: "CostCenter", tagValue: "42", mode: "tag" as const };
-    assert.equal(await createAwsDiscovery(plain, runner, file).refresh(), "ok");
+    assert.equal(await createTestDiscovery(plain, runner, file).refresh(), "ok");
     assert.deepEqual(filters[0], [{ Key: "CostCenter", Values: ["42"] }]);
     filters.length = 0;
     const active = { ...plain, activeTagKey: "Env", activeTagValue: "prod" };
-    assert.equal(await createAwsDiscovery(active, runner, file).refresh(true), "ok");
+    assert.equal(await createTestDiscovery(active, runner, file).refresh(true), "ok");
     assert.deepEqual(filters[0], [
         { Key: "CostCenter", Values: ["42"] },
         { Key: "Env", Values: ["prod"] },
@@ -633,10 +655,10 @@ test("switching mode discards the cached catalog", async (t) => {
     const f = fixture();
     const file = join(directory(t), "catalog.json");
     const tag = { ...config, mode: "tag" as const };
-    assert.equal(await createAwsDiscovery(tag, f.runner, file).refresh(), "ok");
-    assert.equal(createAwsDiscovery({ ...config, mode: "system" }, f.runner, file).load(), undefined);
+    assert.equal(await createTestDiscovery(tag, f.runner, file).refresh(), "ok");
+    assert.equal(createTestDiscovery({ ...config, mode: "system" }, f.runner, file).load(), undefined);
     assert.equal(
-        createAwsDiscovery({ ...config, mode: "explicit", profiles: ["x"], team: undefined }, f.runner, file).load(),
+        createTestDiscovery({ ...config, mode: "explicit", profiles: ["x"], team: undefined }, f.runner, file).load(),
         undefined,
     );
 });
@@ -670,7 +692,7 @@ test("system mode lists once per configured region and keeps profiles from both"
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, team: undefined, mode: "system", regions: ["us-east-1", "eu-west-1"] },
         runner,
         file,
@@ -703,7 +725,7 @@ test("an explicit access-denied entry is named, the others still load, and ids a
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, team: undefined, mode: "explicit", profiles: [id, "short-id", "denied"] },
         runner,
         file,
@@ -718,16 +740,16 @@ test("changing the tag filter invalidates the cache, and a 0.1.2 cache is accept
     const f = fixture();
     const file = join(directory(t), "catalog.json");
     const legacy = { ...config, mode: "tag" as const };
-    assert.equal(await createAwsDiscovery(legacy, f.runner, file).refresh(), "ok");
+    assert.equal(await createTestDiscovery(legacy, f.runner, file).refresh(), "ok");
     assert.equal(
-        createAwsDiscovery({ ...config, mode: "tag", tagKey: "CostCenter", tagValue: "42" }, f.runner, file).load(),
+        createTestDiscovery({ ...config, mode: "tag", tagKey: "CostCenter", tagValue: "42" }, f.runner, file).load(),
         undefined,
     );
     const old = JSON.parse(readFileSync(file, "utf8"));
     delete old.mode;
     delete old.filter_hash;
     writeFileSync(file, JSON.stringify(old), { mode: 0o600 });
-    assert.equal(createAwsDiscovery(legacy, f.runner, file).load()?.profiles.length, 1);
+    assert.equal(createTestDiscovery(legacy, f.runner, file).load()?.profiles.length, 1);
 });
 
 test("an explicit ARN outside regions is named with the region to add", async (t) => {
@@ -736,7 +758,7 @@ test("an explicit ARN outside regions is named with the region to add", async (t
         return JSON.stringify({ status: "ACTIVE", models: [] });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         {
             ...config,
             team: undefined,
@@ -755,7 +777,7 @@ test("tag mode with no matches says the key, value and regions", async (t) => {
         return JSON.stringify({ ResourceTagMappingList: [] });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, mode: "tag", team: undefined, tagKey: "CostCenter", tagValue: "typo" },
         runner,
         file,
@@ -787,7 +809,7 @@ test("a nested model profile in another account is refused", async (t) => {
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    const source = createTestDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
     assert.equal(await source.refresh(), "unavailable");
 });
 
@@ -813,7 +835,7 @@ test("jp and au system profiles pass the loose prefix and are decided by the fou
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, team: undefined, mode: "system", regions: ["us-east-1"] },
         runner,
         file,
@@ -846,7 +868,7 @@ test("a system profile whose name says Claude but foundation is Llama is dropped
         });
     };
     const file = join(directory(t), "catalog.json");
-    const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+    const source = createTestDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
     assert.equal(await source.refresh(), "ok");
     assert.equal(source.load()?.profiles.length, 0);
 });
@@ -854,7 +876,7 @@ test("a system profile whose name says Claude but foundation is Llama is dropped
 test("a timeout mid-system-listing writes no cache and is not ok", async (t) => {
     const file = join(directory(t), "catalog.json");
     let now = Date.now();
-    const source = createAwsDiscovery(
+    const source = createTestDiscovery(
         { ...config, team: undefined, mode: "system" },
         async (_program, args) => {
             now += 50_000;
@@ -878,14 +900,14 @@ test("a timeout mid-system-listing writes no cache and is not ok", async (t) => 
 test("a failed explicit refresh keeps the previous good catalog", async (t) => {
     const f = fixture();
     const file = join(directory(t), "catalog.json");
-    const tag = createAwsDiscovery({ ...config, mode: "tag" }, f.runner, file);
+    const tag = createTestDiscovery({ ...config, mode: "tag" }, f.runner, file);
     assert.equal(await tag.refresh(), "ok");
     const before = readFileSync(file, "utf8");
     const denied: Runner = async (_program, args) => {
         if (args.includes("get-caller-identity")) return JSON.stringify({ Account: account });
         throw new Error("AccessDeniedException: not authorized");
     };
-    const explicit = createAwsDiscovery(
+    const explicit = createTestDiscovery(
         {
             ...config,
             team: undefined,
@@ -897,5 +919,5 @@ test("a failed explicit refresh keeps the previous good catalog", async (t) => {
     );
     assert.equal(await explicit.refresh(true), "unavailable");
     assert.equal(readFileSync(file, "utf8"), before);
-    assert.equal(createAwsDiscovery({ ...config, mode: "tag" }, f.runner, file).load()?.profiles.length, 1);
+    assert.equal(createTestDiscovery({ ...config, mode: "tag" }, f.runner, file).load()?.profiles.length, 1);
 });

@@ -356,9 +356,17 @@ export function loadConfig(
             ...(unknown.length === 0 ? {} : { unknown }),
         };
     const active = requested === undefined ? {} : (presets[requested] ?? {});
+    const modeKeys = ["team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
+    const activeDefinesMode = modeKeys.some((key) => Object.hasOwn(active, key));
+    const inherited =
+        requested === undefined || !activeDefinesMode
+            ? known
+            : Object.fromEntries(
+                  Object.entries(known).filter(([key]) => !(modeKeys as readonly string[]).includes(key)),
+              );
     const c: Record<string, unknown> = {
         ...DEFAULTS,
-        ...known,
+        ...inherited,
         ...active,
         agentDir,
         ...(requested === undefined ? {} : { preset: requested }),

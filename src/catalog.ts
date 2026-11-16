@@ -9,6 +9,7 @@ import type {
     ProviderConfig,
     ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
+import { CredentialFailureError } from "./bedrock-fetch.ts";
 import { isObject } from "./check.ts";
 import type { BedrockApi } from "./config.ts";
 import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK } from "./identity.ts";
@@ -533,6 +534,16 @@ export interface BedrockStreams {
     /** Pi's Anthropic Messages stream, for Bedrock's `/anthropic` route. */
     messages?: Stream;
 }
+/** The one sentence a failed request leads with when the credential chain answered with nothing. */
+function credentialAdvice(profile: string | undefined, message: string): string {
+    const whose = profile === undefined ? "AWS credentials" : `AWS credentials for the AWS profile ${profile}`;
+    const check =
+        profile === undefined
+            ? 'Check the AWS keys or role with "aws sts get-caller-identity"'
+            : `Check the keys or role for ${profile} with "aws sts get-caller-identity --profile ${profile}"`;
+    const detail = message === "" ? "" : /[.!?]$/.test(message) ? message : `${message}.`;
+    return `${whose} could not be loaded${detail === "" ? "." : `: ${detail}`} ${check}, then try again.`;
+}
 export function bedrockStream(
     models: readonly BedrockModel[],
     streams: BedrockStreams,
@@ -577,6 +588,25 @@ export function bedrockStream(
         // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
         // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
         const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
+        // A credential failure is recorded for this request only, so the error event below can say what happened
+        // instead of Pi's "Connection error."; a later successful attempt clears it again.
+        let credentialFailure: string | undefined;
+        const signedForRequest: typeof globalThis.fetch | undefined =
+            signedFetch === undefined
+                ? undefined
+                : async (input, init) => {
+                      try {
+                          const response = await signedFetch(input, init);
+                          credentialFailure = undefined;
+                          return response;
+                      } catch (error) {
+                          credentialFailure =
+                              error instanceof CredentialFailureError
+                                  ? credentialAdvice(current, error.message)
+                                  : undefined;
+                          throw error;
+                      }
+                  };
         const guard = (stream: ReturnType<typeof streams.converse>) =>
             typeof stream !== "object" || stream === null
                 ? stream
@@ -588,9 +618,11 @@ export function bedrockStream(
                           }
                           return async function* () {
                               for await (const event of target) {
-                                  if (event?.type === "error" && onRefusal !== undefined) {
+                                  if (event?.type === "error") {
                                       const message = String(event.error?.errorMessage ?? "");
-                                      if (isRefusalError(message, physical.arn)) {
+                                      if (credentialFailure !== undefined && message.startsWith("Connection error."))
+                                          event.error.errorMessage = credentialFailure;
+                                      else if (onRefusal !== undefined && isRefusalError(message, physical.arn)) {
                                           const plain = onRefusal(physical, message);
                                           if (plain !== undefined) event.error.errorMessage = plain;
                                       }
@@ -602,7 +634,8 @@ export function bedrockStream(
                   }) as never);
         if (physical.api === "anthropic-messages") {
             const messages = streams.messages;
-            if (!messages || !signedFetch) throw new Error("The Bedrock Messages route is not available; reload Pi.");
+            if (!messages || signedForRequest === undefined)
+                throw new Error("The Bedrock Messages route is not available; reload Pi.");
             const previous = (options as Json)?.onPayload as
                 | ((payload: unknown, selected: unknown) => unknown)
                 | undefined;
@@ -612,7 +645,7 @@ export function bedrockStream(
                     // Pi's Anthropic client wants some key before it builds a request. It never reaches Bedrock: the signed
                     // fetch removes both this and any Authorization header before signing.
                     apiKey: "bedrock-sigv4",
-                    fetch: signedFetch,
+                    fetch: signedForRequest,
                     // The wire needs the ARN; the recorded provider and model stay this package's short id. Sonnet 5.5 also
                     // refuses Pi's thinking-off shape; every other payload is left exactly as it came.
                     onPayload: async (payload: unknown, selected: unknown) => {
@@ -765,9 +798,11 @@ export function registerBedrockSelectionGuard(
     unresolved(): boolean;
     restoreSaved(ctx: ExtensionContext): Promise<void>;
     suppressWarnings(): void;
+    refusalHidden(id: string): void;
 } {
     let unresolvedSavedSelection = false;
     let suppressWarnings = false;
+    let hiddenRefusal: string | undefined;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
@@ -782,6 +817,7 @@ export function registerBedrockSelectionGuard(
         model?.provider === "amazon-bedrock" && typeof model.id === "string" && model.id.startsWith("arn:");
     const ours = (model: { provider?: string; id?: string } | undefined) => isOwnModel(model) || oldRecorded(model);
     const unsupported = (ctx: ExtensionContext) =>
+        hiddenRefusal !== undefined ||
         unresolvedSavedSelection ||
         (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
@@ -842,11 +878,17 @@ export function registerBedrockSelectionGuard(
         if (event.source === "set" || event.source === "cycle") {
             unresolvedSavedSelection = false;
             suppressWarnings = false;
+            hiddenRefusal = undefined;
         }
         if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
+        if (hiddenRefusal !== undefined) {
+            if (typeof ctx.ui.setEditorText === "function") ctx.ui.setEditorText(event.text);
+            ctx.ui.notify(hiddenRefusal, "warning");
+            return { action: "handled" };
+        }
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
         if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
@@ -860,6 +902,9 @@ export function registerBedrockSelectionGuard(
         restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
         suppressWarnings: () => {
             suppressWarnings = true;
+        },
+        refusalHidden: (id: string) => {
+            hiddenRefusal = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
         },
     };
 }

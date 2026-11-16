@@ -33,6 +33,8 @@ async function harness(
         lateRegion?: string;
         lateId?: string;
         failLate?: boolean;
+        failStatus?: "permission_denied" | "network";
+        emptyStart?: boolean;
         cached?: boolean;
         oldCount?: number;
         newCount?: number;
@@ -69,11 +71,11 @@ async function harness(
                     /* keep */
                 }
             }
-            return catalog("us-east-1", "claude-sonnet-5-5", timing.oldCount);
+            return timing.emptyStart ? undefined : catalog("us-east-1", "claude-sonnet-5-5", timing.oldCount);
         },
         refresh: async () => {
             if (timing.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, timing.delayMs));
-            if (timing.failLate) return "network" as const;
+            if (timing.failLate) return (timing.failStatus ?? "network") as never;
             let region = timing.lateRegion ?? "us-east-1";
             try {
                 const saved = JSON.parse(readFileSync(join(agent, "bedrock.json"), "utf8")) as any;
@@ -86,7 +88,12 @@ async function harness(
             return "ok" as const;
         },
         status: () => (timing.failLate ? ("network" as const) : ("ok" as const)),
-        failure: () => (timing.failLate ? "AWS could not be reached." : undefined),
+        failure: () =>
+            timing.failLate
+                ? timing.failStatus === "permission_denied"
+                    ? "Could not list inference profiles: AWS denied access."
+                    : "AWS could not be reached."
+                : undefined,
     };
     const hooks = new Map<string, Array<(event: any, ctx: any) => unknown>>();
     const providers: any[] = [];
@@ -288,3 +295,24 @@ test("a settings change counts the models left against the list before the chang
     assert.match(text, /Bedrock: 8 models in \/model \(5 left\)/, text);
     assert.doesNotMatch(text, /8 new/);
 });
+
+for (const status of ["permission_denied", "network"] as const) {
+    test(`a first discovery failure with ${status} ends with its own advice`, async (t) => {
+        const s = await harness(t, { profile: "old", regions: ["us-east-1"] }, true, {
+            delayMs: 10,
+            failLate: true,
+            failStatus: status,
+            emptyStart: true,
+        });
+        await login(s);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const text = s.notices.join("\n");
+        assert.match(
+            text,
+            status === "permission_denied"
+                ? /Ask your AWS administrator for bedrock:ListInferenceProfiles/
+                : /Check network access to AWS/,
+        );
+        assert.doesNotMatch(text, /run \/bedrock login, then \/bedrock refresh/);
+    });
+}
