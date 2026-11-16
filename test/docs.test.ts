@@ -261,3 +261,14 @@ test("the agent route runs headless and the presets section points at settings",
     assert.match(readme, /## Several AWS profiles\n\nNamed presets[^\n]*\[Presets\]\(docs\/settings\.md#presets\)/);
     assert.match(read("docs/settings.md"), /"presets": \{/);
 });
+
+test("the README discovery labels are the labels the login menu shows", () => {
+    const line = read("README.md")
+        .split("\n")
+        .find((entry) => entry.startsWith("Choose **All AWS-defined Claude inference profiles**"));
+    assert.ok(line, "the discovery sentence is in the README");
+    const labels = [...line.matchAll(/\*\*([^*]+)\*\*/g)].map((match) => match[1]);
+    assert.ok(labels.length >= 3, "the sentence names three menu labels");
+    const flow = read("src/login-flow.ts");
+    for (const label of labels) assert.ok(flow.includes(label), `login-flow.ts does not show ${label}`);
+});

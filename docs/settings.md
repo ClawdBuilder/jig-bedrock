@@ -89,17 +89,17 @@ An explicit choice never falls back when it is missing. `/bedrock doctor` names 
 
 Requests use the AWS SDK chain; discovery uses the AWS CLI. The AWS profile must work in both.
 
-| You have                      | Requests and discovery | Repaired | Real AWS                          |
-| ----------------------------- | ---------------------- | -------- | --------------------------------- |
-| SSO                           | yes                    | yes      | yes                               |
-| Keys in an AWS profile        | yes                    | no       | yes                               |
-| Keys in the environment       | yes                    | no       | yes                               |
-| Assumed role                  | yes                    | no       | timed out on 0.2.4; not run since |
-| `credential_process`          | yes                    | no       | no                                |
-| Web identity or instance role | requests only          | no       | no                                |
-| Bedrock API key               | built-in provider only | no       | no                                |
+| You have                      | Requests and discovery | Repaired | Real AWS                                     |
+| ----------------------------- | ---------------------- | -------- | -------------------------------------------- |
+| SSO                           | yes                    | yes      | yes                                          |
+| Keys in an AWS profile        | yes                    | no       | yes                                          |
+| Keys in the environment       | yes                    | no       | yes                                          |
+| Assumed role                  | yes                    | no       | yes (2026-11-16: discovery 23 s, request OK) |
+| `credential_process`          | yes                    | no       | no                                           |
+| Web identity or instance role | requests only          | no       | no                                           |
+| Bedrock API key               | built-in provider only | no       | no                                           |
 
-“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it.
+“No” in the last column means tested with fakes only. This package hides a Bedrock API key from its own Converse requests; Pi's built-in provider still sees it. For an assumed role, each AWS CLI call assumes the role again through `source_profile`.
 
 ## Other variables
 

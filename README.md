@@ -37,7 +37,7 @@ Done when `pi list` or `jig list` shows `npm:@clawdbuilder/jig-bedrock`.
 
 **2. Sign in**
 
-Run `/login`, choose **Sign in with an API key**, then **Amazon Bedrock (jig-bedrock)**; it asks for no key, and the next screens pick an AWS profile and the models.
+Run `/login`; choose **Sign in with an API key**, then **Amazon Bedrock (jig-bedrock)**; it asks for no key.
 
 ```text
 How do you sign in to AWS?
@@ -53,6 +53,8 @@ Which inference profiles should Bedrock list?
 AWS regions for discovery (comma separated)
 > us-east-1
 ```
+
+Choose **All AWS-defined Claude inference profiles** for shared profiles, **Inference profiles with a tag I name** for team-tagged application inference profiles (admin: key and value), or **Inference profiles I list by ARN or id** for known ARNs.
 
 ```text
 Bedrock models loaded: 31. Choose one with /model.

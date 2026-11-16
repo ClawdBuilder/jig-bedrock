@@ -1,7 +1,7 @@
 // The login flow and /aws-login as a person meets them: choosing a profile starts discovery before the dialog closes,
 // and /aws-login refuses a profile that does not exist or is not an SSO profile instead of starting a doomed sign-in.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -64,7 +64,7 @@ async function build(options: {
             env: options.env,
             listProfiles: async () => options.list,
             loginListProfiles: async () => options.loginList ?? options.list,
-            catalog: options.catalog ?? { load: () => undefined, refresh: async () => "ok" },
+            ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
             verifyProfile: async () => ({ ok: true }),
         }) as never
     )(pi as never);
@@ -111,4 +111,93 @@ test("choosing a profile at /login starts discovery and says what is happening",
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
+});
+
+function fakeAws(dir: string): string {
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const script = join(bin, "aws");
+    writeFileSync(
+        script,
+        `#!/bin/sh
+echo "$*" >> "${dir}/aws.log"
+case "$*" in
+  *--version*) echo "aws-cli/2.34.46 Python/3.12.0 Linux/6.0";;
+  *get-caller-identity*) echo '{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/fixture"}';;
+  *list-inference-profiles*) echo '{"inferenceProfileSummaries":[{"inferenceProfileArn":"arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-sonnet-5-5","inferenceProfileName":"System Sonnet","status":"ACTIVE","models":[{"modelArn":"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5"}]}]}' ;;
+  *resourcegroupstaggingapi*) echo '{"ResourceTagMappingList":[{"ResourceARN":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app","Tags":[{"Key":"Team","Value":"fixture-team"}]}]}' ;;
+  *application-inference-profile/team-app*) echo '{"inferenceProfileArn":"arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app","inferenceProfileName":"Team Sonnet","status":"ACTIVE","models":[{"modelArn":"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5"}]}' ;;
+  *) echo '{}';;
+esac`,
+        { mode: 0o755 },
+    );
+    return bin;
+}
+
+async function loginWithDiscovery(
+    discovery: "tag" | "explicit",
+): Promise<{ models: string[]; catalogs: Array<Record<string, unknown>> }> {
+    const { dir, env } = folder();
+    const bin = fakeAws(dir);
+    const cache = join(dir, "cache");
+    const { provider } = await build({
+        env: {
+            ...env,
+            PATH: `${bin}:${process.env.PATH}`,
+            XDG_CACHE_HOME: cache,
+            JIG_BEDROCK_PROFILE: undefined,
+        },
+        list: ["work"],
+    });
+    const notices: string[] = [];
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${bin}:${oldPath ?? ""}`;
+    try {
+        await provider.auth.apiKey.login({
+            signal: new AbortController().signal,
+            prompt: async (prompt: any) => {
+                if (prompt.type !== "select") {
+                    if (prompt.message === "Tag key") return "Team";
+                    if (prompt.message === "Tag value") return "fixture-team";
+                    if (prompt.message === "Profile ARNs or ids (comma separated)")
+                        return "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app";
+                    return "";
+                }
+                if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
+                if (prompt.message === "Which inference profiles should Bedrock list?") return discovery;
+                return "profile:work";
+            },
+            notify: (event: any) => notices.push(event.message ?? ""),
+        });
+    } finally {
+        process.env.PATH = oldPath;
+    }
+    const catalogs = readdirSync(dir, { recursive: true })
+        .filter(
+            (name): name is string => typeof name === "string" && name.includes("catalog-") && name.endsWith(".json"),
+        )
+        .map((name) => JSON.parse(readFileSync(join(dir, String(name)), "utf8")) as Record<string, unknown>);
+    return { models: provider.getModels?.().map((model: { id: string }) => model.id) ?? [], catalogs };
+}
+
+test("/login choosing by tag applies the tag discovery before the first refresh", async () => {
+    const { catalogs } = await loginWithDiscovery("tag");
+    assert.equal(catalogs[0]?.mode, "tag");
+    const savedProfiles = catalogs[0]?.profiles as Array<{ kind?: string }> | undefined;
+    assert.ok(savedProfiles?.length, JSON.stringify(catalogs));
+    assert.ok(
+        savedProfiles.every((profile) => profile.kind === "application"),
+        JSON.stringify(catalogs),
+    );
+});
+
+test("/login choosing a hand-written list applies explicit discovery before the first refresh", async () => {
+    const { catalogs } = await loginWithDiscovery("explicit");
+    assert.equal(catalogs[0]?.mode, "explicit");
+    const savedProfiles = catalogs[0]?.profiles as Array<{ kind?: string }> | undefined;
+    assert.ok(savedProfiles?.length, JSON.stringify(catalogs));
+    assert.ok(
+        savedProfiles.every((profile) => profile.kind === "application"),
+        JSON.stringify(catalogs),
+    );
 });
