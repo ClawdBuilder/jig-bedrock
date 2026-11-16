@@ -550,7 +550,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return false;
         }
-        const beforeCount = sources.models().length;
+        const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = pairs.some(([key]) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
                 key,
@@ -581,7 +581,7 @@ export function registerBedrockCommands(
             ...regionWarnings.map((warning) => `${m.warn} ${warning}`),
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx, beforeCount, false);
+        if (needsRefresh) await refresh("", ctx, beforeModels, false);
         const preset = pairs.find(([key]) => key === "preset")?.[1];
         if (preset !== undefined) await sources.usePreset?.(preset, ctx);
         return true;
@@ -624,7 +624,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
-        const beforeCount = sources.models().length;
+        const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = keys.some((key) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
                 key,
@@ -635,12 +635,12 @@ export function registerBedrockCommands(
             `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx, beforeCount, false);
+        if (needsRefresh) await refresh("", ctx, beforeModels, false);
     };
     const refresh = async (
         args: string,
         ctx: ExtensionCommandContext,
-        settingsBefore?: number,
+        changedFrom?: readonly string[],
         reading = true,
     ): Promise<void> => {
         if (args.trim() !== "") {
@@ -651,7 +651,8 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock refresh", [`${m.fail} No catalog refresh is available in this install.`]);
             return;
         }
-        const before = new Set(sources.models().map((model) => model.id));
+        const settingsBefore = changedFrom?.length;
+        const before = new Set(changedFrom ?? sources.models().map((model) => model.id));
         const selectedBefore = ctx.model?.provider === "jig-bedrock" ? ctx.model.id : undefined;
         // A settings save already said it is loading the models; one progress line for one action.
         if (ctx.hasUI && !toStdout(ctx) && reading)

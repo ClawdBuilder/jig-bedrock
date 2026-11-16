@@ -173,6 +173,32 @@ test("a model this Pi does not know says to update Pi", async (t) => {
     assert.match(h.notices.at(-1) ?? "", /This Pi does not know the model: orders-api, us-east-1 · update Pi/);
 });
 
+test("a settings change counts new and gone against the list before it", async (t) => {
+    const eight = Array.from({ length: 8 }, (_, index) => ({ ...model, id: `claude-model-${index + 1}` }));
+    const thirteen = [
+        ...eight,
+        ...Array.from({ length: 5 }, (_, index) => ({ ...model, id: `claude-extra-${index + 1}` })),
+    ];
+    let current = eight;
+    const h = harness(
+        t,
+        {},
+        {
+            models: () => current,
+            // apply() empties the list for the new scope; discovery then finds thirteen.
+            apply: () => {
+                current = [];
+            },
+            refresh: async () => {
+                current = thirteen;
+                return "ok";
+            },
+        },
+    );
+    await h.result.bedrock("unset activeTagKey activeTagValue", h.ctx as never);
+    assert.match(h.notices.join("\n"), /13 models loaded \(5 new, 0 gone\)/, h.notices.join("\n"));
+});
+
 test("set and unset write the settings file and apply", async (t) => {
     const h = harness(t, {});
     await h.result.bedrock("set api converse", h.ctx as never);
