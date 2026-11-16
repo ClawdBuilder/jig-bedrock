@@ -6,6 +6,7 @@ import { type ConfigSection, type ConfigWriteResult, renderSections } from "./aw
 import type { VerifyResult } from "./aws-profile.ts";
 import { profilePattern } from "./config.ts";
 import type { ListProfiles } from "./profile.ts";
+import { regionCheck } from "./regions.ts";
 import type { DiscoverySettings, SaveDiscoveryResult } from "./settings-write.ts";
 import { recoveryHint } from "./sso.ts";
 
@@ -187,17 +188,26 @@ async function askDiscovery(
             .filter((value) => value !== "");
     }
     const current = settings.regions.join(", ");
-    const regions = (
-        await interaction.prompt({
+    let regions: string[] = [];
+    for (;;) {
+        const answer = await interaction.prompt({
             type: "text",
             message: "AWS regions for discovery (comma separated)",
             placeholder: current,
-        })
-    )
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => value !== "");
-    interaction.signal.throwIfAborted();
+        });
+        interaction.signal.throwIfAborted();
+        regions = answer
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => value !== "");
+        if (regions.length === 0) break;
+        const check = regionCheck(regions);
+        if (check.problem === undefined) {
+            for (const warning of check.warnings) interaction.notify({ type: "info", message: warning });
+            break;
+        }
+        interaction.notify({ type: "info", message: check.problem });
+    }
     if (regions.length > 0) settings.regions = regions;
     if (
         settings.mode === "tag" &&

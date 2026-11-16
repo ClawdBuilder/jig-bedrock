@@ -94,6 +94,7 @@ adds a Claude model, run the second script for it before you trust the route rul
 | `src/messages.ts`            | Formats the messages shared by commands and the provider.              |
 | `src/profile.ts`             | Resolves the AWS profile in one place.                                 |
 | `src/refusals.ts`            | Remembers AWS AccessDenied refusals for seven days.                    |
+| `src/regions.ts`             | Names the known AWS regions and checks a region setting.               |
 | `src/prompt-cache.ts`        | Calculates prompt-cache lifetimes and prices.                          |
 | `src/provider.ts`            | Wires the provider, commands, settings and sign-in together.           |
 | `src/settings-write.ts`      | Reads and writes bedrock.json.                                         |

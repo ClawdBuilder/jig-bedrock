@@ -381,7 +381,7 @@ test("the settings menu refuses an invalid value and writes nothing", async (t) 
     const h = harness(t, {});
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
     await h.result.bedrock("", h.ctx as never);
-    assert.match(h.notices.join("\n"), /value not accepted/);
+    assert.match(h.notices.join("\n"), /nowhere-1 is not an AWS region/);
     assert.equal(existsSync(join(h.root, "bedrock.json")), false);
 });
 

@@ -14,6 +14,7 @@ import { debugEnabled, debugLogPath } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
 import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice, ProfileResolver } from "./profile.ts";
+import { regionCheck } from "./regions.ts";
 import { readSettingsDocument, saveBudgetSetting, writeSettingsDocument } from "./settings-write.ts";
 import { formatMoney, monthLabel, type SpendTracker } from "./spend.ts";
 import { recoveryHint } from "./sso.ts";
@@ -461,6 +462,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} Preset ${config.preset} is not defined.`]);
             return false;
         }
+        const regionWarnings: string[] = [];
         for (const [key, value] of pairs) {
             if (key === "signInAtStart" || key === "debug") {
                 if (!/^(true|false|on|off|yes|no)$/i.test(value)) {
@@ -478,6 +480,17 @@ export function registerBedrockCommands(
                 }
             }
             const parsed = parseSetting(key, value);
+            if (key === "regions") {
+                const check = regionCheck(parsed as string[]);
+                if (check.problem !== undefined) {
+                    emit(ctx, "Bedrock settings", [
+                        `${m.fail} ${check.problem}`,
+                        ...(fromMenu ? [] : [`Usage: /bedrock ${usageFor("set")}`]),
+                    ]);
+                    return false;
+                }
+                regionWarnings.push(...check.warnings);
+            }
             if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
                 emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
                 return false;
@@ -533,6 +546,7 @@ export function registerBedrockCommands(
             ...(overridden.length > 0
                 ? [`${m.warn} Saved, but ${overridden.join(", ")} is in use for this session.`]
                 : []),
+            ...regionWarnings.map((warning) => `${m.warn} ${warning}`),
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
         if (needsRefresh) await refresh("", ctx, beforeCount);
