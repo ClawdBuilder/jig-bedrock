@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -146,5 +146,58 @@ test("unset spendCommand removes it from the running settings", async (t) => {
         assert.match(s.notices.join("\n"), /Spend command: not set/);
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a route save re-registers the models with the new route", async (t) => {
+    const s = await start({});
+    try {
+        const id = s.providers.at(-1)?.getModels?.()[0]?.id;
+        assert.ok(id);
+        await s.commands.get("bedrock").handler(`set converseModels ${id}`, s.ctx);
+        assert.equal(s.providers.at(-1)?.getModels?.()[0]?.api, "bedrock-converse-stream");
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a quoted value with spaces is saved whole", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler('set tagKey Team tagValue "Team A"', s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.tagValue, "Team A");
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("booleans accept words and unknown presets are refused without writing", async (t) => {
+    const s = await start({});
+    try {
+        await s.commands.get("bedrock").handler("set debug yes", s.ctx);
+        let saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.debug, true);
+        await s.commands.get("bedrock").handler("set preset nosuch", s.ctx);
+        saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.equal(saved.preset, undefined);
+        assert.match(s.notices.join("\n"), /Unknown preset nosuch/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("every settings-menu example is a value its own key accepts", async (t) => {
+    const { SETTING_EXAMPLES } = await import("../src/commands.ts");
+    for (const [key, example] of Object.entries(SETTING_EXAMPLES)) {
+        const s = await start({});
+        try {
+            await s.commands.get("bedrock").handler(`set ${key} ${example}`, s.ctx);
+            const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+            assert.ok(saved[key] !== undefined, `${key}=${example}: ${s.notices.join("\n")}`);
+            assert.doesNotMatch(s.notices.join("\n"), /not accepted|Unknown preset/, key);
+        } finally {
+            rmSync(s.dir, { recursive: true, force: true });
+        }
     }
 });

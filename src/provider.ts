@@ -974,12 +974,14 @@ export function createBedrockProvider(
             usePreset: (name, commandContext) => switchPreset(name, commandContext),
             presetAdd: (name, commandContext) => addPreset(name, commandContext),
             presetRemove: (name, commandContext) => removePreset(name, commandContext),
-            apply: () => {
+            apply: async () => {
                 const next = reloadSettings();
                 if (!applyResolved(next)) return;
                 settingsChanged = true;
                 settingsBaseline = models.length;
                 if (ctx) spend.updateFooter(ctx);
+                const updated = readModels().available;
+                if (updateModels(models, updated).changed && native) await register();
             },
             doctorAws: async (signal) => {
                 const choice = lastChoice.profile ?? config.profile;

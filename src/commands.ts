@@ -104,7 +104,7 @@ export interface BedrockCommandSources {
     failure?: () => string | undefined;
     login?: () => Promise<void>;
     unavailable?: () => Array<{ profile: string; region: string; reason: string }>;
-    apply?: () => void;
+    apply?: () => Promise<void> | void;
     lastChoice?: () => ProfileChoice;
     presetNames?: () => string[];
     presetList?: () => Array<{ name: string; profile?: string; mode?: string; active: boolean; source?: string }>;
@@ -122,6 +122,17 @@ export interface BedrockCommandSources {
     clearRefusals?: () => number;
     refused?: () => Array<{ arn: string; id: string; date: string }>;
 }
+export const SETTING_EXAMPLES: Record<string, string> = {
+    regions: "us-east-1",
+    profiles: "global.anthropic.claude-sonnet-5-5",
+    monthlyBudgetUsd: "200",
+    converseModels: "claude-opus-5",
+    messagesModels: "claude-sonnet-5-5",
+    spendCommand: "node,spend.mjs",
+    ssoLoginCommand: "aws,sso,login,--profile,{profile}",
+    browser: "/usr/bin/xdg-open",
+};
+
 export type BedrockCommand = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 
 export function registerBedrockCommands(
@@ -337,6 +348,7 @@ export function registerBedrockCommands(
             key === "regions" ||
             key === "profiles" ||
             key === "spendCommand" ||
+            key === "ssoLoginCommand" ||
             key === "converseModels" ||
             key === "messagesModels"
         )
@@ -344,18 +356,31 @@ export function registerBedrockCommands(
                 .split(",")
                 .map((part) => part.trim())
                 .filter((part) => part !== "");
-        if (key === "signInAtStart" || key === "debug") return value === "true";
+        if (key === "signInAtStart" || key === "debug") return ["true", "on", "yes"].includes(value.toLowerCase());
         if (key === "monthlyBudgetUsd") return Number(value);
         return value;
     };
     const set = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<boolean> => {
-        const parts = args.trim().split(/\s+/);
-        if (parts.length < 2 || parts.length % 2 !== 0) {
+        const parts: string[] = [];
+        for (const match of args.trim().matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g))
+            parts.push(match[1] ?? match[2] ?? match[3] ?? "");
+        if (parts.length < 2) {
             emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
             return false;
         }
         const pairs: Array<[string, string]> = [];
-        for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i] as string, parts[i + 1] as string]);
+        if (parts.length === 2) pairs.push([parts[0] as string, parts[1] as string]);
+        else if (
+            parts.length % 2 === 0 &&
+            parts.every((part, index) => index % 2 === 0 || !(FIELDS as readonly string[]).includes(part))
+        )
+            for (let i = 0; i < parts.length; i += 2) pairs.push([parts[i] as string, parts[i + 1] as string]);
+        else if ((FIELDS as readonly string[]).includes(parts[0] as string))
+            pairs.push([parts[0] as string, parts.slice(1).join(" ")]);
+        else {
+            emit(ctx, "Bedrock settings", [`${m.fail} Usage: /bedrock ${usageFor("set")}`]);
+            return false;
+        }
         for (const [key] of pairs) {
             if (!(FIELDS as readonly string[]).includes(key)) {
                 const near = closest(key, FIELDS);
@@ -375,6 +400,21 @@ export function registerBedrockCommands(
             return false;
         }
         for (const [key, value] of pairs) {
+            if (key === "signInAtStart" || key === "debug") {
+                if (!/^(true|false|on|off|yes|no)$/i.test(value)) {
+                    emit(ctx, "Bedrock settings", [`${m.fail} ${key} accepts true, false, on, off, yes or no.`]);
+                    return false;
+                }
+            }
+            if (key === "preset") {
+                const known = config.presetNames ?? [];
+                if (!known.includes(value)) {
+                    emit(ctx, "Bedrock settings", [
+                        `${m.fail} Unknown preset ${clean(value, 40)}. Known presets: ${known.sort().join(", ") || "none"}.`,
+                    ]);
+                    return false;
+                }
+            }
             const parsed = parseSetting(key, value);
             if (key === "monthlyBudgetUsd" && (typeof parsed !== "number" || parsed < 1)) {
                 emit(ctx, "Bedrock settings", [`${m.fail} The budget must be at least $1.`]);
@@ -403,7 +443,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return false;
         }
-        sources.apply?.();
+        await sources.apply?.();
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const needsRefresh = pairs.some(([key]) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
@@ -415,6 +455,8 @@ export function registerBedrockCommands(
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
         if (needsRefresh) await refresh("", ctx);
+        const preset = pairs.find(([key]) => key === "preset")?.[1];
+        if (preset !== undefined) await sources.usePreset?.(preset, ctx);
         return true;
     };
     const unset = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
@@ -455,7 +497,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
-        sources.apply?.();
+        await sources.apply?.();
         const needsRefresh = keys.some((key) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
                 key,
@@ -917,16 +959,7 @@ export function registerBedrockCommands(
             if (left !== undefined && right !== undefined) await set(`${key} ${left} ${pair} ${right}`, ctx, true);
             return;
         }
-        const examples: Record<string, string> = {
-            regions: "us-east-1",
-            profiles: "global.anthropic.claude-sonnet-5-5",
-            monthlyBudgetUsd: "200",
-            converseModels: "claude-opus-5",
-            messagesModels: "claude-sonnet-5-5",
-            spendCommand: "node spend.mjs",
-            ssoLoginCommand: "aws sso login --profile {profile}",
-            browser: "/usr/bin/xdg-open",
-        };
+        const examples = SETTING_EXAMPLES;
         const format =
             key === "regions" ? "comma separated, e.g. us-east-1,us-west-2" : `e.g. ${examples[key] ?? "value"}`;
         let answer = await ctx.ui.input(
