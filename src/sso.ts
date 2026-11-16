@@ -1,8 +1,6 @@
 import type { AssistantMessage, AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { profilePattern } from "./config.ts";
-import { isOwnModel } from "./identity.ts";
-import { NO_PROFILE } from "./profile.ts";
 
 type Stream = NonNullable<ProviderConfig["streamSimple"]>;
 
@@ -295,8 +293,8 @@ export function withSsoRecovery(
 export async function registerBedrockSsoRecovery(
     pi: ExtensionAPI,
     recovery: Recover,
-    defaultProfile?: () => string | undefined,
-    check?: (profile: string, signal?: AbortSignal) => Promise<string | undefined>,
+    _defaultProfile?: () => string | undefined,
+    _check?: (profile: string, signal?: AbortSignal) => Promise<string | undefined>,
 ): Promise<RecoveredBedrock> {
     // Not worth deferring: Pi has already loaded both modules, so inside Pi these imports and builtinProviders() take about 1-5 ms
     // together (measured), while the models for /model need the native provider's metadata at registration anyway.
@@ -316,38 +314,6 @@ export async function registerBedrockSsoRecovery(
         notice = noticeFor(ctx);
     });
     pi.on("session_shutdown", () => lifetime.abort());
-    pi.registerCommand("aws-login", {
-        description: "Restore the selected AWS SSO profile (browser sign-in may be needed)",
-        handler: async (args, ctx) => {
-            const auth =
-                ctx.model && isOwnModel(ctx.model) ? await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model) : undefined;
-            const fromEnvironment = profileFor(auth?.ok ? auth : undefined);
-            const profile =
-                args.trim() || defaultProfile?.() || (fromEnvironment === "default" ? undefined : fromEnvironment);
-            if (!profile) {
-                ctx.ui.notify(NO_PROFILE, "warning");
-                return;
-            }
-            if (!profilePattern.test(profile)) {
-                ctx.ui.notify("Use /bedrock login.", "warning");
-                return;
-            }
-            const problem = await check?.(profile, ctx.signal);
-            if (problem !== undefined) {
-                ctx.ui.notify(problem, "warning");
-                return;
-            }
-            ctx.ui.notify(`Restoring AWS SSO (${profile}); complete any browser sign-in.`, "info");
-            try {
-                await recover(profile, ctx.signal);
-                ctx.ui.notify("AWS SSO restored. Continue your request.", "info");
-                ctx.ui.notify("This name goes away in the next release: use /bedrock login.", "info");
-            } catch (error) {
-                if (!(error instanceof SsoRecoveryError && error.streamed) && !lifetime.signal.aborted)
-                    ctx.ui.notify(recoveryHint(error), "warning");
-            }
-        },
-    });
     const notify: Notice = (text, level) => notice(text, level);
     // Keep both public stream entry points so full calls retain Bedrock options.
     const provider = {

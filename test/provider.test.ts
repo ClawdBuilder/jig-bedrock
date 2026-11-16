@@ -36,7 +36,7 @@ test("the provider's auth hands on only the profile, never a key", async () => {
         credential: { key: "private-canary", env: { AWS_SECRET_ACCESS_KEY: "private-canary" } },
         signal: new AbortController().signal,
     });
-    assert.deepEqual(auth, { auth: {}, env: { AWS_PROFILE: "fixture-profile" }, source: "bedrock.profile" });
+    assert.deepEqual(auth, { auth: {}, env: { AWS_PROFILE: "fixture-profile" }, source: "profile" });
     assert.doesNotMatch(JSON.stringify(auth), /private-canary/);
 });
 
@@ -126,7 +126,7 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
     })(pi);
     assert.equal(controller?.failed, false);
     assert.equal(controller?.models.length, 1);
-    const selected = { ...controller!.models[0], provider: "jig-bedrock" },
+    const selected = { ...controller?.models[0], provider: "jig-bedrock" },
         ctx: any = {
             model: selected,
             sessionManager: { getBranch: () => [], getSessionId: () => "fixture" },
@@ -134,10 +134,10 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
         };
     for (const fn of hooks.get("session_start") || []) await fn({}, ctx);
     cache.profiles = [{ ...profile, arn: profile.arn.replace("/old", "/replacement") }];
-    await controller!.refresh();
-    assert.equal(controller!.models[0]!.id, selected.id);
-    assert.notEqual(controller!.models[0]!.arn, selected.arn);
-    assert.equal(hooks.get("input")![0]!({}, ctx).action, "handled");
+    await controller?.refresh();
+    assert.equal(controller?.models[0]?.id, selected.id);
+    assert.notEqual(controller?.models[0]?.arn, selected.arn);
+    assert.equal(hooks.get("input")?.[0]?.({}, ctx).action, "handled");
     assert.doesNotMatch(notices.join("\n"), /catalog updated|Choose \/model/);
     const other = builtinProviders()
         .find((p: any) => p.id === "amazon-bedrock")
@@ -146,29 +146,27 @@ test("refresh replacing a selected ARN keeps input blocked without switching mod
         profile,
         { ...profile, arn: profile.arn.replace("/old", "/new"), foundation_model_id: other.id, profile_name: "New" },
     ];
-    await controller!.refresh();
+    await controller?.refresh();
     assert.ok(
         notices.some((n) => n.includes("1 new model in /model")),
         notices.join("\n"),
     );
-    cache.warnings = [
-        "No application inference profiles matched CostCenter=42 in us-east-1. Check bedrock.tagKey/tagValue.",
-    ];
-    await controller!.refresh();
+    cache.warnings = ["No application inference profiles matched CostCenter=42 in us-east-1. Check tagKey/tagValue."];
+    await controller?.refresh();
     assert.ok(
         notices.some((n) => n.includes("CostCenter=42")),
         notices.at(-1),
     );
     cache.warnings = [];
     cache.errors = [{ profile: "arn:bad", message: "denied" }];
-    await controller!.refresh();
+    await controller?.refresh();
     assert.ok(
         notices.some((n) => n.includes("arn:bad: denied")),
         notices.at(-1),
     );
     cache.errors = [];
     cache.profiles = [];
-    await controller!.refresh();
+    await controller?.refresh();
     assert.ok(
         notices.some((n) => n.includes(`${selected.id} is no longer in your account`)),
         notices.join("\n"),

@@ -122,12 +122,10 @@ test("completions list sub-commands and setting names", () => {
     }
 });
 
-test("old names append the deprecation line", async (t) => {
+test("the removed command names are not registered", (t) => {
     const h = harness(t, {});
-    const legacy = h.commands.get("bedrock-doctor");
-    assert.ok(legacy);
-    await legacy.handler("", h.ctx as never);
-    assert.match(h.notices.at(-1) ?? "", /\nThis name goes away in the next release: use \/bedrock doctor\.$/);
+    for (const name of ["bedrock-doctor", "bedrock-refresh", "bedrock-usage", "bedrock-stats", "bedrock-profiles"])
+        assert.equal(h.commands.has(name), false, name);
 });
 
 test("broken settings still register /bedrock and repair through set", async (t) => {
@@ -138,7 +136,7 @@ test("broken settings still register /bedrock and repair through set", async (t)
     writeFileSync(file, JSON.stringify({ regions: [] }));
     const handler = registerBrokenCommands(pi as never, {
         file,
-        error: "bedrock.regions must contain 1-16 unique AWS region names.",
+        error: "regions must contain 1-16 unique AWS region names.",
         env: h.settings,
     });
     await handler("status", h.ctx as never);
@@ -146,10 +144,10 @@ test("broken settings still register /bedrock and repair through set", async (t)
     await handler("set regions us-east-1", h.ctx as never);
     assert.match(readFileSync(file, "utf8"), /"regions": \[/);
     assert.match(h.notices.at(-1) ?? "", /Run \/reload/);
-    assert.ok(commands.has("bedrock-doctor"));
+    assert.equal(commands.has("bedrock-doctor"), false);
 });
 
-test("a broken settings file still registers /bedrock and its old names", async (t) => {
+test("a broken settings file still registers /bedrock and no old names", async (t) => {
     const root = mkdtempSync(join(tmpdir(), "bedrock-broken-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     writeFileSync(join(root, "bedrock.json"), JSON.stringify({ regions: [] }));
@@ -166,7 +164,7 @@ test("a broken settings file still registers /bedrock and its old names", async 
     const handle = await createBedrockProvider({ env: { HOME: root, PI_CODING_AGENT_DIR: root } })(pi as never);
     assert.equal(handle, undefined);
     assert.ok(commands.has("bedrock"));
-    assert.ok(commands.has("bedrock-doctor"));
+    assert.equal(commands.has("bedrock-doctor"), false);
     const notices: string[] = [];
     await commands.get("bedrock")?.handler("status", {
         hasUI: true,
@@ -220,4 +218,86 @@ test("/bedrock login prints the cause it has, and never a placeholder profile", 
     const text = noProfile.notices.join("\n");
     assert.match(text, /choose an AWS profile with \/login/);
     assert.doesNotMatch(text, /my-profile/);
+});
+
+test("one command table feeds help, completions and the typo guard", async (t) => {
+    const h = harness(t, {});
+    const pre = h.result.completions("pre");
+    assert.ok(
+        pre.some((item) => item.value === "preset"),
+        JSON.stringify(pre),
+    );
+    assert.ok(h.result.completions("us").some((item) => item.value === "use"));
+    await h.result.bedrock("help use", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /Usage: \/bedrock use \[name\]/);
+    await h.result.bedrock("prset", h.ctx as never);
+    assert.equal(h.notices.length >= 1, true);
+    assert.match(h.notices.at(-1) ?? "", /Did you mean preset\?/);
+    assert.match(h.notices.at(-1) ?? "", /Next: \/bedrock help/);
+});
+
+test("commands with no arguments refuse stray words with their usage", async (t) => {
+    const h = harness(t, {});
+    for (const [args, usage] of [
+        ["status extra", "status"],
+        ["models extra", "models"],
+        ["refresh extra", "refresh"],
+        ["login extra", "login"],
+        ["settings extra", "settings"],
+    ] as const) {
+        await h.result.bedrock(args, h.ctx as never);
+        assert.match(h.notices.at(-1) ?? "", new RegExp(`Usage: /bedrock ${usage.replace("[", "\\[")}`));
+    }
+});
+
+test("unknown settings and periods name the nearest valid word", async (t) => {
+    const h = harness(t, {});
+    await h.result.bedrock("set region us-east-1", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /Unknown setting region\. Did you mean regions\?/);
+    await h.result.bedrock("usage weak", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /Unknown period weak\. Did you mean week\?/);
+});
+
+test("a print-mode refresh with N models prints N and no progress header", async (t) => {
+    const h = harness(t, {});
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        await h.result.bedrock("refresh", {
+            hasUI: false,
+            mode: "json",
+            signal: new AbortController().signal,
+            sessionManager: { getSessionId: () => "s" },
+        } as never);
+    } finally {
+        process.stdout.write = original;
+    }
+    const text = writes.join("");
+    assert.match(text, /✓ 1 model loaded/);
+    assert.doesNotMatch(text, /Reading the models/);
+});
+
+test("print-mode doctor omits the progress line", async (t) => {
+    const h = harness(t, {});
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        await h.result.bedrock("doctor offline", {
+            hasUI: false,
+            mode: "json",
+            signal: new AbortController().signal,
+            sessionManager: { getSessionId: () => "s" },
+        } as never);
+    } finally {
+        process.stdout.write = original;
+    }
+    assert.doesNotMatch(writes.join(""), /Checking AWS/);
 });

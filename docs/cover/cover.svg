@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" role="img" aria-label="jig-bedrock, a Pi extension for Claude on AWS Bedrock signed in with your AWS profile. The Bedrock doctor screen shows eight checks ready, and the install command is pi install npm:@clawdbuilder/jig-bedrock." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" role="img" aria-label="jig-bedrock, a Pi extension for Claude and other Bedrock models, signed in with your AWS profile. The Bedrock doctor screen shows eight checks ready, and the install command is pi install npm:@clawdbuilder/jig-bedrock." font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif">
   <style>
     text { fill: #f4f4f5; }
     .muted { fill: #a1a1aa; }
@@ -15,7 +15,7 @@
   <rect width="640" height="400" fill="#0f1014"/>
   <text class="muted eyebrow" x="24" y="42">PI EXTENSION</text>
   <text class="title" x="30" y="86">jig-bedrock</text>
-  <text class="muted subtitle" x="24" y="120">Claude on AWS Bedrock, signed in with your AWS profile.</text>
+  <text class="muted subtitle" x="24" y="120">Claude and other Bedrock models in Pi, signed in with your AWS profile.</text>
   <rect class="panel" x="24" y="144" width="592" height="190" rx="14"/>
   <text class="screen-title" x="42" y="166">Bedrock doctor</text>
   <text class="screen accent" x="42" y="184">✓</text><text class="screen" x="60" y="184">Node 26.13.0</text>

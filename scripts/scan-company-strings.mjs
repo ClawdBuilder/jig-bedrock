@@ -51,7 +51,7 @@ function walk(dir) {
             const lines = readFileSync(file, "utf8").split("\n");
             for (let index = 0; index < lines.length; index++) {
                 const line = lines[index] ?? "";
-                if (SECRET.test(line) || hasMachinePath(line) || (BANNED && BANNED.test(line))) {
+                if (SECRET.test(line) || hasMachinePath(line) || BANNED?.test(line)) {
                     // Only the location: the matched word and its context stay out of the log.
                     console.log(`${relative}:${index + 1}`);
                     bad++;

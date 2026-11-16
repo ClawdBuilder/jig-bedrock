@@ -26,7 +26,9 @@ test("plain Pi registers the provider and commands", async (t) => {
         pi as never,
     );
     assert.equal(providers.length > 0, true, "the Bedrock provider is registered");
-    for (const name of ["bedrock-refresh", "bedrock-usage", "bedrock-doctor"]) assert.ok(commands.includes(name), name);
+    assert.ok(commands.includes("bedrock"));
+    for (const name of ["bedrock-refresh", "bedrock-usage", "bedrock-doctor"])
+        assert.equal(commands.includes(name), false, name);
 });
 
 test("plain Pi applies bedrock.json, and JIG_BEDROCK_PROFILE overrides it", async (t) => {
@@ -59,7 +61,7 @@ test("plain Pi applies bedrock.json, and JIG_BEDROCK_PROFILE overrides it", asyn
         return { profile: auth?.env?.AWS_PROFILE, source: auth?.source };
     }
 
-    assert.deepEqual(await profileFrom({}), { profile: "file-profile", source: "bedrock.profile" });
+    assert.deepEqual(await profileFrom({}), { profile: "file-profile", source: "profile" });
     assert.deepEqual(await profileFrom({ JIG_BEDROCK_PROFILE: "env-profile" }), {
         profile: "env-profile",
         source: "JIG_BEDROCK_PROFILE",

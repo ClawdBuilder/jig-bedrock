@@ -40,7 +40,7 @@ test("the notice prices the current context at the target's cache-write rate", (
         switchNotice(190_000, opus, "long")?.text,
         "Switching model rewrites ~190k tokens of cache: about $1.90 (once). For one hard question, switch for that request only and switch back.",
     );
-    assert.match(switchNotice(1_250_000, opus, "short")!.text, /~1\.3M tokens/);
+    assert.match(switchNotice(1_250_000, opus, "short")?.text, /~1\.3M tokens/);
     assert.equal(switchNotice(5_000, opus, "short"), undefined, "a few cents is not worth a notice");
     assert.equal(switchNotice(0, opus, "short"), undefined);
     assert.equal(switchNotice(Number.NaN, opus, "short"), undefined);

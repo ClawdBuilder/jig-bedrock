@@ -64,7 +64,7 @@ export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: Discover
         target.profiles = settings.profiles;
     }
     target.regions = settings.regions;
-    const keys = new Set<string>([...modeKeys, "regions"]);
+    const _keys = new Set<string>([...modeKeys, "regions"]);
     const shadowed: string[] = [];
     try {
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });

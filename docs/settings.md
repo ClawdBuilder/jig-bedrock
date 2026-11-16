@@ -46,7 +46,19 @@ A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `a
 
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. `/bedrock use` switches now; `/bedrock preset add` snapshots the current settings; `/bedrock preset remove` deletes one.
+```json
+{
+    "presets": {
+        "work": { "profile": "company-profile", "team": "my-team", "monthlyBudgetUsd": 200 },
+        "personal": { "profile": "my-profile", "regions": ["us-west-2"] }
+    },
+    "preset": "work"
+}
+```
+
+`/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the current sign-in, and `/bedrock preset remove work` deletes it. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+
+Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below.
 
 ## Which AWS profile is used
 

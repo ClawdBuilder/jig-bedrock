@@ -208,7 +208,7 @@ async function doctor(env: NodeJS.ProcessEnv, listing: string[], loginListing?: 
         });
         const notices: string[] = [];
         const ctx = { ui: { notify: (text: string) => notices.push(text) }, mode: "rpc", hasUI: true };
-        await commands.get("bedrock-doctor")!.handler("", ctx);
+        await commands.get("bedrock")?.handler("doctor", ctx);
         return notices.join("\n");
     } finally {
         rmSync(dir, { recursive: true, force: true });

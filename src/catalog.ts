@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProviderAuth } from "@earendil-works/pi-ai";
 import type {
     ExtensionAPI,
@@ -401,7 +401,31 @@ export function discoveredProfiles(
         const key = slug(registryName(r.name));
         grouped.set(key, [...(grouped.get(key) || []), p]);
     }
-    for (const [key, rows] of grouped) {
+    // Pi picks providerModels[0] when no model is chosen (model-resolver.js), so the first entry must work on a
+    // fresh account: a non-Fable Claude model, Sonnet before Opus before Haiku before older Claude, newest version first,
+    // global before regional; Fable after those; non-Claude application profiles last in AWS's order.
+    const modelOrder = (rows: Profile[]): [number, number, number] => {
+        const first = rows[0];
+        const id = `${first.foundation_model_id} ${first.profile_name}`.toLowerCase();
+        if (first.kind === "application") return [5, 0, 0];
+        if (/fable/.test(id)) return [4, 0, 0];
+        const direct = /claude-(sonnet|opus|haiku|fable)(?:[-.](\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?)?/.exec(id);
+        const before = /claude-(\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?-(sonnet|opus|haiku|fable)/.exec(id);
+        const family = direct?.[1] ?? before?.[3];
+        const major = Number(direct?.[2] ?? before?.[1] ?? 0);
+        const minor = Number(direct?.[3] ?? before?.[2] ?? 0);
+        const tier = family === "sonnet" ? 0 : family === "opus" ? 1 : family === "haiku" ? 2 : 3;
+        const version = major * 1000 + minor;
+        const global = first.arn.includes("/global.") ? 0 : 1;
+        return [tier, -version, global];
+    };
+    const groups = [...grouped.entries()];
+    groups.sort((a, b) => {
+        const left = modelOrder(a[1]),
+            right = modelOrder(b[1]);
+        return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+    });
+    for (const [key, rows] of groups) {
         const system = orderedSystem(rows, catalog);
         const preferred = system[0] ?? (rows.length === 1 ? rows[0] : undefined);
         const systemIds = new Map<string, { id: string; alias?: string }>();
@@ -480,6 +504,23 @@ export function discoveredProfiles(
             model.name = region === "" ? model.name : `${model.name} · ${region}`;
         }
     }
+    const rankModel = (model: BedrockModel): [number, number, number] => {
+        if (model.arn.includes(":application-inference-profile/")) return [5, 0, 0];
+        const id = model.foundationModelId.toLowerCase();
+        const direct = /claude-(sonnet|opus|haiku|fable)(?:[-.](\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?)?/.exec(id);
+        const before = /claude-(\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?-(sonnet|opus|haiku|fable)/.exec(id);
+        const family = direct?.[1] ?? before?.[3];
+        if (family === "fable") return [4, 0, 0];
+        const tier = family === "sonnet" ? 0 : family === "opus" ? 1 : family === "haiku" ? 2 : 3;
+        const major = Number(direct?.[2] ?? before?.[1] ?? 0);
+        const minor = Number(direct?.[3] ?? before?.[2] ?? 0);
+        return [tier, -(major * 1000 + minor), model.arn.includes("/global.") ? 0 : 1];
+    };
+    available.sort((a, b) => {
+        const left = rankModel(a),
+            right = rankModel(b);
+        return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+    });
     return { available, unavailable };
 }
 export function updateModels(
@@ -542,7 +583,7 @@ export function bedrockStream(
                     (options?.env?.AWS_PROFILE && options.env.AWS_PROFILE !== current)))
         )
             throw new Error(
-                "That Bedrock authentication scope is not supported; choose the configured profile with /model.",
+                "That Bedrock authentication scope is not supported; choose the configured AWS profile with /model.",
             );
         const scoped = {
             ...options,

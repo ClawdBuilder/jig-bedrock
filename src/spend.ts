@@ -1,5 +1,6 @@
 // This package's own spend record: one JSONL line per Bedrock reply, monthly UTC files under XDG_STATE_HOME, a display
 // budget, a footer line and an optional command the user names. No prompt, ARN, account id or profile is written here.
+
 import { execFile } from "node:child_process";
 import type { Dirent } from "node:fs";
 import {
@@ -11,15 +12,15 @@ import {
     readFileSync,
     renameSync,
     rmSync,
-    statSync,
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { isOwnModel } from "./identity.ts";
+import { markers } from "./markers.ts";
 
 type Json = Record<string, unknown>;
 const tokens = (value: number): string => {
@@ -608,6 +609,7 @@ export class SpendTracker {
         return "not run yet";
     }
     async report(period: "day" | "week" | "month", ctx: ExtensionCommandContext): Promise<void> {
+        const _m = markers(this.env);
         const activeView = await this.refresh(true);
         const view = this.machine(period);
         const day = new Date(this.now()).toISOString().slice(0, 10);
@@ -644,12 +646,15 @@ export class SpendTracker {
         emit(ctx, `Bedrock spend · ${periodLabel} · this machine's Pi sessions`, rows);
     }
     async budgetReport(ctx: ExtensionCommandContext): Promise<void> {
+        const m = markers(this.env);
         const view = await this.refresh(false);
         const limit = this.config.monthlyBudgetUsd;
         const rows = [
-            `${limit !== undefined && view.spentUsd >= limit ? "!" : "✓"} Spent this month: ${money(view.spentUsd)}${view.unpriced ? " + unpriced usage" : ""}`,
-            limit === undefined ? "– Budget: not set" : `${view.spentUsd >= limit ? "!" : "✓"} Budget: ${money(limit)}`,
-            "! Not an AWS limit; no request is blocked.",
+            `${limit !== undefined && view.spentUsd >= limit ? `${m.warn}` : `${m.ok}`} Spent this month: ${money(view.spentUsd)}${view.unpriced ? " + unpriced usage" : ""}`,
+            limit === undefined
+                ? `${m.skip} Budget: not set`
+                : `${view.spentUsd >= limit ? `${m.warn}` : `${m.ok}`} Budget: ${money(limit)}`,
+            `${m.warn} Not an AWS limit; no request is blocked.`,
             ...(limit === undefined ? ["Next: /bedrock budget 200"] : []),
         ];
         emit(ctx, "Bedrock budget", rows);

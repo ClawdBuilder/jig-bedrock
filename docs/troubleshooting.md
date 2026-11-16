@@ -21,7 +21,7 @@ Next: /bedrock login
 
 ```text
 ✗ Models: access denied while listing
-Next: Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured profile; then /bedrock refresh.
+Next: Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured AWS profile; then /bedrock refresh.
 ```
 
 **Run:** `/bedrock doctor`
