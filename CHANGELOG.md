@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-16
+
+- A saved catalog is put in the Sonnet-first order at the factory, so a restart with no default model starts on a Sonnet.
+- README step 3 explains that Enter uses a model for the session and Ctrl+S also makes it the default.
+
 ## [0.5.2] - 2026-11-16
 
 - `/login` checks for AWS CLI v2 before the first question, and a missing `aws` command is reported as missing.
