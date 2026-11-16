@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
@@ -28,21 +27,6 @@ export interface CatalogSource {
     /** The category of the last refresh, for the doctor's next step. */
     status?(): Status | undefined;
 }
-export type Runner = (
-    program: string,
-    args: string[],
-    options: { timeout: number; maxBuffer: number },
-) => Promise<string>;
-export const runFile: Runner = (program, args, options) =>
-    new Promise((resolve, reject) => {
-        execFile(
-            program,
-            args,
-            { ...options, encoding: "utf8", env: { ...process.env, AWS_CLI_AUTO_PROMPT: "off", AWS_PAGER: "" } },
-            (error, stdout, stderr) =>
-                error ? reject(new Error(error.killed ? "timeout" : stderr || error.message)) : resolve(stdout),
-        );
-    });
 /** Plain reason for one region that did not answer; the region itself is named by the caller. */
 function regionReason(error: unknown): string {
     const cause = error instanceof StepError ? error.cause : error;
@@ -182,7 +166,6 @@ export function pruneCatalogFiles(folder: string, keep = 8): void {
 
 export function createAwsDiscovery(
     config: ResolvedConfig,
-    runner: Runner = runFile,
     file?: string | (() => string),
     now = Date.now,
     env: NodeJS.ProcessEnv = process.env,
@@ -230,7 +213,6 @@ export function createAwsDiscovery(
             pages = 0,
             deadline = now() + 90_000;
         const api = options.api ?? { getCallerIdentity, getResources, listInferenceProfiles, getInferenceProfile };
-        const useApi = options.useApi ?? runner === runFile;
         let credentialsPromise: Promise<AwsCredentials> | undefined;
         const credentials = () => {
             credentialsPromise ??= (async () => {
@@ -245,57 +227,60 @@ export function createAwsDiscovery(
             })();
             return credentialsPromise;
         };
-        const apiCall = async (args: string[]) => {
-            const regionIndex = args.indexOf("--region");
-            const region = regionIndex >= 0 ? args[regionIndex + 1] : config.regions[0];
-            if (region === undefined) throw new Error("region");
-            const common = {
+        const common = async (region: string) => {
+            const timeoutMs = Math.min(20_000, deadline - now());
+            if (timeoutMs <= 0) throw new Error("timeout");
+            return {
                 credentials: await credentials(),
-                timeoutMs: Math.min(20_000, deadline - now()),
+                timeoutMs,
                 ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             };
-            if (args[0] === "sts" && args[1] === "get-caller-identity") return api.getCallerIdentity(region, common);
-            if (args[0] === "bedrock" && args[1] === "get-inference-profile") {
-                const index = args.indexOf("--inference-profile-identifier");
-                return api.getInferenceProfile(region, args[index + 1] ?? "", common);
-            }
-            if (args[0] === "bedrock" && args[1] === "list-inference-profiles") {
-                const index = args.indexOf("--next-token");
-                return api.listInferenceProfiles(region, index >= 0 ? { nextToken: args[index + 1] } : {}, common);
-            }
-            if (args[0] === "resourcegroupstaggingapi" && args[1] === "get-resources") {
-                const filterIndex = args.indexOf("--tag-filters");
-                const tokenIndex = args.indexOf("--pagination-token");
-                return api.getResources(
-                    region,
-                    {
-                        tagFilters: filterIndex >= 0 ? (JSON.parse(args[filterIndex + 1] ?? "[]") as never) : [],
-                        ...(tokenIndex >= 0 ? { paginationToken: args[tokenIndex + 1] } : {}),
-                    },
-                    common,
-                );
-            }
-            throw new Error("unsupported AWS operation");
         };
-        const aws = async (args: string[]) => {
-            const timeout = Math.min(20_000, deadline - now());
-            if (timeout <= 0) throw new Error("timeout");
-            if (useApi) return apiCall(args);
-            const output = await runner(
-                "aws",
-                [
-                    ...args,
-                    ...(config.profile ? ["--profile", config.profile] : []),
-                    "--output",
-                    "json",
-                    "--no-cli-pager",
-                ],
-                { timeout, maxBuffer: Math.min(remaining, 1_048_576) },
-            );
-            remaining -= Buffer.byteLength(output);
-            if (remaining < 0 || Buffer.byteLength(output) > 1_048_576) throw new Error("byte limit");
+        const checkBytes = (value: unknown): void => {
+            const bytes = Buffer.byteLength(JSON.stringify(value));
+            if (bytes > 1_048_576) throw new Error("byte limit");
+            remaining -= bytes;
+            if (remaining < 0) throw new Error("byte limit");
+        };
+        const sts = async () => {
+            const region = config.regions[0] ?? "us-east-1";
+            const result = await api.getCallerIdentity(region, await common(region));
             if (now() > deadline) throw new Error("timeout");
-            return JSON.parse(output);
+            checkBytes(result);
+            return result;
+        };
+        const resources = async (
+            region: string,
+            tagFilters: Array<{ Key: string; Values: string[] }>,
+            paginationToken?: string,
+        ) => {
+            const result = await api.getResources(
+                region,
+                {
+                    tagFilters,
+                    ...(paginationToken === undefined ? {} : { paginationToken }),
+                },
+                await common(region),
+            );
+            if (now() > deadline) throw new Error("timeout");
+            return result;
+        };
+        const list = async (region: string, nextToken?: string) => {
+            const result = await api.listInferenceProfiles(
+                region,
+                {
+                    ...(nextToken === undefined ? {} : { nextToken }),
+                },
+                await common(region),
+            );
+            if (now() > deadline) throw new Error("timeout");
+            return result;
+        };
+        const profile = async (region: string, id: string) => {
+            const result = await api.getInferenceProfile(region, id, await common(region));
+            if (now() > deadline) throw new Error("timeout");
+            checkBytes(result);
+            return result;
         };
         const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
             try {
@@ -309,7 +294,7 @@ export function createAwsDiscovery(
                 const cached = readCurrent();
                 if (cached && now() / 1000 - cached.fetched_at < 86_400) return "ok";
             }
-            const account = (await step("check the AWS account", () => aws(["sts", "get-caller-identity"]))).Account;
+            const account = (await step("check the AWS account", sts)).Account;
             if (typeof account !== "string" || !/^\d{12}$/.test(account)) throw new Error("identity");
             const old = readCatalog(readFrom(), scope(), now());
             if (old && old.account_id !== account) {
@@ -320,8 +305,7 @@ export function createAwsDiscovery(
                 seen = new Set<string>(),
                 explicitErrors: { profile: string; message: string }[] = [],
                 warnings: string[] = [];
-            const info = (arn: string, region: string) =>
-                aws(["bedrock", "get-inference-profile", "--inference-profile-identifier", arn, "--region", region]);
+            const info = (arn: string, region: string) => profile(region, arn);
             const foundation = async (value: Json, depth = 0): Promise<string> => {
                 if (!Array.isArray(value.models) || !value.models.length || value.models.length > 32)
                     throw new Error("models");
@@ -406,21 +390,14 @@ export function createAwsDiscovery(
                         for (let page = 0; page < 32; page++) {
                             if (++pages > 64) throw new Error("pagination");
                             const result = await step("list tagged inference profiles", () =>
-                                aws([
-                                    "resourcegroupstaggingapi",
-                                    "get-resources",
-                                    "--region",
+                                resources(
                                     region,
-                                    "--resource-type-filters",
-                                    "bedrock:application-inference-profile",
-                                    "--tag-filters",
-                                    JSON.stringify([
-                                        { Key: tagKeyFor(), Values: [tagValueFor()] },
+                                    [
+                                        { Key: tagKeyFor()!, Values: [tagValueFor()!] },
                                         ...(activeKey === undefined ? [] : [{ Key: activeKey, Values: [activeValue] }]),
-                                    ]),
-                                    "--no-paginate",
-                                    ...(token ? ["--pagination-token", token] : []),
-                                ]),
+                                    ],
+                                    token === "" ? undefined : token,
+                                ),
                             );
                             if (
                                 !Array.isArray(result.ResourceTagMappingList) ||
@@ -469,15 +446,7 @@ export function createAwsDiscovery(
                         for (let page = 0; page < 32; page++) {
                             if (++pages > 64) throw new Error("pagination");
                             const result = await step("list inference profiles", () =>
-                                aws([
-                                    "bedrock",
-                                    "list-inference-profiles",
-                                    "--type-equals",
-                                    "SYSTEM_DEFINED",
-                                    "--region",
-                                    region,
-                                    ...(token ? ["--next-token", token] : []),
-                                ]),
+                                list(region, token === "" ? undefined : token),
                             );
                             const rows = result.inferenceProfileSummaries;
                             if (!Array.isArray(rows) || rows.length > 256) throw new Error("profiles");
@@ -548,22 +517,12 @@ export function createAwsDiscovery(
                     let field: "tagKey" | "tagValue" = "tagKey";
                     for (const region of config.regions) {
                         try {
-                            const result = await step("find a tag with different case", () =>
-                                aws([
-                                    "resourcegroupstaggingapi",
-                                    "get-resources",
-                                    "--region",
-                                    region,
-                                    "--resource-type-filters",
-                                    "bedrock:application-inference-profile",
-                                    "--no-paginate",
-                                ]),
-                            );
+                            const result = await step("find a tag with different case", () => resources(region, []));
                             const rows = result.ResourceTagMappingList;
                             if (!Array.isArray(rows)) continue;
                             for (const row of rows) {
                                 if (!Array.isArray(row?.Tags)) continue;
-                                const tag = row.Tags.find(
+                                const tag: { Key: string; Value: string } | undefined = row.Tags.find(
                                     (entry: Json) =>
                                         typeof entry?.Key === "string" && entry.Key.toLowerCase() === key.toLowerCase(),
                                 );

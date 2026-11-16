@@ -12,7 +12,7 @@ test("discovery resolves credentials once and makes no child process call", asyn
     const dir = mkdtempSync(join(tmpdir(), "bedrock-api-discovery-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     let credentials = 0;
-    let runner = 0;
+    const runner = 0;
     let resources = 0;
     const api = {
         getCallerIdentity: async () => ({ Account: account }),
@@ -49,10 +49,6 @@ test("discovery resolves credentials once and makes no child process call", asyn
             activeTagKey: "Active",
             activeTagValue: "true",
         } as never,
-        (async () => {
-            runner++;
-            throw new Error("child process must not run");
-        }) as never,
         join(dir, "catalog.json"),
         () => Date.now(),
         {},

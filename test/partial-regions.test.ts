@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAwsDiscovery } from "../src/aws-discovery.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 
 const account = "123456789012";
 const arn = (region: string) =>
@@ -30,7 +31,7 @@ test("one failed region keeps the other region's models and warns", async () => 
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")
@@ -56,7 +57,7 @@ test("a timeout in one region keeps the other region's models", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")
@@ -81,7 +82,7 @@ test("when every region fails the refresh fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-partial-"));
     try {
         const config = { mode: "system" as const, regions: ["us-east-1", "eu-central-2"], profile: "fixture" };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             config as never,
             async (_program, args) =>
                 args.includes("get-caller-identity")

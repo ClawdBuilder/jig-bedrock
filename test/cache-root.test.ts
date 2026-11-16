@@ -23,6 +23,7 @@ import { createAwsDiscovery, type Runner } from "../src/aws-discovery.ts";
 import { atomicCache } from "../src/cache.ts";
 import { cacheRoot, catalogFile, realCacheRoot } from "../src/cache-root.ts";
 import { ssoRuntime } from "../src/login.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 
 const config = { regions: ["us-east-1"], ssoLoginCommand: ["fixture", "{profile}"], signInAtStart: false };
 
@@ -57,14 +58,14 @@ test("a linked cache root works: the cache is written, then read", async (t) => 
         () => atomicCache(join(env.XDG_CACHE_HOME, "jig-bedrock", "catalog.json"), {}),
         /Unsafe cache directory/,
     );
-    const first = createAwsDiscovery(config, runner, undefined, undefined, env);
+    const first = createTestDiscovery(config, runner, undefined, undefined, env);
     assert.equal(await first.refresh(true), "ok");
     assert.ok(existsSync(join(real, "jig-bedrock", "catalog.json")), "the file is in the real folder");
     assert.equal(statSync(join(real, "jig-bedrock", "catalog.json")).mode & 0o777, 0o600);
     assert.equal(first.load()?.account_id, "123456789012");
     // A new process: nothing but the file, and a fresh cache means no AWS call.
     let calls = 0;
-    const second = createAwsDiscovery(
+    const second = createTestDiscovery(
         config,
         async (...args) => {
             calls++;
@@ -85,15 +86,15 @@ test("a ~/.cache that is a link works too, and a missing cache root is made firs
     mkdirSync(join(dir, "home"));
     symlinkSync(join(dir, "elsewhere"), join(dir, "home", ".cache"));
     const linked = { HOME: join(dir, "home") };
-    const source = createAwsDiscovery(config, runner, undefined, undefined, linked);
+    const source = createTestDiscovery(config, runner, undefined, undefined, linked);
     assert.equal(await source.refresh(true), "ok");
     assert.ok(existsSync(join(dir, "elsewhere", "jig-bedrock", "catalog.json")));
     assert.ok(source.load());
 
     const missing = { XDG_CACHE_HOME: join(dir, "not", "yet", "there") };
-    assert.equal(createAwsDiscovery(config, runner, undefined, undefined, missing).load(), undefined);
+    assert.equal(createTestDiscovery(config, runner, undefined, undefined, missing).load(), undefined);
     assert.equal(existsSync(missing.XDG_CACHE_HOME), false, "reading does not make the root");
-    const made = createAwsDiscovery(config, runner, undefined, undefined, missing);
+    const made = createTestDiscovery(config, runner, undefined, undefined, missing);
     assert.equal(await made.refresh(true), "ok");
     assert.equal(statSync(join(missing.XDG_CACHE_HOME, "jig-bedrock")).mode & 0o777, 0o700);
     assert.ok(made.load());
@@ -105,11 +106,11 @@ test("a link at jig-bedrock is refused: nothing is written through it and nothin
     const target = join(dir, "target");
     const env = { XDG_CACHE_HOME: root };
     // A good cache, made where it is allowed, then moved behind a link at `jig-bedrock`.
-    assert.equal(await createAwsDiscovery(config, runner, undefined, undefined, env).refresh(true), "ok");
+    assert.equal(await createTestDiscovery(config, runner, undefined, undefined, env).refresh(true), "ok");
     renameSync(join(root, "jig-bedrock"), target);
     symlinkSync(target, join(root, "jig-bedrock"));
     const before = readdirSync(target);
-    const source = createAwsDiscovery(config, runner, undefined, undefined, env);
+    const source = createTestDiscovery(config, runner, undefined, undefined, env);
     assert.equal(source.load(), undefined, "a good cache behind the link is not read");
     assert.notEqual(await source.refresh(true), "ok");
     assert.deepEqual(readdirSync(target), before, "nothing was written through the link");
@@ -120,13 +121,13 @@ test("a link at jig-bedrock is refused: nothing is written through it and nothin
 test("a link in the place of the cache file is refused when read", async (t) => {
     const dir = folder(t);
     const env = { XDG_CACHE_HOME: join(dir, "cache") };
-    assert.equal(await createAwsDiscovery(config, runner, undefined, undefined, env).refresh(true), "ok");
+    assert.equal(await createTestDiscovery(config, runner, undefined, undefined, env).refresh(true), "ok");
     const file = catalogFile(env);
     const copy = join(dir, "copy.json");
     writeFileSync(copy, readFileSync(file), { mode: 0o600 });
     rmSync(file);
     symlinkSync(copy, file);
-    assert.equal(createAwsDiscovery(config, runner, undefined, undefined, env).load(), undefined);
+    assert.equal(createTestDiscovery(config, runner, undefined, undefined, env).load(), undefined);
 });
 
 test("the SSO runtime folder follows a link at .local or state, and refuses one at jig-bedrock", (t) => {

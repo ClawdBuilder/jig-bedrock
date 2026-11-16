@@ -11,6 +11,7 @@ import { bedrockStream, discoveredProfiles, resolveSelection, usePiRegistry } fr
 import type { ResolvedConfig } from "../src/config.ts";
 import { JIG_BEDROCK } from "../src/identity.ts";
 import { createBedrockProvider } from "../src/provider.ts";
+import { createTestDiscovery } from "./support/discovery-api.ts";
 import { hostImport } from "./support/pi-host.ts";
 
 const ACCOUNT = "123456789012";
@@ -101,7 +102,7 @@ function runner(
 test("a global profile's foundation ARN with an empty region is accepted", async () => {
     const { dir, file } = directory();
     try {
-        const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner(), file);
+        const source = createTestDiscovery({ ...config, team: undefined, mode: "system" }, runner(), file);
         assert.equal(await source.refresh(true), "ok");
         const catalog = source.load();
         assert.equal(catalog?.profiles.length, 4);
@@ -117,7 +118,7 @@ test("a global profile's foundation ARN with an empty region is accepted", async
 test("a version-suffixed profile id survives the cache, the model id, saved selection and the wire id", async () => {
     const { dir, file } = directory();
     try {
-        const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner(), file);
+        const source = createTestDiscovery({ ...config, team: undefined, mode: "system" }, runner(), file);
         assert.equal(await source.refresh(true), "ok");
         const saved = JSON.parse(readFileSync(file, "utf8")) as { profiles: Array<{ arn: string }> };
         const versionedArn = arn("us.anthropic.claude-sonnet-4-5-20250929-v1:0");
@@ -177,7 +178,7 @@ test("a version-suffixed profile id survives the cache, the model id, saved sele
 test("one profile's unreadable answer is recorded and the others load; the failure names the step", async () => {
     const { dir, file } = directory();
     try {
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             { ...config, team: undefined, mode: "system" },
             runner({ malformed: ["us.anthropic.claude-haiku-5-5"] }),
             file,
@@ -188,7 +189,7 @@ test("one profile's unreadable answer is recorded and the others load; the failu
         assert.equal(catalog?.errors?.[0]?.message, "its model address has an unexpected form");
         assert.match(catalog?.errors?.[0]?.profile ?? "", /us\.anthropic/);
 
-        const all = createAwsDiscovery(
+        const all = createTestDiscovery(
             { ...config, team: undefined, mode: "system" },
             runner({
                 malformed: [
@@ -211,7 +212,7 @@ test("one profile's unreadable answer is recorded and the others load; the failu
 test("a failed listing names the step and the plain reason", async () => {
     const { dir, file } = directory();
     try {
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             { ...config, team: undefined, mode: "system" },
             runner({ list: "Could not connect" }),
             file,
@@ -274,7 +275,7 @@ test("tag profile reads run four at a time", async () => {
                 models: [{ modelArn: `arn:aws:bedrock:${REGION}::foundation-model/anthropic.claude-sonnet-5-5` }],
             });
         };
-        const source = createAwsDiscovery(
+        const source = createTestDiscovery(
             { ...config, team: "my-team", tagKey: "Team", tagValue: "my-team" },
             slow,
             file,
@@ -307,7 +308,7 @@ test("system discovery uses one identity and one listing call per region", async
             const region = args[args.indexOf("--region") + 1] ?? REGION;
             return JSON.stringify({ inferenceProfileSummaries: ids.map((id) => row(region, id)) });
         };
-        const one = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, listing, file);
+        const one = createTestDiscovery({ ...config, team: undefined, mode: "system" }, listing, file);
         assert.equal(await one.refresh(true), "ok");
         assert.equal(one.load()?.profiles.length, 33);
         assert.equal(calls.length, 2, calls.map((args) => args.slice(0, 2).join(" ")).join("; "));
@@ -315,7 +316,7 @@ test("system discovery uses one identity and one listing call per region", async
 
         const twoFile = join(dir, "catalog-two.json");
         const before = calls.length;
-        const two = createAwsDiscovery(
+        const two = createTestDiscovery(
             { ...config, team: undefined, mode: "system", regions: [REGION, "us-west-2"] },
             listing,
             twoFile,
@@ -335,7 +336,7 @@ test("an oversized listing fails the refresh with the 1 MiB reason", async () =>
             if (args.includes("get-caller-identity")) return JSON.stringify({ Account: ACCOUNT });
             return "x".repeat(1_048_577);
         };
-        const source = createAwsDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
+        const source = createTestDiscovery({ ...config, team: undefined, mode: "system" }, runner, file);
         assert.equal(await source.refresh(true), "unavailable");
         assert.match(source.failure?.() ?? "", /1 MiB limit/);
     } finally {

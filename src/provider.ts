@@ -11,7 +11,7 @@ import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { createAwsDiscovery, discoveryHelp, problemSummary, runFile } from "./aws-discovery.ts";
+import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -425,7 +425,7 @@ export function createBedrockProvider(
             );
         let catalog = withDebugCatalog(
             options.catalog ??
-                createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv, {
+                createAwsDiscovery(config, catalogPath, undefined, profileEnv, {
                     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
                     ...(options.discoveryCredentials === undefined
                         ? {}
@@ -822,7 +822,7 @@ export function createBedrockProvider(
             if (native) {
                 catalog = withDebugCatalog(
                     options.catalog ??
-                        createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv, {
+                        createAwsDiscovery(config, catalogPath, undefined, profileEnv, {
                             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
                             ...(options.discoveryCredentials === undefined
                                 ? {}

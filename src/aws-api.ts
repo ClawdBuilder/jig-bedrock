@@ -128,18 +128,14 @@ export async function listInferenceProfiles(
     region: string,
     input: ListInferenceProfilesInput,
     options: AwsApiOptions,
-): Promise<{ inferenceProfileSummaries: unknown[]; nextToken?: string }> {
+): Promise<any> {
     const query = new URLSearchParams({ typeEquals: "SYSTEM_DEFINED" });
     if (input.nextToken !== undefined) query.set("nextToken", input.nextToken);
     const response = await call("bedrock", region, "GET", `/inference-profiles?${query}`, "", {}, options);
     return (await response.json()) as never;
 }
 
-export async function getInferenceProfile(
-    region: string,
-    identifier: string,
-    options: AwsApiOptions,
-): Promise<Record<string, unknown>> {
+export async function getInferenceProfile(region: string, identifier: string, options: AwsApiOptions): Promise<any> {
     const response = await call(
         "bedrock",
         region,
