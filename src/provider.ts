@@ -519,7 +519,8 @@ export function createBedrockProvider(
                 if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
                     failureNotice = true;
                     const reason = catalog.failure?.();
-                    if (autoProfile) firstRunNotice(ctx);
+                    if (autoProfile && lastChoice.profile === undefined && config.profile === undefined)
+                        firstRunNotice(ctx);
                     else {
                         const name = lastChoice.profile ?? config.profile ?? "the configured AWS profile";
                         const message =
@@ -907,7 +908,7 @@ export function createBedrockProvider(
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
-                await shareRecovery(recovery)(profile, undefined);
+                await recoveryForLogin(profile, undefined, "manual");
                 await refresh(true, true);
             },
             unavailable: () => readModels().unavailable,
@@ -1113,7 +1114,7 @@ export function createBedrockProvider(
         registerSignInAtStart(pi, {
             signInAtStart: config.signInAtStart,
             profile: () => currentProfile(),
-            recover: shareRecovery(recovery),
+            recover: recoveryForLogin,
             check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
             refresh: () => refresh(false),
         });
