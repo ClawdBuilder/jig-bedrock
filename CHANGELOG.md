@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-17
+
+- Changed: model discovery calls AWS directly, about four times faster; the AWS CLI is still used to sign in and list your AWS profiles.
+- Changed: a failed read says what went wrong — AWS throttling, an AWS problem, or credentials that expired or are not valid — and what to do next.
+- Added: a read that fails in one region keeps the other regions and says how many models loaded from how many regions.
+- Added: a region that did not answer is tried again at the next start.
+- Fixed: models load even when the cache folder cannot be written, and a warning names the folder.
+- Changed: settings apply at once, route settings included; a value with spaces takes quotes and the true/false words are clear.
+- Fixed: an unknown preset is refused with the known names, and a mistyped region is caught with the nearest names.
+- Fixed: a save lands in the active preset.
+- Added: a save says when an environment variable overrides it.
+- Fixed: a preset without its own discovery keeps the top-level one.
+- Fixed: `/login` and `/bedrock login` give advice that fits the AWS profile: keys, and a role over keys, get the AWS CLI check, while SSO and a role over SSO are renewed.
+- Fixed: the `/logout` note appears only after `/logout`.
+- Fixed: Back in a menu returns one level up, and an empty list says so.
+- Changed: the Models menu lists models this Pi cannot use, says “price unknown” instead of `$0/$0`, and confirms a switch.
+- Fixed: a refused model no longer swallows the next prompt.
+- Fixed: a budget warning is announced once per preset and budget, so a raised budget or another preset warns again.
+- Fixed: `/bedrock usage week` reads the month before when its seven days cross the boundary.
+- Fixed: a reply that stopped with an error still counts the tokens Pi reports for it.
+- Fixed: `/bedrock status` counts no models as a problem and says “signed in” only after AWS answered.
+
 ## [0.6.1] - 2026-11-16
 
 - Fixed: A saved default model is now restored when the models arrive after start-up (0.6.0 said this was fixed; it was not).
