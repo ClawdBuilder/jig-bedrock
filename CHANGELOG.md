@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-16
+
+- Plain `/bedrock doctor` says no request was sent; `/bedrock doctor call` sends one and ends at `Bedrock is ready.`
+- Each discovery failure gets its own next step, and only access denied names the AWS permission.
+- Troubleshooting shows the exact doctor output for each case.
+- `/bedrock login` names the cause it has, and never prints a placeholder AWS profile as a command.
+- CI and publish install with scripts off behind the Release environment, and `AGENTS.md` guides contributors.
+
 ## [0.4.3] - 2026-11-16
 
 - Pi's package gallery lists jig-bedrock as an extension, with a cover image and a plain description.
