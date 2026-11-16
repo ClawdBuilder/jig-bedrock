@@ -543,6 +543,7 @@ export function createBedrockProvider(
         }
         let noticeFailureOnce = false;
         let settingsChanged = false;
+        let settingsBaseline: number | undefined;
         const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> => {
             noticeFailureOnce ||= notifyFailure;
             if (refreshInFlight !== undefined) return refreshInFlight;
@@ -590,7 +591,8 @@ export function createBedrockProvider(
                         guard.blockUntilChoice();
                     }
                 }
-                const beforeCount = models.length;
+                const beforeCount = settingsBaseline ?? models.length;
+                settingsBaseline = undefined;
                 const change = updateModels(models, updated);
                 if (change.changed && guard?.unresolved() && ctx !== undefined && !settingsChanged)
                     await guard.restoreSaved(ctx);
@@ -706,6 +708,7 @@ export function createBedrockProvider(
                 });
                 return;
             }
+            settingsBaseline = models.length;
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) {
                 await register();
@@ -963,6 +966,7 @@ export function createBedrockProvider(
                 const next = reloadSettings();
                 if (!applyResolved(next)) return;
                 settingsChanged = true;
+                settingsBaseline = models.length;
                 if (ctx) spend.updateFooter(ctx);
             },
             doctorAws: async (signal) => {
