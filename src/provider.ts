@@ -548,6 +548,17 @@ export function createBedrockProvider(
             const status = await refresh(force, false, true);
             if (status !== "ok") throw new Error(catalog.failure?.() ?? "Bedrock could not load models.");
         }
+        const reloadSettings = () =>
+            loadConfig({
+                raw: userSettings(options.env ?? process.env),
+                env: options.env ?? process.env,
+            });
+        const applyResolved = (next: ConfigResult): boolean => {
+            if (!next.config) return false;
+            Object.assign(config, next.config);
+            profiles.updateSetting(config.profile, config.profileSource);
+            return true;
+        };
         afterProfileLogin = async (profile, interaction, signal) => {
             config.profile = profile;
             profiles.stored = profile;
@@ -561,6 +572,14 @@ export function createBedrockProvider(
                         type: "info",
                         message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
                     });
+            }
+            const loaded = reloadSettings();
+            if (!applyResolved(loaded)) {
+                interaction.notify({
+                    type: "info",
+                    message: `Bedrock settings could not be loaded: ${loaded.error ?? "unknown error"}. Not refreshing the models.`,
+                });
+                return;
             }
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
@@ -828,13 +847,8 @@ export function createBedrockProvider(
             presetAdd: (name, commandContext) => addPreset(name, commandContext),
             presetRemove: (name, commandContext) => removePreset(name, commandContext),
             apply: () => {
-                const next = loadConfig({
-                    raw: userSettings(options.env ?? process.env),
-                    env: options.env ?? process.env,
-                });
-                if (!next.config) return;
-                Object.assign(config, next.config);
-                profiles.updateSetting(config.profile, config.profileSource);
+                const next = reloadSettings();
+                if (!applyResolved(next)) return;
                 if (ctx) {
                     spend.updateFooter(ctx);
                     void refresh(false).catch(() => {});

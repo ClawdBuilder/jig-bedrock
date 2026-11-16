@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-16
+
+- The discovery chosen at `/login` is used at once, not after a restart.
+- The README says which discovery choice fits which AWS account.
+
 ## [0.5.0] - 2026-11-16
 
 - `/bedrock help`, usage lines, completions and the typo guard come from one command table; unknown commands print one notice.
