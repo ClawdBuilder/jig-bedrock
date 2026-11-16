@@ -765,6 +765,8 @@ export function createBedrockProvider(
                     debug,
                     () => ({ mode: config.mode, regions: config.regions }),
                 );
+                const updated = readModels().available;
+                updateModels(models, updated);
                 await registerBedrockProvider(
                     pi,
                     config.agentDir || "",
@@ -776,10 +778,8 @@ export function createBedrockProvider(
                     signedFetch,
                     (options) => refreshForModelSelector(options.force),
                 );
-                const updated = readModels().available;
                 const selected = context.model;
                 const selectedId = selected?.provider === JIG_BEDROCK ? selected.id : undefined;
-                updateModels(models, updated);
                 let selectionNotified = false;
                 const checkSelection = (): void => {
                     if (

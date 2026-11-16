@@ -319,13 +319,15 @@ test("a tag pair can be set and unset in one command", async (t) => {
     assert.equal("activeTagValue" in saved, false);
 });
 
-function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string[] = []) {
+function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string[] = [], confirms: boolean[] = []) {
     let selectCalls = 0;
+    h.ctx.mode = "tui";
+    h.ctx.ui.confirm = async () => confirms.shift() ?? true;
     h.ctx.ui.select = async (_title: string, options: string[] = []) => {
         selectCalls++;
         const wanted = selects.shift();
         if (wanted === undefined) return undefined;
-        return options.find((option) => option === wanted || option.startsWith(`${wanted}:`)) ?? wanted;
+        return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
     };
     h.ctx.ui.input = async () => inputs.shift();
     return () => selectCalls;
@@ -416,4 +418,85 @@ test("an explicit refresh reports how many refused models came back", async (t) 
     const h = harness(t, {}, { clearRefusals: () => 3 });
     await h.result.bedrock("refresh", h.ctx as never);
     assert.match(h.notices.at(-1) ?? "", /3 refused models offered again/);
+});
+
+test("the presets menu switches to the chosen preset", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "dev"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "dev");
+});
+
+test("the presets menu saves a valid name and refuses an invalid one", async (t) => {
+    let saved = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetAdd: async (name: string) => {
+                saved = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Save current"], ["work"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(saved, "work");
+    const bad = harness(
+        t,
+        {},
+        {
+            presetAdd: async (name: string) => {
+                saved = name;
+            },
+        },
+    );
+    saved = "";
+    withUi(bad, ["Presets", "Save current"], ["bad name"]);
+    await bad.result.bedrock("", bad.ctx as never);
+    assert.equal(saved, "");
+    assert.match(bad.notices.join("\n"), /not a preset name/);
+});
+
+test("the presets menu removes a preset after confirmation", async (t) => {
+    let removed = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            presetRemove: async (name: string) => {
+                removed = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Remove", "dev"], [], [true]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(removed, "dev");
+});
+
+test("the presets menu Escape writes and switches nothing", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, []);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "");
 });

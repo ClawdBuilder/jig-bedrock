@@ -659,6 +659,10 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("use")}`]);
             return;
         }
+        if (name === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await presetsMenu(ctx);
+            return;
+        }
         if (name === "") {
             const list = sources.presetList?.() ?? [];
             if (list.length === 0) {
@@ -797,9 +801,11 @@ export function registerBedrockCommands(
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.presetList?.() ?? [];
         const choice = await ctx.ui.select("Bedrock presets", [
-            ...list.map(
-                (entry) => `${entry.active ? `${m.ok} ` : ""}${entry.name} — ${entry.profile ?? "no AWS profile"}`,
-            ),
+            ...list.map((entry) => {
+                const active = entry.active ? `${m.ok} ` : "";
+                const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
+                return `${active}${entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`;
+            }),
             "Save current settings as a preset…",
             "Remove a preset…",
             "Back",
@@ -807,16 +813,31 @@ export function registerBedrockCommands(
         if (choice === undefined || choice === "Back") return;
         if (choice.startsWith("Save current")) {
             const name = await ctx.ui.input("Preset name", "work");
-            if (name !== undefined && name !== "") await sources.presetAdd?.(name, ctx);
+            if (name === undefined) return;
+            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
+                emitPresetRows(ctx, [
+                    `${m.fail} ${clean(name, 40)} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
+                ]);
+                return;
+            }
+            if (!sources.presetAdd) return;
+            await sources.presetAdd(name, ctx);
             return;
         }
         if (choice.startsWith("Remove")) {
-            const name = await ctx.ui.input("Preset to remove", list[0]?.name ?? "work");
-            if (name !== undefined && name !== "") await sources.presetRemove?.(name, ctx);
+            if (list.length === 0) return;
+            const selected = await ctx.ui.select("Remove preset", [...list.map((entry) => entry.name), "Back"]);
+            if (selected === undefined || selected === "Back") return;
+            const confirmed = await ctx.ui.confirm("Remove preset", `Remove ${selected}?`);
+            if (!confirmed || !sources.presetRemove) return;
+            await sources.presetRemove(selected, ctx);
             return;
         }
-        const name = list.find((entry) => choice.startsWith(`${entry.active ? `${m.ok} ` : ""}${entry.name} —`))?.name;
-        if (name !== undefined) await sources.usePreset?.(name, ctx);
+        const entry = list.find((item) => choice.startsWith(`${item.active ? `${m.ok} ` : ""}${item.name} —`));
+        if (entry !== undefined) await sources.usePreset?.(entry.name, ctx);
+    };
+    const emitPresetRows = (ctx: ExtensionCommandContext, rows: string[]): void => {
+        emit(ctx, "Bedrock presets", rows);
     };
     const settingsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const doc = readSettingsDocument(env);
@@ -940,7 +961,7 @@ export function registerBedrockCommands(
         const tail = rest.join(" ");
         switch (command) {
             case "":
-                if (ctx.hasUI && !toStdout(ctx) && tail === "") {
+                if (ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx) && tail === "") {
                     await menu(ctx);
                     return;
                 }
