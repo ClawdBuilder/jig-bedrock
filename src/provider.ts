@@ -656,9 +656,18 @@ export function createBedrockProvider(
                         );
                     }
                     if (settingsChanged && (change.added > 0 || change.removed > 0)) {
+                        const left = Math.max(0, beforeCount - models.length);
+                        const why =
+                            status !== "ok"
+                                ? `${catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status)}`
+                                : warnings.length > 0
+                                  ? warnings.join(" ")
+                                  : problems.length > 0
+                                    ? (problemSummary(problems) ?? "")
+                                    : "";
                         ctx.ui.notify(
-                            `Bedrock: ${models.length} models in /model (${Math.max(0, beforeCount - models.length)} left).`,
-                            "info",
+                            `Bedrock: ${models.length} models in /model (${left} left).${why === "" ? "" : ` ${why}`}`,
+                            status === "ok" ? "info" : "warning",
                         );
                     } else if (change.added > 0) {
                         ctx.ui.notify(

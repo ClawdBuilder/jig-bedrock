@@ -505,6 +505,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return false;
         }
+        const beforeCount = sources.models().length;
         await sources.apply?.();
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const needsRefresh = pairs.some(([key]) =>
@@ -534,7 +535,7 @@ export function registerBedrockCommands(
                 : []),
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx);
+        if (needsRefresh) await refresh("", ctx, beforeCount);
         const preset = pairs.find(([key]) => key === "preset")?.[1];
         if (preset !== undefined) await sources.usePreset?.(preset, ctx);
         return true;
@@ -577,6 +578,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
+        const beforeCount = sources.models().length;
         await sources.apply?.();
         const needsRefresh = keys.some((key) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
@@ -587,9 +589,9 @@ export function registerBedrockCommands(
             `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx);
+        if (needsRefresh) await refresh("", ctx, beforeCount);
     };
-    const refresh = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const refresh = async (args: string, ctx: ExtensionCommandContext, settingsBefore?: number): Promise<void> => {
         if (args.trim() !== "") {
             emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("refresh")}`]);
             return;
@@ -606,6 +608,31 @@ export function registerBedrockCommands(
         const after = sources.models();
         const added = after.filter((model) => !before.has(model.id)).length;
         const removed = [...before].filter((id) => !after.some((model) => model.id === id)).length;
+        const catalog = sources.catalog?.load();
+        const warnings = catalog?.warnings ?? [];
+        const save = sources.catalog?.saveFailure?.();
+        const partial = partialDiscovery(catalog);
+        if (settingsBefore !== undefined && (status !== "ok" || after.length < settingsBefore)) {
+            const left = Math.max(0, settingsBefore - after.length);
+            const cause =
+                status !== "ok"
+                    ? (sources.failure?.() ?? "The models could not be read from AWS.")
+                    : [partial?.errors, ...warnings].filter(Boolean).join(" ") ||
+                      "The new settings matched fewer models.";
+            const next =
+                status !== "ok"
+                    ? `Next: ${discoveryHelp(sources.discoveryStatus?.() ?? status, sources.discoveryMode?.())}`
+                    : "Next: fix the tag or list in /bedrock settings, then /bedrock refresh.";
+            emit(ctx, "Bedrock refresh", [
+                `${status === "ok" ? m.warn : m.fail} Bedrock: ${after.length} model${after.length === 1 ? "" : "s"} in /model (${left} left). ${cause} ${next}`,
+                ...(cleared > 0 ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`] : []),
+                ...(selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore)
+                    ? ["Choose /model if your selection was removed."]
+                    : []),
+                ...(save === undefined ? [] : [`${m.warn} ${save.message}`]),
+            ]);
+            return;
+        }
         if (status !== "ok") {
             const advice = sources.discoveryStatus?.() ?? status;
             emit(ctx, "Bedrock refresh", [
@@ -614,9 +641,6 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        const catalog = sources.catalog?.load();
-        const warnings = catalog?.warnings ?? [];
-        const save = sources.catalog?.saveFailure?.();
         if (after.length === 0 && warnings.length > 0) {
             emit(ctx, "Bedrock refresh", [
                 `${m.warn} ${warnings.join(" ")}`,
@@ -625,7 +649,6 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        const partial = partialDiscovery(catalog);
         const rows =
             partial === undefined
                 ? [
