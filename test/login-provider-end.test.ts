@@ -184,7 +184,7 @@ test("a slow login says the models are loading, then announces the late result",
     const first = s.notices.filter((notice) => notice.includes("Bedrock models loaded")).join("\n");
     assert.doesNotMatch(first, /loaded: \d/);
     await new Promise((resolve) => setTimeout(resolve, 500));
-    assert.match(s.notices.join("\n"), /Bedrock: 1 (new model|model left \/model)/);
+    assert.match(s.notices.join("\n"), /Bedrock: \d+ models in \/model/);
 });
 
 test("Pi's refreshModels hook returns promptly while the login refresh runs", async (t) => {
@@ -249,7 +249,8 @@ test("a login that drops the session model gives one new-settings notice and the
     await new Promise((resolve) => setTimeout(resolve, 500));
     const text = s.notices.join("\n");
     assert.match(text, /not in the list for the new settings/);
-    assert.match(text, /Bedrock now has \d+ models/);
+    assert.match(text, /Bedrock: \d+ models in \/model \(\d+ left\)/);
     assert.doesNotMatch(text, /no longer in your account/);
+    assert.doesNotMatch(text, /new model/);
     assert.doesNotMatch(text, /Saved Bedrock model is unavailable/);
 });

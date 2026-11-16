@@ -454,6 +454,9 @@ export function createBedrockProvider(
         const refusalMessage = (model: BedrockModel, message: string): string | undefined => {
             if (!isRefusalError(message, model.arn)) return undefined;
             rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, model.arn, model.id);
+            const index = models.findIndex((entry) => entry.arn === model.arn);
+            if (index >= 0) models.splice(index, 1);
+            void register();
             return `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
         };
         const register = async (): Promise<void> => {
@@ -587,6 +590,7 @@ export function createBedrockProvider(
                         guard.blockUntilChoice();
                     }
                 }
+                const beforeCount = models.length;
                 const change = updateModels(models, updated);
                 if (change.changed && guard?.unresolved() && ctx !== undefined && !settingsChanged)
                     await guard.restoreSaved(ctx);
@@ -599,14 +603,19 @@ export function createBedrockProvider(
                     ctx &&
                     (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    if (change.added > 0) {
+                    if (settingsChanged && (change.added > 0 || change.removed > 0)) {
                         ctx.ui.notify(
-                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model. Bedrock now has ${models.length} models (${change.removed} left).`,
+                            `Bedrock: ${models.length} models in /model (${Math.max(0, beforeCount - models.length)} left).`,
+                            "info",
+                        );
+                    } else if (change.added > 0) {
+                        ctx.ui.notify(
+                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model.`,
                             "info",
                         );
                     } else if (change.removed > 0) {
                         ctx.ui.notify(
-                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model. Bedrock now has ${models.length} models.`,
+                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model.`,
                             "info",
                         );
                     }
