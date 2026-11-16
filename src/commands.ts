@@ -403,7 +403,6 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return false;
         }
-        Object.assign(config, candidate.config);
         sources.apply?.();
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const needsRefresh = pairs.some(([key]) =>
@@ -456,7 +455,6 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
-        Object.assign(config, candidate.config);
         sources.apply?.();
         const needsRefresh = keys.some((key) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(

@@ -620,10 +620,23 @@ export function createBedrockProvider(
                 raw: userSettings(options.env ?? process.env),
                 env: options.env ?? process.env,
             });
+        const replaceConfig = (next: ResolvedConfig): void => {
+            for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
+                if (!(key in next)) delete config[key];
+            Object.assign(config, next);
+            profiles.updateSetting(config.profile, config.profileSource);
+            lastChoice =
+                config.profile === undefined
+                    ? { ambient: true }
+                    : {
+                          profile: config.profile,
+                          source: config.profileSource === "env" ? "env" : "setting",
+                          exists: true,
+                      };
+        };
         const applyResolved = (next: ConfigResult): boolean => {
             if (!next.config) return false;
-            Object.assign(config, next.config);
-            profiles.updateSetting(config.profile, config.profileSource);
+            replaceConfig(next.config);
             return true;
         };
         afterProfileLogin = async (profile, interaction, signal) => {
@@ -718,12 +731,7 @@ export function createBedrockProvider(
             const saved = writeSettingsDocument(profileEnv, document);
             return saved.ok ? undefined : saved.error;
         };
-        const applyConfig = (next: ResolvedConfig): void => {
-            for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
-                if (!(key in next)) delete config[key];
-            Object.assign(config, next);
-            profiles.updateSetting(config.profile, config.profileSource);
-        };
+        const applyConfig = (next: ResolvedConfig): void => replaceConfig(next);
         const reloadForPreset = (name: string | undefined, _context?: ExtensionCommandContext): ConfigResult => {
             const raw = userSettings(profileEnv) ?? {};
             const env = { ...profileEnv };
