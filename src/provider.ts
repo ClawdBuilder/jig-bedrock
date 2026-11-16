@@ -53,7 +53,7 @@ import {
     missingProfileNotice,
     ProfileResolver,
 } from "./profile.ts";
-import { clearRefusals, isRefused, refusedModels, rememberRefusal } from "./refusals.ts";
+import { clearRefusals, isRefusalError, isRefused, refusedModels, rememberRefusal } from "./refusals.ts";
 import {
     readSettingsDocument,
     saveDiscoverySettings,
@@ -449,6 +449,12 @@ export function createBedrockProvider(
             else process.stdout.write(`${line}\n`);
         };
         let refusalAccount: string | undefined;
+        const refusalMessage = (model: BedrockModel, message: string): string | undefined => {
+            if (!isRefusalError(message, model.arn)) return undefined;
+            rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, model.arn, model.id);
+            return `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
+        };
+
         const readModels = () => {
             const result = discoveredProfiles(catalog.load(), "", config);
             const account = catalog.load()?.account_id;
@@ -521,6 +527,7 @@ export function createBedrockProvider(
                 messages,
                 signedFetch,
                 (options) => refreshForModelSelector(options.force),
+                refusalMessage,
             );
         } catch {
             failed = true;
@@ -805,6 +812,7 @@ export function createBedrockProvider(
                     messages,
                     signedFetch,
                     (options) => refreshForModelSelector(options.force),
+                    refusalMessage,
                 );
                 const selected = context.model;
                 const selectedId = selected?.provider === JIG_BEDROCK ? selected.id : undefined;
@@ -1047,10 +1055,7 @@ export function createBedrockProvider(
                     catalog.load,
                     currentProfile,
                     signedFetch,
-                    (_model, message) => {
-                        rememberRefusal(profileEnv, config.profile, catalog.load()?.account_id, _model.arn, _model.id);
-                        return `AWS refused ${_model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
-                    },
+                    refusalMessage,
                 );
                 let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {};
                 let failure: string | undefined;

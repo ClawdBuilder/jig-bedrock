@@ -6,7 +6,7 @@ import test from "node:test";
 import { clearRefusals, isRefusalError, isRefused, refusedModels, rememberRefusal } from "../src/refusals.ts";
 
 const arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app";
-const refusal = `403 AccessDeniedException: not authorized to perform bedrock:InvokeModelWithResponseStream on resource ${arn}`;
+const refusal = `403 AccessDeniedException: not authorized to perform: bedrock:InvokeModelWithResponseStream on resource ${arn}`;
 
 test("only the role refusal is remembered, and for seven days", () => {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-refused-"));
@@ -19,7 +19,7 @@ test("only the role refusal is remembered, and for seven days", () => {
             "403 token is expired or invalid",
             "500 InternalServerException",
             "400 ValidationException",
-            "403 AccessDeniedException: not authorized to perform bedrock:InvokeModelWithResponseStream on resource another",
+            "403 AccessDeniedException: not authorized to perform: bedrock:InvokeModelWithResponseStream on resource another",
         ])
             assert.equal(isRefusalError(other, arn), false, other);
         assert.equal(isRefused(env, "fixture", "123456789012", arn, now), false);

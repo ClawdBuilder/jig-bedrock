@@ -691,6 +691,7 @@ export async function registerBedrockProvider(
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
     refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
+    onRefusal?: (model: BedrockModel, message: string) => string | undefined,
 ): Promise<BedrockModel[]> {
     if (!native) {
         const { builtinProviders } = await import("@earendil-works/pi-ai/providers/all");
@@ -737,6 +738,7 @@ export async function registerBedrockProvider(
             load,
             identity.profile,
             signedFetch,
+            onRefusal,
         ) as typeof native.stream,
         streamSimple: bedrockStream(
             models,
@@ -747,6 +749,7 @@ export async function registerBedrockProvider(
             load,
             identity.profile,
             signedFetch,
+            onRefusal,
         ),
     });
     return models;

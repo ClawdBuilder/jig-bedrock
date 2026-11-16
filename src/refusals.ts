@@ -68,9 +68,9 @@ export function refusedModels(
 export function isRefusalError(message: string, arn: string): boolean {
     return (
         /(?:\b403\b|AccessDenied)/i.test(message) &&
-        /not authorized to perform bedrock:InvokeModel(?:WithResponseStream)?/i.test(message) &&
+        /not authorized to perform:?\s*bedrock:InvokeModel(?:WithResponseStream)?/i.test(message) &&
         message.includes(arn) &&
-        !/\b(?:400|429|5\d\d)\b|Throttl|Validation|expired|invalid.*token|network|timeout/i.test(message)
+        !/(?:^|\s)(?:400|429|5\d\d)(?:\s|$)|Throttl|Validation|expired|invalid.*token|network|timeout/i.test(message)
     );
 }
 

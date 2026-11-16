@@ -132,7 +132,7 @@ test("a thrown AWS error keeps its name, message, HTTP status and request id on 
         for (const failure of [
             {
                 name: "AccessDeniedException",
-                message: "not authorized to perform bedrock:InvokeModel",
+                message: "not authorized to perform: bedrock:InvokeModel",
                 status: 403,
                 id: "req-denied",
             },
