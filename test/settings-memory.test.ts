@@ -29,9 +29,9 @@ function catalogFor(region: string): Catalog {
     };
 }
 
-async function start(initial: Record<string, unknown>) {
+async function start(initial: Record<string, unknown>, envExtra: Record<string, string> = {}) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-settings-memory-"));
-    const env = { HOME: dir, PI_CODING_AGENT_DIR: dir };
+    const env = { HOME: dir, PI_CODING_AGENT_DIR: dir, ...envExtra };
     const raw = { profile: "keys", regions: ["us-east-1"], ...initial };
     writeFileSync(join(dir, "bedrock.json"), JSON.stringify(raw));
     const resolved = loadConfig({ raw, env, agentDir: dir });
@@ -231,6 +231,34 @@ test("preset add announces the active preset and reloads models", async (t) => {
     try {
         await s.commands.get("bedrock").handler("preset add extra", s.ctx);
         assert.match(s.notices.join("\n"), /Preset extra saved and active; models reloaded/);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a preset chosen for the session survives an env preset on the next save", async (t) => {
+    const s = await start(
+        { preset: "work", presets: { work: { regions: ["us-east-1"] }, personal: { regions: ["us-east-1"] } } },
+        { JIG_BEDROCK_PRESET: "work" },
+    );
+    try {
+        await s.commands.get("bedrock").handler("use personal", s.ctx);
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.presets.personal.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.presets.work.regions, ["us-east-1"]);
+    } finally {
+        rmSync(s.dir, { recursive: true, force: true });
+    }
+});
+
+test("a set overridden by an environment variable says so", async (t) => {
+    const s = await start({}, { JIG_BEDROCK_REGIONS: "us-east-1" });
+    try {
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        assert.match(s.notices.join("\n"), /JIG_BEDROCK_REGIONS=us-east-1 is in use for this session/);
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["eu-west-1"]);
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }
