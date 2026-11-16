@@ -1033,6 +1033,12 @@ export function createBedrockProvider(
             if (context.hasUI) context.ui.notify(text, "info");
             else process.stdout.write(`${text}\n`);
         };
+        // /bedrock login renews an SSO session and nothing else, so its next step is offered only to a profile that has
+        // one. A keys or role profile is checked with the AWS CLI instead; /bedrock login would just refuse it.
+        const signInNext = (name: string): string =>
+            (isSsoProfile(name, profileEnv) ?? false)
+                ? "Next: /bedrock login"
+                : `Next: check the keys or role for ${name} with "aws sts get-caller-identity --profile ${name}", or refresh the keys, then /bedrock doctor.`;
         const commands = registerBedrockCommands(pi, {
             config,
             spend,
@@ -1130,7 +1136,7 @@ export function createBedrockProvider(
                         rows.push({
                             ok: check.ok,
                             check: "sign-in",
-                            ...(check.ok ? {} : { next: "Next: /bedrock login" }),
+                            ...(check.ok ? {} : { next: signInNext(choice) }),
                             text: check.ok
                                 ? "Sign-in: AWS answered"
                                 : expired
@@ -1142,7 +1148,7 @@ export function createBedrockProvider(
                             ok: false,
                             text: "Sign-in: did not answer",
                             check: "sign-in",
-                            next: "Next: /bedrock login",
+                            next: signInNext(choice),
                         });
                     }
                 }
