@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 
 const root = join(import.meta.dirname, "..");
 const read = (file: string): string => readFileSync(join(root, file), "utf8");
@@ -135,4 +136,25 @@ exit 0
         },
     );
     assert.notEqual(old.status, 0, "the old quoting should fail against the fake gh");
+});
+
+test("every job that runs actionlint checks out the repository first", () => {
+    const ci = parse(read(".github/workflows/ci.yml")) as {
+        jobs: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown>; run?: string }> }>;
+    };
+    let checked = 0;
+    for (const [name, job] of Object.entries(ci.jobs)) {
+        const steps = job.steps ?? [];
+        const actionlint = steps.findIndex((step) => typeof step.run === "string" && /actionlint/.test(step.run));
+        if (actionlint === -1) continue;
+        checked++;
+        const checkout = steps.findIndex(
+            (step, index) =>
+                index < actionlint &&
+                step.uses === "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" &&
+                step.with?.["persist-credentials"] === false,
+        );
+        assert.notEqual(checkout, -1, `${name} runs actionlint without a pinned checkout before it`);
+    }
+    assert.ok(checked > 0, "no actionlint job found");
 });
