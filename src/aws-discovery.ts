@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "./aws-api.ts";
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { loadCredentialProvider } from "./credential-provider.ts";
+import type { AwsCredentials } from "./sigv4.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI, checked field by field where it is used
 type Json = any;
@@ -183,6 +186,18 @@ export function createAwsDiscovery(
     file?: string | (() => string),
     now = Date.now,
     env: NodeJS.ProcessEnv = process.env,
+    options: {
+        api?: {
+            getCallerIdentity: typeof getCallerIdentity;
+            getResources: typeof getResources;
+            listInferenceProfiles: typeof listInferenceProfiles;
+            getInferenceProfile: typeof getInferenceProfile;
+        };
+        credentials?: () => Promise<AwsCredentials>;
+        fetch?: typeof globalThis.fetch;
+        /** Tests can force the HTTPS path while passing a sentinel runner. */
+        useApi?: boolean;
+    } = {},
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
@@ -214,9 +229,58 @@ export function createAwsDiscovery(
         let remaining = 8 * 1_048_576,
             pages = 0,
             deadline = now() + 90_000;
+        const api = options.api ?? { getCallerIdentity, getResources, listInferenceProfiles, getInferenceProfile };
+        const useApi = options.useApi ?? runner === runFile;
+        let credentialsPromise: Promise<AwsCredentials> | undefined;
+        const credentials = () => {
+            credentialsPromise ??= (async () => {
+                if (options.credentials !== undefined) return options.credentials();
+                const provider = await loadCredentialProvider();
+                const value = (await provider(
+                    config.profile === undefined ? {} : { profile: config.profile },
+                )()) as AwsCredentials;
+                if (typeof value?.accessKeyId !== "string" || typeof value.secretAccessKey !== "string")
+                    throw new Error("Could not load credentials from any providers");
+                return value;
+            })();
+            return credentialsPromise;
+        };
+        const apiCall = async (args: string[]) => {
+            const regionIndex = args.indexOf("--region");
+            const region = regionIndex >= 0 ? args[regionIndex + 1] : config.regions[0];
+            if (region === undefined) throw new Error("region");
+            const common = {
+                credentials: await credentials(),
+                timeoutMs: Math.min(20_000, deadline - now()),
+                ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            };
+            if (args[0] === "sts" && args[1] === "get-caller-identity") return api.getCallerIdentity(region, common);
+            if (args[0] === "bedrock" && args[1] === "get-inference-profile") {
+                const index = args.indexOf("--inference-profile-identifier");
+                return api.getInferenceProfile(region, args[index + 1] ?? "", common);
+            }
+            if (args[0] === "bedrock" && args[1] === "list-inference-profiles") {
+                const index = args.indexOf("--next-token");
+                return api.listInferenceProfiles(region, index >= 0 ? { nextToken: args[index + 1] } : {}, common);
+            }
+            if (args[0] === "resourcegroupstaggingapi" && args[1] === "get-resources") {
+                const filterIndex = args.indexOf("--tag-filters");
+                const tokenIndex = args.indexOf("--pagination-token");
+                return api.getResources(
+                    region,
+                    {
+                        tagFilters: filterIndex >= 0 ? (JSON.parse(args[filterIndex + 1] ?? "[]") as never) : [],
+                        ...(tokenIndex >= 0 ? { paginationToken: args[tokenIndex + 1] } : {}),
+                    },
+                    common,
+                );
+            }
+            throw new Error("unsupported AWS operation");
+        };
         const aws = async (args: string[]) => {
             const timeout = Math.min(20_000, deadline - now());
             if (timeout <= 0) throw new Error("timeout");
+            if (useApi) return apiCall(args);
             const output = await runner(
                 "aws",
                 [

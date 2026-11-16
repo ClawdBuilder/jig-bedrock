@@ -124,6 +124,8 @@ export interface BedrockOptions {
     credentials?: () => Promise<AwsCredentials>;
     /** The fetch signed requests go through, so a test can watch them. */
     fetch?: typeof globalThis.fetch;
+    /** A test can replace the SDK credential chain for discovery. */
+    discoveryCredentials?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
     env?: NodeJS.ProcessEnv;
 }
 
@@ -422,7 +424,13 @@ export function createBedrockProvider(
                 true,
             );
         let catalog = withDebugCatalog(
-            options.catalog ?? createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv),
+            options.catalog ??
+                createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv, {
+                    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+                    ...(options.discoveryCredentials === undefined
+                        ? {}
+                        : { credentials: options.discoveryCredentials }),
+                }),
             debug,
             () => ({ mode: config.mode, regions: config.regions }),
         );
@@ -813,7 +821,13 @@ export function createBedrockProvider(
             lastChoice = { profile: config.profile, source: "preset", exists: true };
             if (native) {
                 catalog = withDebugCatalog(
-                    options.catalog ?? createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv),
+                    options.catalog ??
+                        createAwsDiscovery(config, undefined, catalogPath, undefined, profileEnv, {
+                            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+                            ...(options.discoveryCredentials === undefined
+                                ? {}
+                                : { credentials: options.discoveryCredentials }),
+                        }),
                     debug,
                     () => ({ mode: config.mode, regions: config.regions }),
                 );
