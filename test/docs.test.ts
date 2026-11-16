@@ -2,7 +2,7 @@
 // exists, every link and image points at a published file, the diagrams are well formed, and the word rule holds
 // ("profile" is never used alone: "AWS profile" is the sign-in, "inference profile" is what AWS calls a model entry).
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import test from "node:test";
 import { BEDROCK_SUBCOMMANDS } from "../src/commands.ts";
@@ -206,4 +206,27 @@ test("every /bedrock sub-command the pages name exists, and help names every sub
         "";
     for (const name of names)
         assert.match(help, new RegExp(`^    ${name}:`, "m"), `the /bedrock help text does not name ${name}`);
+});
+
+test("the gallery card names an extension with a published cover and a plain description", () => {
+    const pkg = JSON.parse(read("package.json")) as {
+        description?: string;
+        keywords?: string[];
+        files?: string[];
+        pi?: { image?: string };
+    };
+    assert.ok(pkg.keywords?.includes("pi-package"), "keywords must keep pi-package");
+    assert.ok(pkg.keywords?.includes("pi-extension"), "keywords must include pi-extension");
+    assert.match(
+        pkg.description ?? "",
+        /Claude and other Bedrock models in Pi, signed in with your AWS profile/,
+        "the gallery description must be plain",
+    );
+    const image = pkg.pi?.image ?? "";
+    const match = /^https:\/\/raw\.githubusercontent\.com\/ClawdBuilder\/jig-bedrock\/main\/(.+)$/.exec(image);
+    assert.ok(match, "pi.image must be a raw.githubusercontent.com ClawdBuilder/jig-bedrock/main/ URL");
+    const path = match?.[1] ?? "";
+    assert.ok(existsSync(resolve(ROOT, path)), `${path} must exist in the repo`);
+    assert.ok(pkg.files?.includes("docs/**"), "docs/** must be published");
+    assert.ok(path.startsWith("docs/"), `${path} must be under the published docs/ folder`);
 });

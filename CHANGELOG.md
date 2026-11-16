@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-16
+
+- Pi's package gallery lists jig-bedrock as an extension, with a cover image and a plain description.
+
 ## [0.4.2] - 2026-11-13
 
 - The diagrams are redrawn to read at a glance, in light and dark.
