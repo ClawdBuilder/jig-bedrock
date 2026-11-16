@@ -26,6 +26,8 @@ export interface LoginFlowOptions {
     writeConfig?: (sections: ConfigSection[]) => ConfigWriteResult;
     /** The tags of the application profiles matching the chosen tag, for choosing a second filter. */
     tagMatches?: (
+        profile: string | undefined,
+        regions: string[],
         tagKey: string,
         tagValue: string,
         signal: AbortSignal,
@@ -147,7 +149,11 @@ async function confirmConfig(
     return true;
 }
 
-async function askDiscovery(interaction: ProviderAuthInteraction, options: LoginFlowOptions): Promise<void> {
+async function askDiscovery(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+    profile?: string,
+): Promise<void> {
     const mode = await interaction.prompt({
         type: "select",
         message: "Which inference profiles should Bedrock list?",
@@ -195,7 +201,21 @@ async function askDiscovery(interaction: ProviderAuthInteraction, options: Login
         settings.tagValue !== undefined &&
         options.tagMatches
     ) {
-        const matches = await options.tagMatches(settings.tagKey, settings.tagValue, interaction.signal);
+        let matches: Array<Array<{ Key: string; Value: string }>> = [];
+        try {
+            matches = await options.tagMatches(
+                profile,
+                settings.regions,
+                settings.tagKey,
+                settings.tagValue,
+                interaction.signal,
+            );
+        } catch (error) {
+            say(
+                interaction,
+                `Could not read the tags (${error instanceof Error ? error.message : String(error)}); listing every profile with ${settings.tagKey}=${settings.tagValue}.`,
+            );
+        }
         const counts = new Map<string, Map<string, number>>();
         for (const tags of matches)
             for (const key of new Set(tags.map((tag) => tag.Key))) {
@@ -322,7 +342,7 @@ export async function runLoginFlow(
                 interaction.notify({ type: "info", message: check.message });
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, name);
             return profileCredential(name);
         }
         if (method === "sso-new") {
@@ -427,7 +447,7 @@ export async function runLoginFlow(
                 say(interaction, check.message);
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, profile);
             return profileCredential(profile);
         }
         if (method === "role-new") {
@@ -525,7 +545,7 @@ export async function runLoginFlow(
                 say(interaction, check.message);
                 continue;
             }
-            await askDiscovery(interaction, options);
+            await askDiscovery(interaction, options, profile);
             return profileCredential(profile);
         }
         const name = await askProfile(interaction, listed);
@@ -549,7 +569,7 @@ export async function runLoginFlow(
             interaction.notify({ type: "info", message: check.message });
             continue;
         }
-        await askDiscovery(interaction, options);
+        await askDiscovery(interaction, options, name);
         return profileCredential(name);
     }
     throw new Error("Too many sign-in attempts. Run /login again.");

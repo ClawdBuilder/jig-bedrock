@@ -3,6 +3,7 @@
 //
 // The factory registers and reads settings, and no more: AWS and the browser are touched in `session_start`, in the
 // background, or by a command the user types.
+import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -328,27 +329,35 @@ export function createBedrockProvider(
                 regions: config.regions,
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
-                tagMatches: async (key, value, signal) => {
+                tagMatches: async (profile, regions, key, value, signal) => {
                     const all: Array<Array<{ Key: string; Value: string }>> = [];
-                    for (const region of config.regions) {
-                        const text = await runFile(
-                            "aws",
-                            [
-                                "resourcegroupstaggingapi",
-                                "get-resources",
-                                "--region",
-                                region,
-                                "--resource-type-filters",
-                                "bedrock:application-inference-profile",
-                                "--tag-filters",
-                                JSON.stringify([{ Key: key, Values: [value] }]),
-                                "--no-paginate",
-                                "--output",
-                                "json",
-                                ...(config.profile === undefined ? [] : ["--profile", config.profile]),
-                            ],
-                            { timeout: 20_000, maxBuffer: 4_194_304 },
-                        );
+                    const run = (args: string[]) =>
+                        new Promise<string>((resolve, reject) => {
+                            execFile(
+                                "aws",
+                                args,
+                                { encoding: "utf8", env: profileEnv, timeout: 20_000, maxBuffer: 4_194_304, signal },
+                                (error, stdout, stderr) =>
+                                    error
+                                        ? reject(new Error(error.killed ? "timeout" : stderr || error.message))
+                                        : resolve(stdout),
+                            );
+                        });
+                    for (const region of regions) {
+                        const text = await run([
+                            "resourcegroupstaggingapi",
+                            "get-resources",
+                            "--region",
+                            region,
+                            "--resource-type-filters",
+                            "bedrock:application-inference-profile",
+                            "--tag-filters",
+                            JSON.stringify([{ Key: key, Values: [value] }]),
+                            "--no-paginate",
+                            "--output",
+                            "json",
+                            ...(profile === undefined ? [] : ["--profile", profile]),
+                        ]);
                         const parsed = JSON.parse(text) as { ResourceTagMappingList?: Array<{ Tags?: unknown }> };
                         for (const row of parsed.ResourceTagMappingList ?? [])
                             if (Array.isArray(row.Tags))

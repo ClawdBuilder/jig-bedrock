@@ -535,3 +535,63 @@ test("the new-profile questions never ask for a secret", async () => {
         assert.doesNotMatch(prompt.message ?? "", /enter (your |the )?(secret|access key)|secret access key:/i);
     }
 });
+
+function tagAnswer(prompt: Prompt): string {
+    if (prompt.message === "How do you sign in to AWS?") return "existing";
+    if (prompt.message === "Which inference profiles should Bedrock list?") return "tag";
+    if (prompt.message === "Tag key") return "Team";
+    if (prompt.message === "Tag value") return "payments";
+    if (prompt.message === "AWS regions for discovery (comma separated)") return "eu-west-1";
+    if (prompt.message === "Which AWS profile should Bedrock use?") return "profile:keys";
+    if (prompt.type === "select" && prompt.message?.includes("second tag")) return "no";
+    return "";
+}
+
+test("the tag lookup receives the profile and regions chosen in this login", async () => {
+    const fake = interaction(tagAnswer);
+    const seen: Array<{ profile?: string; regions?: string[] }> = [];
+    let saved: DiscoverySettings | undefined;
+    const value = await runLoginFlow(
+        fake.value as never,
+        options({
+            verify: async (profile) => {
+                assert.equal(profile, "keys");
+                return { ok: true };
+            },
+            tagMatches: async (profile, regions) => {
+                seen.push({ profile, regions });
+                return [];
+            },
+            saveDiscovery: (settings) => {
+                saved = settings;
+                return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+            },
+        }),
+    );
+    assert.equal(value.type, "api_key");
+    assert.deepEqual(seen, [{ profile: "keys", regions: ["eu-west-1"] }]);
+    assert.deepEqual(saved?.regions, ["eu-west-1"]);
+});
+
+test("a failed tag lookup skips the second tag but still saves the login", async () => {
+    const fake = interaction(tagAnswer);
+    let saved = false;
+    const value = await runLoginFlow(
+        fake.value as never,
+        options({
+            tagMatches: async () => {
+                throw new Error("Unable to locate credentials");
+            },
+            saveDiscovery: () => {
+                saved = true;
+                return { file: "/tmp/bedrock.json", written: true, shadowed: [] };
+            },
+        }),
+    );
+    assert.equal(value.type, "api_key");
+    assert.equal(saved, true);
+    assert.match(
+        fake.notices.map((notice) => notice.message).join("\n"),
+        /Could not read the tags .*Unable to locate credentials/,
+    );
+});
