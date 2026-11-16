@@ -127,6 +127,8 @@ export interface BedrockCommandSources {
     >;
     discoveryStatus?: () => Status | undefined;
     discoveryMode?: () => string | undefined;
+    /** Whether a real AWS answer this session confirmed the sign-in; the profile's presence alone does not. */
+    signedIn?: () => boolean;
     hasStoredAuth?: () => boolean;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
     clearRefusals?: () => number;
@@ -246,6 +248,12 @@ export function registerBedrockCommands(
         ]);
         spend.updateFooter(ctx);
     };
+    // Models Pi has no usable metadata for are not in the list; say how many and where their reasons are.
+    const rejectedLine = (): string | undefined => {
+        const count = sources.unavailable?.().length ?? 0;
+        if (count === 0) return undefined;
+        return `${m.warn} ${count} more ${count === 1 ? "is" : "are"} not usable by this Pi: /bedrock models lists them.`;
+    };
     const status = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.models();
         const last = sources.lastChoice?.() ?? { profile: config.profile };
@@ -268,13 +276,21 @@ export function registerBedrockCommands(
             );
             problems++;
         } else {
-            rows.push(
-                `${m.ok} AWS profile: ${clean(last.profile)} · ${last.exists === true ? "signed in" : "sign-in not known yet"}`,
-            );
+            const label =
+                sources.signedIn?.() === true
+                    ? "signed in"
+                    : last.exists === true
+                      ? "in the AWS config"
+                      : "sign-in not known yet";
+            rows.push(`${m.ok} AWS profile: ${clean(last.profile)} · ${label}`);
         }
         if (sources.loading?.()) rows.push(`${m.skip} Models: loading from AWS…`);
-        else if (list.length === 0) rows.push(`${m.skip} Models: not loaded`);
-        else rows.push(`${m.ok} Models: ${list.length} loaded`);
+        else if (list.length === 0) {
+            rows.push(`${m.fail} Models: not loaded`);
+            problems++;
+        } else rows.push(`${m.ok} Models: ${list.length} loaded`);
+        const rejected = rejectedLine();
+        if (rejected !== undefined) rows.push(rejected);
         if (sources.hasStoredAuth?.() === false && last.profile !== undefined)
             rows.push(`${m.skip} /logout does not remove bedrock.json; run /bedrock unset profile.`);
         const selected = ctx.model;
@@ -638,6 +654,7 @@ export function registerBedrockCommands(
         const warnings = catalog?.warnings ?? [];
         const save = sources.catalog?.saveFailure?.();
         const partial = partialDiscovery(catalog);
+        const rejected = rejectedLine();
         if (settingsBefore !== undefined && (status !== "ok" || after.length < settingsBefore)) {
             const left = Math.max(0, settingsBefore - after.length);
             const cause =
@@ -655,6 +672,7 @@ export function registerBedrockCommands(
                 ...(selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore)
                     ? ["Choose /model if your selection was removed."]
                     : []),
+                ...(rejected === undefined ? [] : [rejected]),
                 ...(save === undefined ? [] : [`${m.warn} ${save.message}`]),
             ]);
             return;
@@ -671,6 +689,7 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock refresh", [
                 `${m.warn} ${warnings.join(" ")}`,
                 "Next: fix the tag or list in /bedrock settings, then /bedrock refresh.",
+                ...(rejected === undefined ? [] : [rejected]),
                 ...(save === undefined ? [] : [`${m.warn} ${save.message}`]),
             ]);
             return;
@@ -697,6 +716,7 @@ export function registerBedrockCommands(
             for (const warning of partial.warnings) rows.push(`${m.warn} ${warning}`);
             rows.push("Next: check the failed profile or region in /bedrock settings, then /bedrock refresh.");
         }
+        if (rejected !== undefined) rows.push(rejected);
         if (save !== undefined) rows.push(`${m.warn} ${save.message}`);
         emit(ctx, "Bedrock refresh", rows);
     };

@@ -101,6 +101,41 @@ test("every sub-command prints a titled block and usage has no stale Next", asyn
     );
 });
 
+test("status counts no models as a problem and tells the config fact from a signed-in answer", async (t) => {
+    const empty = harness(t, {}, { models: () => [] });
+    await empty.result.bedrock("status", empty.ctx as never);
+    const none = empty.notices.at(-1) ?? "";
+    assert.match(none, /^Bedrock · 1 problem$/m, none);
+    assert.match(none, /✗ Models: not loaded/, none);
+    assert.match(none, /Next: \/bedrock refresh/, none);
+    const config = harness(t, {});
+    await config.result.bedrock("status", config.ctx as never);
+    const row = config.notices.at(-1) ?? "";
+    assert.match(row, /AWS profile: fixture · in the AWS config/, row);
+    assert.doesNotMatch(row, /signed in/, row);
+    const signed = harness(t, {}, { signedIn: () => true });
+    await signed.result.bedrock("status", signed.ctx as never);
+    assert.match(signed.notices.at(-1) ?? "", /AWS profile: fixture · signed in/);
+});
+
+test("refresh and status name the models this Pi cannot use", async (t) => {
+    const rejected = [1, 2, 3].map((number) => ({
+        profile: `orders-${number}`,
+        region: "us-east-1",
+        reason: "Pi registry has no exact metadata for anthropic.claude-opus-6; update Pi to use this profile.",
+    }));
+    const h = harness(t, {}, { unavailable: () => rejected });
+    await h.result.bedrock("refresh", h.ctx as never);
+    assert.match(
+        h.notices.at(-1) ?? "",
+        /3 more are not usable by this Pi: \/bedrock models lists them\./,
+        h.notices.at(-1),
+    );
+    h.notices.length = 0;
+    await h.result.bedrock("status", h.ctx as never);
+    assert.match(h.notices.at(-1) ?? "", /3 more are not usable by this Pi/, h.notices.at(-1));
+});
+
 test("set and unset write the settings file and apply", async (t) => {
     const h = harness(t, {});
     await h.result.bedrock("set api converse", h.ctx as never);
@@ -189,7 +224,7 @@ test("the status screen is one whole block with no spend-command row", async (t)
         h.notices.at(-1),
         [
             "Bedrock · ready",
-            "✓ AWS profile: fixture · signed in",
+            "✓ AWS profile: fixture · in the AWS config",
             "✓ Models: 1 loaded",
             "– Selected model: none chosen",
             "✓ Spend: Nov $0.00 of $100",

@@ -349,3 +349,40 @@ for (const c of [
         assert.match(s.notices.join("\n"), c.text, s.notices.join("\n"));
     });
 }
+
+test("Pi's model-selector refresh line carries the cause and the advice", async (t) => {
+    const fake = fakeAwsHttp({
+        profiles: [profile()],
+        fail: (operation) =>
+            operation === "tagging"
+                ? { status: 429, body: jsonError("ThrottlingException", "Rate exceeded") }
+                : undefined,
+    });
+    const s = await start(t, fake);
+    await s.handle.refresh(true);
+    const provider = s.providers.at(-1) as
+        | {
+              refreshModels?: (context: {
+                  allowNetwork: boolean;
+                  force?: boolean;
+                  signal: AbortSignal;
+                  publish: (value: { update: () => void }) => Promise<boolean>;
+              }) => Promise<void>;
+          }
+        | undefined;
+    assert.ok(provider?.refreshModels, "the provider exposes Pi's refresh hook");
+    await assert.rejects(
+        provider.refreshModels({
+            allowNetwork: true,
+            force: true,
+            signal: new AbortController().signal,
+            publish: async () => true,
+        }),
+        (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            assert.match(message, /Could not list tagged inference profiles/, message);
+            assert.match(message, /AWS is limiting requests; wait a minute/, message);
+            return true;
+        },
+    );
+});

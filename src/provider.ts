@@ -300,6 +300,9 @@ export function createBedrockProvider(
         });
         const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
         let lastChoice: ProfileChoice = {};
+        // True only when AWS itself answered this session: the doctor's identity check, a successful tiny
+        // request, or a reply. The profile's presence in the AWS config says nothing about the sign-in.
+        let signInConfirmed = false;
         let autoProfile = false;
         let autoProfileFailed = false;
         let afterProfileLogin:
@@ -710,7 +713,10 @@ export function createBedrockProvider(
         async function refreshForModelSelector(force: boolean): Promise<void> {
             if (refreshInFlight !== undefined) return;
             const status = await refresh(force, false, true);
-            if (status !== "ok") throw new Error(catalog.failure?.() ?? "Bedrock could not load models.");
+            if (status !== "ok")
+                throw new Error(
+                    `${catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status, config?.mode)}`,
+                );
         }
         const reloadSettings = () =>
             loadConfig({
@@ -1065,6 +1071,7 @@ export function createBedrockProvider(
             failure: () => catalog.failure?.(),
             discoveryStatus: () => catalog.status?.(),
             discoveryMode: () => config.mode,
+            signedIn: () => signInConfirmed,
             hasStoredAuth: () =>
                 readStoredCredential(
                     JIG_BEDROCK,
@@ -1141,6 +1148,7 @@ export function createBedrockProvider(
                             options.verifyProfile ??
                             ((profile, sig) => verifyAwsProfile(profile, { env: profileEnv, signal: sig }))
                         )(choice, signal);
+                        if (check.ok) signInConfirmed = true;
                         const expired =
                             !check.ok &&
                             (isSsoProfile(choice, profileEnv) ?? false) &&
@@ -1234,6 +1242,7 @@ export function createBedrockProvider(
                     if (event.type === "error") failure = event.error?.errorMessage ?? "the tiny call failed";
                 }
                 if (failure !== undefined) throw new Error(failure);
+                signInConfirmed = true;
                 return {
                     route: routeOf(selected),
                     ms: Math.round(performance.now() - started),
@@ -1314,6 +1323,7 @@ export function createBedrockProvider(
         pi.on("message_end", (event, context) => {
             const message = event.message as unknown as Json | undefined;
             if (message?.role !== "assistant" || message.provider !== "jig-bedrock") return;
+            if (message.stopReason !== "error" && message.stopReason !== "aborted") signInConfirmed = true;
             const selected = models.find((model) => model.id === message.model);
             const session = context.sessionManager.getSessionId();
             const result = spend.record(message as Json, session, selected);
