@@ -97,3 +97,53 @@ test("a browser failure prints its recovery hint, not a category", async () => {
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("the start-up sign-in uses the checked recovery for keys and role profiles", async () => {
+    const { dir, env } = folder();
+    try {
+        const hooks = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+        const pi = {
+            on(name: string, hook: (event: any, ctx: any) => unknown) {
+                hooks.set(name, [...(hooks.get(name) ?? []), hook]);
+            },
+        };
+        const signed: string[] = [];
+        const checked = checkedRecovery(
+            async (profile) => {
+                signed.push(profile);
+            },
+            { manualList: async () => ["keys", "deploy", "base"], env },
+        );
+        const { registerSignInAtStart } = await import("../src/start-sign-in.ts");
+        registerSignInAtStart(pi as never, {
+            signInAtStart: true,
+            profile: () => "keys",
+            recover: checked,
+            check: async () => "sign-in",
+            refresh: async () => {},
+        });
+        const ctx = { hasUI: true, mode: "tui", ui: { notify() {} } };
+        for (const hook of hooks.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(signed, [], "keys does not start an SSO login");
+
+        const hooks2 = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+        const pi2 = {
+            on(name: string, hook: (event: any, ctx: any) => unknown) {
+                hooks2.set(name, [...(hooks2.get(name) ?? []), hook]);
+            },
+        };
+        registerSignInAtStart(pi2 as never, {
+            signInAtStart: true,
+            profile: () => "deploy",
+            recover: checked,
+            check: async () => "sign-in",
+            refresh: async () => {},
+        });
+        for (const hook of hooks2.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(signed, ["base"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
