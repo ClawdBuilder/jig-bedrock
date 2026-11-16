@@ -705,18 +705,14 @@ export function createBedrockProvider(
             if (signal.aborted) return;
             const message = loginOutcomeMessage(models.length, settled, catalog.load()?.warnings?.join(" "));
             interaction.notify({ type: "info", message });
-            if (config.preset !== undefined && config.profileSource === "preset") {
-                interaction.notify({
-                    type: "info",
-                    message:
-                        config.preset === undefined ? `Saved to bedrock.json.` : `Saved to preset ${config.preset}.`,
-                });
-            }
+            const presetMessage = config.preset === undefined ? undefined : `Saved to preset ${config.preset}.`;
+            if (presetMessage !== undefined) interaction.notify({ type: "info", message: presetMessage });
             // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
             // the dialog's teardown cannot clear the only lasting explanation of what happened.
             const context = ctx;
             if (context) {
-                const timer = setTimeout(() => context.ui.notify(message, "info"), 300);
+                const shown = presetMessage === undefined ? message : `${message} ${presetMessage}`;
+                const timer = setTimeout(() => context.ui.notify(shown, "info"), 300);
                 timer.unref();
             }
         };
