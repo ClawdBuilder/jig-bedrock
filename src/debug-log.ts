@@ -269,6 +269,7 @@ export function withDebugCatalog(
     return {
         load: () => catalog.load(),
         failure: () => catalog.failure?.(),
+        status: () => catalog.status?.(),
         async refresh(force) {
             const started = clock();
             const before = catalog.load()?.fetched_at;

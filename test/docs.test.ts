@@ -230,3 +230,28 @@ test("the gallery card names an extension with a published cover and a plain des
     assert.ok(pkg.files?.includes("docs/**"), "docs/** must be published");
     assert.ok(path.startsWith("docs/"), `${path} must be under the published docs/ folder`);
 });
+
+test("AGENTS.md is a short agent guide, and CI installs with scripts off", () => {
+    const agents = read("AGENTS.md");
+    const lines = agents.trimEnd().split("\n").length;
+    assert.ok(lines >= 30 && lines <= 40, `AGENTS.md has ${lines} lines; keep 30 to 40`);
+    for (const phrase of [
+        "Jig Contributors <noreply@example.com>",
+        "npm test",
+        "npm run check",
+        "npm run scan",
+        "npm run check:packed",
+        "src/config.ts",
+        "docs/settings.md",
+        "docs/contributing.md",
+        "docs/how-it-works.md",
+    ])
+        assert.ok(agents.includes(phrase), `AGENTS.md must name ${phrase}`);
+    const publish = read(".github/workflows/publish.yml");
+    assert.match(publish, /environment: Release/);
+    assert.match(publish, /npm ci --ignore-scripts/);
+    assert.doesNotMatch(publish, /run: npm ci(?! --ignore-scripts)/m);
+    const ci = read(".github/workflows/ci.yml");
+    assert.doesNotMatch(ci, /run: npm ci(?! --ignore-scripts)/m);
+    assert.match(ci, /npm ci --ignore-scripts/);
+});

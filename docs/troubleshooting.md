@@ -20,8 +20,8 @@ Next: /bedrock login
 **You see**
 
 ```text
-✗ Models: access denied while listing; ask your AWS administrator for bedrock:ListInferenceProfiles
-Next: ask your AWS administrator for bedrock:ListInferenceProfiles, then /bedrock refresh
+✗ Models: access denied while listing
+Next: Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured profile; then /bedrock refresh.
 ```
 
 **Run:** `/bedrock doctor`
@@ -44,7 +44,7 @@ Next: ask your AWS administrator for bedrock:ListInferenceProfiles, then /bedroc
 
 ```text
 ✗ Models: no Claude models in eu-north-1
-Next: /bedrock settings, then check regions
+Next: check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh
 ```
 
 In tag mode the row says `no inference profiles with tag Team=payments`.

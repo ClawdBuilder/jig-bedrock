@@ -26,7 +26,7 @@ const model = {
     rateSource: "Pi registry",
     cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 };
-function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv) {
+function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv, extra: Record<string, unknown> = {}) {
     const root = mkdtempSync(join(tmpdir(), "bedrock-command-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const settings = { HOME: root, PI_CODING_AGENT_DIR: root, LANG: "C.UTF-8", TERM: "xterm-256color", ...env };
@@ -51,6 +51,7 @@ function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv) {
         lastChoice: () => ({ profile: "fixture", exists: true }),
         unavailable: () => [],
         presetNames: () => ["dev", "work"],
+        ...extra,
     });
     const ctx = {
         hasUI: true,
@@ -189,4 +190,34 @@ test("the status screen is one whole block with no spend-command row", async (t)
             "✓ Spend: Nov $0.00 of $100",
         ].join("\n"),
     );
+});
+
+test("/bedrock login prints the cause it has, and never a placeholder profile", async (t) => {
+    const withProfile = harness(
+        t,
+        {},
+        {
+            login: async () => {
+                throw new Error("sign-in expired for the selected profile");
+            },
+        },
+    );
+    await withProfile.result.bedrock("login", withProfile.ctx as never);
+    assert.match(withProfile.notices.join("\n"), /Sign-in did not finish: sign-in expired for the selected profile/);
+    assert.match(withProfile.notices.join("\n"), /aws sso login --profile fixture/);
+
+    const noProfile = harness(
+        t,
+        {},
+        {
+            config: { ...config, profile: undefined },
+            login: async () => {
+                throw new Error("No AWS profile is chosen.");
+            },
+        },
+    );
+    await noProfile.result.bedrock("login", noProfile.ctx as never);
+    const text = noProfile.notices.join("\n");
+    assert.match(text, /choose an AWS profile with \/login/);
+    assert.doesNotMatch(text, /my-profile/);
 });

@@ -22,6 +22,8 @@ export interface CatalogSource {
     refresh(force?: boolean): Promise<Status>;
     /** Why the last refresh failed, in plain words; undefined after a success. */
     failure?(): string | undefined;
+    /** The category of the last refresh, for the doctor's next step. */
+    status?(): Status | undefined;
 }
 export type Runner = (
     program: string,
@@ -61,7 +63,7 @@ export function discoveryHelp(status: Status): string {
         case "sso_expired":
             return "Run /bedrock login, finish browser sign-in, then /bedrock refresh.";
         case "permission_denied":
-            return "Ask your AWS administrator to check catalog read permissions for the configured profile; then /bedrock refresh.";
+            return "Ask your AWS administrator for bedrock:ListInferenceProfiles on the configured profile; then /bedrock refresh.";
         case "configuration":
             return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
         case "credentials":
@@ -71,7 +73,7 @@ export function discoveryHelp(status: Status): string {
         case "timeout":
             return "AWS discovery timed out; check network access, then /bedrock refresh.";
         default:
-            return "Check AWS access and the configuration in README.md, then /bedrock refresh.";
+            return "Check AWS access and the configuration in docs/settings.md (Every setting), then /bedrock refresh.";
     }
 }
 class StepError extends Error {
@@ -161,7 +163,8 @@ export function createAwsDiscovery(
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
         invalidAccount = false,
-        lastFailure: string | undefined;
+        lastFailure: string | undefined,
+        lastStatus: Status | undefined;
     // Rebuilt per call: the profile is resolved once a session starts, after this object exists, and the settings
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
@@ -466,7 +469,8 @@ export function createAwsDiscovery(
             return "ok";
         } catch (e) {
             lastFailure = failureText(e);
-            return category(e instanceof StepError ? e.cause : e);
+            lastStatus = category(e instanceof StepError ? e.cause : e);
+            return lastStatus;
         }
     };
     return {
@@ -476,5 +480,6 @@ export function createAwsDiscovery(
                 flight = undefined;
             })),
         failure: () => lastFailure,
+        status: () => lastStatus,
     };
 }

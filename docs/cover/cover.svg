@@ -19,14 +19,15 @@
   <rect class="panel" x="24" y="144" width="592" height="190" rx="14"/>
   <text class="screen-title" x="42" y="166">Bedrock doctor</text>
   <text class="screen accent" x="42" y="184">✓</text><text class="screen" x="60" y="184">Node 26.13.0</text>
-  <text class="screen accent" x="42" y="200">✓</text><text class="screen" x="60" y="200">AWS CLI 2.34.46</text>
-  <text class="screen accent" x="42" y="216">✓</text><text class="screen" x="60" y="216">Settings: ~/.pi/agent/bedrock.json</text>
-  <text class="screen accent" x="42" y="232">✓</text><text class="screen" x="60" y="232">AWS profile: my-profile (from /login)</text>
-  <text class="screen accent" x="42" y="248">✓</text><text class="screen" x="60" y="248">Sign-in: AWS answered</text>
-  <text class="screen accent" x="42" y="264">✓</text><text class="screen" x="60" y="264">Models: 31 found in us-east-1 (AWS-defined)</text>
-  <text class="screen accent" x="42" y="280">✓</text><text class="screen" x="60" y="280">Selected model: claude-sonnet-5-5 · Messages route</text>
-  <text class="screen muted" x="42" y="296">–</text><text class="screen" x="60" y="296">Spend command: not set</text>
-  <text class="screen accent" x="42" y="318">Bedrock is ready.</text>
+  <text class="screen accent" x="42" y="198">✓</text><text class="screen" x="60" y="198">AWS CLI 2.34.46</text>
+  <text class="screen accent" x="42" y="212">✓</text><text class="screen" x="60" y="212">Settings: ~/.pi/agent/bedrock.json</text>
+  <text class="screen accent" x="42" y="226">✓</text><text class="screen" x="60" y="226">AWS profile: my-profile (from /login)</text>
+  <text class="screen accent" x="42" y="240">✓</text><text class="screen" x="60" y="240">Sign-in: AWS answered</text>
+  <text class="screen accent" x="42" y="254">✓</text><text class="screen" x="60" y="254">Models: 31 found in us-east-1 (AWS-defined)</text>
+  <text class="screen accent" x="42" y="268">✓</text><text class="screen" x="60" y="268">Selected model: claude-sonnet-5-5 · Messages route</text>
+  <text class="screen muted" x="42" y="282">–</text><text class="screen" x="60" y="282">Spend command: not set</text>
+  <text class="screen accent" x="42" y="296">✓</text><text class="screen" x="60" y="296">Request: Messages route · 0.9 s · cache read 0, wrote 120</text>
+  <text class="screen accent" x="42" y="316">Bedrock is ready.</text>
   <line class="rule" x1="24" y1="352" x2="616" y2="352"/>
   <text class="muted install" x="24" y="372">pi install npm:@clawdbuilder/jig-bedrock</text>
 </svg>
