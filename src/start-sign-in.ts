@@ -7,7 +7,7 @@ import { recoveryHint, SsoRecoveryError } from "./sso.ts";
 import type { SsoState } from "./sso-check.ts";
 
 export interface StartSignIn {
-    /** Whether an expired session signs in at once; false still checks read-only and says the models are not loaded. */
+    /** Whether an expired session signs in at once; false still checks read-only and says what did not load. */
     signInAtStart?: boolean;
     /** The AWS profile the provider signs in with, resolved when the check runs; undefined means none is configured. */
     profile: () => string | undefined;
@@ -16,6 +16,8 @@ export interface StartSignIn {
     check(profile: string, signal: AbortSignal): Promise<SsoState>;
     /** Called after a sign-in that finished: the catalog may have failed to load while the session was expired. */
     refresh(): Promise<unknown>;
+    /** How many models are registered now, so the notice says whether the saved list is in /model. */
+    models?: () => number;
 }
 
 /** A session with a screen: Pi's terminal UI or an RPC client. Print and JSON mode have none, and nobody is there to sign in. */
@@ -33,7 +35,13 @@ export function registerSignInAtStart(pi: ExtensionAPI, start: StartSignIn): voi
         const state = await start.check(profile, signal);
         if (state !== "sign-in" || signal.aborted) return;
         if (start.signInAtStart === false) {
-            ctx.ui.notify("Bedrock models not loaded yet; run /bedrock login, then /bedrock refresh.", "warning");
+            const loaded = start.models?.() ?? 0;
+            ctx.ui.notify(
+                loaded === 0
+                    ? `AWS sign-in for ${profile} has expired; no models are loaded yet, so run /bedrock login.`
+                    : `AWS sign-in for ${profile} has expired; the ${loaded} model${loaded === 1 ? "" : "s"} in /model are still loaded. Run /bedrock login to renew the sign-in.`,
+                "warning",
+            );
             return;
         }
         ctx.ui.notify(`AWS sign-in for ${profile} has expired; signing in, your browser opens.`, "info");

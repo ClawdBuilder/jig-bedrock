@@ -106,7 +106,8 @@ export interface BedrockCommandSources {
     failure?: () => string | undefined;
     login?: () => Promise<void>;
     unavailable?: () => Array<{ profile: string; region: string; reason: string }>;
-    apply?: () => Promise<void> | void;
+    /** Reload the settings; `refreshModels` tells the provider a model refresh follows, so its notices stay accurate. */
+    apply?: (refreshModels?: boolean) => Promise<void> | void;
     lastChoice?: () => ProfileChoice;
     presetNames?: () => string[];
     presetList?: () => Array<{ name: string; profile?: string; mode?: string; active: boolean; source?: string }>;
@@ -520,13 +521,13 @@ export function registerBedrockCommands(
             return false;
         }
         const beforeCount = sources.models().length;
-        await sources.apply?.();
-        const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const needsRefresh = pairs.some(([key]) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
                 key,
             ),
         );
+        await sources.apply?.(needsRefresh);
+        const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
         const savedWhere = config.preset === undefined ? "saved to bedrock.json" : `saved to preset ${config.preset}`;
         const overridden = pairs
             .map(([key]) => {
@@ -550,7 +551,7 @@ export function registerBedrockCommands(
             ...regionWarnings.map((warning) => `${m.warn} ${warning}`),
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx, beforeCount);
+        if (needsRefresh) await refresh("", ctx, beforeCount, false);
         const preset = pairs.find(([key]) => key === "preset")?.[1];
         if (preset !== undefined) await sources.usePreset?.(preset, ctx);
         return true;
@@ -594,19 +595,24 @@ export function registerBedrockCommands(
             return;
         }
         const beforeCount = sources.models().length;
-        await sources.apply?.();
         const needsRefresh = keys.some((key) =>
             ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
                 key,
             ),
         );
+        await sources.apply?.(needsRefresh);
         emit(ctx, "Bedrock settings", [
             `${m.ok} ${keys.join(", ")}: unset (saved to bedrock.json)`,
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
-        if (needsRefresh) await refresh("", ctx, beforeCount);
+        if (needsRefresh) await refresh("", ctx, beforeCount, false);
     };
-    const refresh = async (args: string, ctx: ExtensionCommandContext, settingsBefore?: number): Promise<void> => {
+    const refresh = async (
+        args: string,
+        ctx: ExtensionCommandContext,
+        settingsBefore?: number,
+        reading = true,
+    ): Promise<void> => {
         if (args.trim() !== "") {
             emit(ctx, "Bedrock", [`Usage: /bedrock ${usageFor("refresh")}`]);
             return;
@@ -617,7 +623,9 @@ export function registerBedrockCommands(
         }
         const before = new Set(sources.models().map((model) => model.id));
         const selectedBefore = ctx.model?.provider === "jig-bedrock" ? ctx.model.id : undefined;
-        if (ctx.hasUI && !toStdout(ctx)) emit(ctx, "Bedrock refresh", [`${m.skip} Reading the models from AWS…`]);
+        // A settings save already said it is loading the models; one progress line for one action.
+        if (ctx.hasUI && !toStdout(ctx) && reading)
+            emit(ctx, "Bedrock refresh", [`${m.skip} Reading the models from AWS…`]);
         const cleared = sources.clearRefusals?.() ?? 0;
         const status = await sources.refresh();
         const after = sources.models();

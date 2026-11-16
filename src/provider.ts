@@ -1078,7 +1078,7 @@ export function createBedrockProvider(
             usePreset: (name, commandContext) => switchPreset(name, commandContext),
             presetAdd: (name, commandContext) => addPreset(name, commandContext),
             presetRemove: (name, commandContext) => removePreset(name, commandContext),
-            apply: async () => {
+            apply: async (refreshModels = false) => {
                 const next = reloadSettings();
                 if (!applyResolved(next)) return;
                 if (config.profile !== undefined && options.listProfiles !== undefined) {
@@ -1089,8 +1089,12 @@ export function createBedrockProvider(
                         exists: listed === undefined ? true : listed.includes(config.profile),
                     };
                 }
-                settingsChanged = true;
-                settingsBaseline = models.length;
+                // A save that changes no discovery setting (a budget, a model route) starts no refresh; marking it would
+                // make the next unrelated refresh report this save's stale count instead of what changed.
+                if (refreshModels) {
+                    settingsChanged = true;
+                    settingsBaseline = models.length;
+                }
                 if (ctx) spend.updateFooter(ctx);
                 const updated = readModels().available;
                 if (updateModels(models, updated).changed && native) await register();
@@ -1328,6 +1332,7 @@ export function createBedrockProvider(
             recover: recoveryForLogin,
             check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
             refresh: () => refresh(false),
+            models: () => models.length,
         });
         pi.on("session_shutdown", () => {
             lifetime.abort();
