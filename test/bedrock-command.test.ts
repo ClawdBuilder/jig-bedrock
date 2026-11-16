@@ -57,10 +57,16 @@ function harness(t: { after(fn: () => void): void }, env: NodeJS.ProcessEnv, ext
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
+        model: undefined,
+        modelRegistry: { find: (_provider: string, id: string) => ({ ...model, id }) },
         ui: { notify: (text: string) => notices.push(text), setStatus() {} },
         sessionManager: { getSessionId: () => "s" },
     };
-    return { root, settings, notices, commands, result, ctx };
+    pi.setModel = async (selected: any) => {
+        ctx.model = selected;
+        return true;
+    };
+    return { root, settings, notices, commands, result, ctx, pi };
 }
 
 test("every sub-command prints a titled block and usage has no stale Next", async (t) => {
@@ -323,8 +329,10 @@ function withUi(h: ReturnType<typeof harness>, selects: string[], inputs: string
     let selectCalls = 0;
     h.ctx.mode = "tui";
     h.ctx.ui.confirm = async () => confirms.shift() ?? true;
-    h.ctx.ui.select = async (_title: string, options: string[] = []) => {
+    (h.ctx.ui as any).calls = [];
+    h.ctx.ui.select = async (title: string, options: string[] = []) => {
         selectCalls++;
+        (h.ctx.ui as any).calls.push({ title, options });
         const wanted = selects.shift();
         if (wanted === undefined) return undefined;
         return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
@@ -499,4 +507,51 @@ test("the presets menu Escape writes and switches nothing", async (t) => {
     withUi(h, []);
     await h.result.bedrock("", h.ctx as never);
     assert.equal(used, "");
+});
+
+test("the models menu lists registered order, shows details, and uses a model", async (t) => {
+    const first = { ...model, id: "claude-sonnet-5-5" };
+    const second = { ...model, id: "claude-opus-5" };
+    const h = harness(t, {}, { models: () => [first, second] });
+    (h.ctx.modelRegistry as any).find = (_p: string, id: string) => ({ ...first, id });
+    withUi(h, ["Models", "claude-sonnet-5-5", "Use for this session"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.deepEqual(
+        calls[1]?.options.slice(0, 2).map((option) => option.split(" — ")[0]),
+        ["claude-sonnet-5-5", "claude-opus-5"],
+    );
+    assert.match(calls[2]?.title ?? "", /Converse route/);
+    assert.match(calls[2]?.title ?? "", /Region: us-east-1/);
+    assert.match(calls[2]?.title ?? "", /Inference profile:/);
+    assert.equal(h.ctx.model?.id, "claude-sonnet-5-5");
+});
+
+test("the models menu shows refused models and Try again clears them", async (t) => {
+    let clears = 0;
+    const h = harness(
+        t,
+        {},
+        {
+            refused: () => [{ arn: "arn", id: "claude-opus-5", date: "2026-11-16T10:00:00.000Z" }],
+            clearRefusals: () => {
+                clears++;
+                return 1;
+            },
+        },
+    );
+    withUi(h, ["Models", "claude-opus-5", "Try again"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.ok(calls[1]?.options.includes("Refused by AWS for your role"));
+    assert.ok(calls[1]?.options.some((option) => option.startsWith("claude-opus-5 · 2026-11-16")));
+    assert.equal(clears, 1);
+});
+
+test("the models menu Escape does nothing", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Models"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(h.ctx.model, undefined);
+    assert.deepEqual(h.notices, []);
 });

@@ -223,6 +223,10 @@ export function registerBedrockCommands(
         emit(ctx, `Bedrock · ${problems === 0 ? "ready" : `${problems} problem${problems === 1 ? "" : "s"}`}`, rows);
     };
     const models = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+        if (args.trim() === "" && ctx.mode === "tui" && ctx.hasUI && !toStdout(ctx)) {
+            await modelsMenu(ctx);
+            return;
+        }
         if (args.trim() !== "") {
             emit(ctx, "Bedrock models", [`${m.fail} Usage: /bedrock ${usageFor("models")}`]);
             return;
@@ -923,23 +927,48 @@ export function registerBedrockCommands(
     };
     const modelsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.models();
-        if (list.length === 0) {
-            await models("", ctx);
+        const refused = sources.refused?.() ?? [];
+        if (list.length === 0 && refused.length === 0) {
+            emit(ctx, "Bedrock models", [`${m.warn} No models loaded.`]);
             return;
         }
-        const choice = await ctx.ui.select("Bedrock models", [
-            ...list.map(
-                (model) => `${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`,
-            ),
-            "Back",
-        ]);
-        if (choice === undefined || choice === "Back") return;
+        const labels = list.map(
+            (model) => `${model.id} — ${route(model, config)} · $${model.cost.input}/$${model.cost.output}`,
+        );
+        if (refused.length > 0) {
+            labels.push("Refused by AWS for your role");
+            for (const entry of refused) labels.push(`${entry.id} · ${entry.date.slice(0, 10)}`);
+        }
+        labels.push("Back");
+        const choice = await ctx.ui.select("Bedrock models", labels);
+        if (choice === undefined || choice === "Back" || choice === "Refused by AWS for your role") return;
+        const refusedEntry = refused.find((entry) => choice.startsWith(`${entry.id} ·`));
+        if (refusedEntry !== undefined) {
+            const action = await ctx.ui.select(
+                `${refusedEntry.id}\nRefused ${refusedEntry.date.slice(0, 10)} by AWS for this role.`,
+                ["Try again", "Back"],
+            );
+            if (action === "Try again") await refresh("", ctx);
+            return;
+        }
         const selected = list.find((model) => choice.startsWith(`${model.id} —`));
         if (selected === undefined) return;
-        const action = await ctx.ui.select(
-            `${selected.id}\n${route(selected, config)} route · ${selected.arn.split(":")[3] ?? ""} · $${selected.cost.input}/$${selected.cost.output}\nInference profile: ${selected.arn.slice(selected.arn.lastIndexOf("/") + 1)}\nTo keep it for every start: /model, select it, Ctrl+S.`,
-            ["Use for this session", "Back"],
-        );
+        const region =
+            /bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com/.exec(selected.baseUrl)?.[1] ??
+            selected.arn.split(":")[3] ??
+            "";
+        const details = [
+            `${selected.id}`,
+            `${route(selected, config)} route · ${routeReason(selected, config)}`,
+            `Region: ${region}`,
+            `Price per million tokens: $${selected.cost.input} in / $${selected.cost.output} out`,
+            `Inference profile: ${selected.arn.slice(selected.arn.lastIndexOf("/") + 1)}`,
+            ctx.model?.provider === "jig-bedrock" && ctx.model.id === selected.id
+                ? "This is the session's model."
+                : "Not the session's model.",
+            "To keep it for every start: /model, select it, Ctrl+S.",
+        ].join("\n");
+        const action = await ctx.ui.select(details, ["Use for this session", "Back"]);
         if (action !== "Use for this session") return;
         const model = ctx.modelRegistry.find("jig-bedrock", selected.id);
         if (model !== undefined) await pi.setModel(model);
