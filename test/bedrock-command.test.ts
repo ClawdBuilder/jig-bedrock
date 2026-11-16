@@ -515,6 +515,68 @@ test("the presets menu Escape writes and switches nothing", async (t) => {
     assert.equal(used, "");
 });
 
+test("the presets menu says there are no presets and offers only what makes sense", async (t) => {
+    const h = harness(t, {}, { presetList: () => [] });
+    withUi(h, ["Presets"]);
+    await h.result.bedrock("", h.ctx as never);
+    const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
+    assert.equal(calls.length, 2);
+    assert.match(calls[1]!.title, /No presets yet\. Save the current settings as one first\./);
+    assert.deepEqual(calls[1]!.options, ["Save current settings as a preset…", "Back"]);
+});
+
+test("Back returns to the menu above, and Escape closes everything", async (t) => {
+    const back = harness(
+        t,
+        {},
+        { presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }] },
+    );
+    withUi(back, ["Presets", "Back"]);
+    await back.result.bedrock("", back.ctx as never);
+    const titles = ((back.ctx.ui as any).calls as Array<{ title: string }>).map((call) => call.title);
+    assert.deepEqual(titles, ["Bedrock", "Bedrock presets", "Bedrock"]);
+    const esc = harness(
+        t,
+        {},
+        { presetList: () => [{ name: "dev", profile: "dev", mode: "AWS-defined", active: false }] },
+    );
+    withUi(esc, ["Presets"]);
+    await esc.result.bedrock("", esc.ctx as never);
+    const closed = ((esc.ctx.ui as any).calls as Array<{ title: string }>).map((call) => call.title);
+    assert.deepEqual(closed, ["Bedrock", "Bedrock presets"]);
+});
+
+test("a preset named Back can be switched to and removed", async (t) => {
+    let used = "";
+    const h = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "Back", profile: "keys", mode: "by tag", active: false }],
+            usePreset: async (name: string) => {
+                used = name;
+            },
+        },
+    );
+    withUi(h, ["Presets", "Back — keys"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(used, "Back");
+    let removed = "";
+    const r = harness(
+        t,
+        {},
+        {
+            presetList: () => [{ name: "Back", profile: "keys", mode: "by tag", active: false }],
+            presetRemove: async (name: string) => {
+                removed = name;
+            },
+        },
+    );
+    withUi(r, ["Presets", "Remove", "Back — remove"], [], [true]);
+    await r.result.bedrock("", r.ctx as never);
+    assert.equal(removed, "Back");
+});
+
 test("the models menu lists registered order, shows details, and uses a model", async (t) => {
     const first = { ...model, id: "claude-sonnet-5-5" };
     const second = { ...model, id: "claude-opus-5" };

@@ -27,20 +27,22 @@ const catalog = (...ids: string[]) => ({
     fetched_at: Math.floor(Date.now() / 1000),
     profiles: ids.map(profile),
 });
-function setup(t: test.TestContext, shared?: string) {
+function setup(t: test.TestContext, shared?: string, settings?: Record<string, unknown>) {
     const dir = shared ?? mkdtempSync(join(tmpdir(), "bedrock-presets-provider-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const file = join(dir, "bedrock.json");
     writeFileSync(
         file,
-        JSON.stringify({
-            presets: {
-                work: { profile: "work" },
-                personal: { profile: "personal" },
+        JSON.stringify(
+            settings ?? {
+                presets: {
+                    work: { profile: "work" },
+                    personal: { profile: "personal" },
+                },
+                preset: "work",
+                ssoLoginCommand: ["echo", "SIGN-IN-WOULD-START", "{profile}"],
             },
-            preset: "work",
-            ssoLoginCommand: ["echo", "SIGN-IN-WOULD-START", "{profile}"],
-        }),
+        ),
     );
     let calls = 0;
     const h = {
@@ -77,9 +79,15 @@ function setup(t: test.TestContext, shared?: string) {
 }
 async function start(
     t: test.TestContext,
-    options: { env?: NodeJS.ProcessEnv; ids?: string[]; fresh?: boolean; byProfile?: boolean } = {},
+    options: {
+        env?: NodeJS.ProcessEnv;
+        ids?: string[];
+        fresh?: boolean;
+        byProfile?: boolean;
+        settings?: Record<string, unknown>;
+    } = {},
 ) {
-    const s = setup(t);
+    const s = setup(t, undefined, options.settings);
     const raw = JSON.parse(readFileSync(s.file, "utf8")) as Record<string, unknown>;
     const resolved = loadConfig({
         raw,
@@ -291,4 +299,33 @@ test("a fresh preset switch registers the new preset's models, not the old ones"
     const after = models(s.h);
     assert.ok(after.includes("claude-sonnet-5-5"), JSON.stringify(after));
     assert.equal(after.includes("claude-haiku-5-5"), false, JSON.stringify(after));
+});
+
+test("the presets menu labels a preset with the mode it really runs", async (t) => {
+    const s = await start(t, {
+        settings: {
+            profile: "work",
+            tagKey: "Team",
+            tagValue: "fixture",
+            regions: [region],
+            presets: { personal: { profile: "personal", regions: [region] } },
+            preset: "work",
+        },
+    });
+    const calls: Array<{ title: string; options: string[] }> = [];
+    const script: Array<string | undefined> = ["Presets", undefined];
+    s.ctx.mode = "tui";
+    (s.ctx.ui as unknown as Record<string, unknown>).select = async (title: string, options: string[] = []) => {
+        calls.push({ title, options });
+        const next = script.shift();
+        return next === undefined
+            ? undefined
+            : (options.find((option) => option === next || option.startsWith(next)) ?? next);
+    };
+    await s.commands.get("bedrock")?.handler("", s.ctx);
+    const presets = calls.find((call) => call.title.startsWith("Bedrock presets"));
+    assert.ok(presets, JSON.stringify(calls));
+    const row = presets.options.find((option) => option.includes("personal"));
+    assert.match(row ?? "", /personal — personal · by tag/, JSON.stringify(presets.options));
+    assert.doesNotMatch(row ?? "", /AWS-defined/, JSON.stringify(presets.options));
 });

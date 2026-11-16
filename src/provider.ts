@@ -817,6 +817,19 @@ export function createBedrockProvider(
         };
         const presetList = () => {
             const raw = userSettings(profileEnv)?.presets;
+            // The label a person reads must be the one the preset would really run: the effective settings merge the
+            // preset over the top level, exactly as switching does.
+            const modeLabel = (name: string, body: Record<string, unknown>): string => {
+                const mode = config.preset === name ? config.mode : reloadForPreset(name).config?.mode;
+                if (mode === "explicit") return "listed";
+                if (mode === "tag") return "by tag";
+                if (mode === "system") return "AWS-defined";
+                return body.profiles !== undefined
+                    ? "listed"
+                    : body.tagKey !== undefined || body.team !== undefined
+                      ? "by tag"
+                      : "AWS-defined";
+            };
             return Object.keys(isObject(raw) ? raw : {})
                 .sort()
                 .map((name) => {
@@ -827,16 +840,10 @@ export function createBedrockProvider(
                             : config.preset === name
                               ? config.profile
                               : undefined;
-                    const mode =
-                        body.profiles !== undefined
-                            ? "listed"
-                            : body.tagKey !== undefined || body.team !== undefined
-                              ? "by tag"
-                              : "AWS-defined";
                     return {
                         name,
                         profile,
-                        mode,
+                        mode: modeLabel(name, body),
                         active: config.preset === name,
                         source: config.preset === name ? config.presetSource : undefined,
                     };
