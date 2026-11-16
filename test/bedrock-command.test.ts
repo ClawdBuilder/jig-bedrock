@@ -1044,17 +1044,17 @@ test("login with no profile says exactly what to run, without a doctor loop", as
     assert.doesNotMatch(text, /\/bedrock doctor/);
 });
 
-test("status says how to stop using the saved profile after /logout", async (t) => {
-    const h = harness(t, {}, { hasStoredAuth: () => false });
+test("status says how to stop using the saved profile after a real /logout", async (t) => {
+    const h = harness(t, {}, { storedAuthLost: () => true });
     await h.result.bedrock("status", h.ctx as never);
     assert.match(h.notices.join("\n"), /\/bedrock unset profile/);
 });
 
-test("the /logout note appears only when Pi has no stored credential for jig-bedrock", async (t) => {
-    const absent = harness(t, {}, { hasStoredAuth: () => false });
-    await absent.result.bedrock("status", absent.ctx as never);
-    assert.match(absent.notices.join("\n"), /\/bedrock unset profile/);
-    const present = harness(t, {}, { hasStoredAuth: () => true });
-    await present.result.bedrock("status", present.ctx as never);
-    assert.doesNotMatch(present.notices.join("\n"), /\/bedrock unset profile/);
+test("the /logout note appears only when a stored credential was lost in this session", async (t) => {
+    const kept = harness(t, {}, { storedAuthLost: () => false });
+    await kept.result.bedrock("status", kept.ctx as never);
+    assert.doesNotMatch(kept.notices.join("\n"), /\/bedrock unset profile/);
+    const lost = harness(t, {}, { storedAuthLost: () => true });
+    await lost.result.bedrock("status", lost.ctx as never);
+    assert.match(lost.notices.join("\n"), /\/bedrock unset profile/);
 });

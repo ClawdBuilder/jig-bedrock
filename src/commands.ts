@@ -129,7 +129,8 @@ export interface BedrockCommandSources {
     discoveryMode?: () => string | undefined;
     /** Whether a real AWS answer this session confirmed the sign-in; the profile's presence alone does not. */
     signedIn?: () => boolean;
-    hasStoredAuth?: () => boolean;
+    /** A stored credential existed earlier this session and is gone now, which is what a real /logout leaves. */
+    storedAuthLost?: () => boolean;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
     clearRefusals?: () => number;
     refused?: () => Array<{ arn: string; id: string; date: string }>;
@@ -291,7 +292,7 @@ export function registerBedrockCommands(
         } else rows.push(`${m.ok} Models: ${list.length} loaded`);
         const rejected = rejectedLine();
         if (rejected !== undefined) rows.push(rejected);
-        if (sources.hasStoredAuth?.() === false && last.profile !== undefined)
+        if (sources.storedAuthLost?.() === true && last.profile !== undefined)
             rows.push(`${m.skip} /logout does not remove bedrock.json; run /bedrock unset profile.`);
         const selected = ctx.model;
         if (selected?.provider === "jig-bedrock") {

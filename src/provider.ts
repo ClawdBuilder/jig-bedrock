@@ -303,6 +303,12 @@ export function createBedrockProvider(
         // True only when AWS itself answered this session: the doctor's identity check, a successful tiny
         // request, or a reply. The profile's presence in the AWS config says nothing about the sign-in.
         let signInConfirmed = false;
+        // Pi stores a credential for this provider at /login and removes it at /logout. The note after a logout is
+        // only true when one existed earlier in this session; a hand-written bedrock.json never had one.
+        let storedAuthSeen = false;
+        const storedAuthNow = (): boolean =>
+            readStoredCredential(JIG_BEDROCK, path.join(config.agentDir ?? agentFolder(profileEnv), "auth.json")) !==
+            undefined;
         let autoProfile = false;
         let autoProfileFailed = false;
         let afterProfileLogin:
@@ -744,6 +750,7 @@ export function createBedrockProvider(
             return true;
         };
         afterProfileLogin = async (profile, interaction, signal) => {
+            storedAuthSeen = true;
             if (profile === undefined) config.profile = undefined;
             else config.profile = profile;
             profiles.stored = profile;
@@ -1072,11 +1079,7 @@ export function createBedrockProvider(
             discoveryStatus: () => catalog.status?.(),
             discoveryMode: () => config.mode,
             signedIn: () => signInConfirmed,
-            hasStoredAuth: () =>
-                readStoredCredential(
-                    JIG_BEDROCK,
-                    path.join(config.agentDir ?? agentFolder(profileEnv), "auth.json"),
-                ) !== undefined,
+            storedAuthLost: () => storedAuthSeen && !storedAuthNow(),
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
@@ -1280,6 +1283,7 @@ export function createBedrockProvider(
         pi.on("session_start", async (_event, context) => {
             disposed = false;
             ctx = context;
+            if (storedAuthNow()) storedAuthSeen = true;
             const choice = await resolveProfile(context);
             if (config.presetUnknown !== undefined) {
                 context.ui.notify(
