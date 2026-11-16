@@ -546,6 +546,7 @@ export function registerBedrockCommands(
             timeout: 15_000,
         });
         const rows: string[] = [];
+        const nextSteps: string[] = [];
         if (config.presetUnknown !== undefined)
             rows.push(
                 `${m.fail} Preset: ${clean(config.presetUnknown)} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}`,
@@ -555,21 +556,28 @@ export function registerBedrockCommands(
                 ? `${m.ok} Node ${health.node.version ?? "unknown"}`
                 : `${m.fail} Node ${health.node.version ?? "unknown"} (needs 22.19 or later)`;
         rows.push(node);
+        if (health.node.status !== "ready") nextSteps.push("Next: upgrade Node to 22.19 or later");
         if (health.aws.status === "ready") rows.push(`${m.ok} AWS CLI ${health.aws.version ?? "unknown"}`);
-        else if (health.aws.status === "old")
+        else if (health.aws.status === "old") {
             rows.push(`${m.fail} AWS CLI ${health.aws.version ?? "unknown"} (needs v2)`);
-        else if (health.aws.status === "missing") rows.push(`${m.fail} AWS CLI: not found. Install AWS CLI v2.`);
-        else rows.push(`${m.skip} AWS CLI: could not check`);
+            nextSteps.push("Next: install AWS CLI v2");
+        } else if (health.aws.status === "missing") {
+            rows.push(`${m.fail} AWS CLI: not found. Install AWS CLI v2.`);
+            nextSteps.push("Next: install AWS CLI v2");
+        } else rows.push(`${m.skip} AWS CLI: could not check`);
         const doc = readSettingsDocument(env);
         const home = env.HOME;
         const file = "file" in doc ? doc.file : join(home ?? "", ".pi/agent/bedrock.json");
         rows.push(`${m.ok} Settings: ${displayPath(file, env, 70)}`);
         const last = sources.lastChoice?.() ?? { profile: config.profile };
         const profile = last.profile ?? config.profile;
-        if (profile === undefined) rows.push(`${m.fail} AWS profile: none chosen; run /login`);
-        else if (last.exists === false)
+        if (profile === undefined) {
+            rows.push(`${m.fail} AWS profile: none chosen; run /login`);
+            nextSteps.push("Next: /login, choose Amazon Bedrock (jig-bedrock)");
+        } else if (last.exists === false) {
             rows.push(`${m.fail} AWS profile: ${clean(profile, 40)} is not in ~/.aws/config; run /login`);
-        else {
+            nextSteps.push("Next: /login, choose Amazon Bedrock (jig-bedrock)");
+        } else {
             const source =
                 last.source === "env"
                     ? "from JIG_BEDROCK_PROFILE"
@@ -593,6 +601,16 @@ export function registerBedrockCommands(
                 .replace(/^Inference profiles: /, "Models: ")
                 .replace(/^One profile: /, "One inference profile: ");
             rows.push(`${check.ok ? m.ok : m.fail} ${text}`);
+            if (!check.ok && text.startsWith("Models")) {
+                const status = sources.discoveryStatus?.();
+                nextSteps.push(
+                    status === undefined || status === "ok"
+                        ? "Next: check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh"
+                        : `Next: ${discoveryHelp(status, sources.discoveryMode?.())}`,
+                );
+            } else if (!check.ok && text.startsWith("Sign-in")) nextSteps.push("Next: /bedrock login");
+            else if (!check.ok && text.startsWith("One inference profile"))
+                nextSteps.push("Next: ask your AWS administrator for bedrock:GetInferenceProfile");
         }
         if (offline || health.aws.status !== "ready")
             rows.push(
@@ -612,6 +630,8 @@ export function registerBedrockCommands(
         rows.push(
             `${config.spendCommand === undefined ? m.skip : spendStatus.startsWith("ok") ? m.ok : m.fail} Spend command: ${spendStatus}`,
         );
+        if (config.spendCommand !== undefined && !spendStatus.startsWith("ok"))
+            nextSteps.push("Next: see docs/spend-command.md");
         if (debugEnabled(env, config)) rows.push(`${m.skip} Debug log: ${debugLogPath(env)}`);
         let requestOk = false;
         let requestError = "";
@@ -627,31 +647,16 @@ export function registerBedrockCommands(
                 } catch (error) {
                     requestError = error instanceof Error ? error.message : String(error);
                     rows.push(`${m.fail} Request: ${requestError}`);
+                    nextSteps.push(
+                        /data retention mode .* is not available for this model/i.test(requestError)
+                            ? 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".'
+                            : "Next: fix the request failure above, then /bedrock doctor call",
+                    );
                 }
             }
         }
         const problems = rows.filter((row) => row.startsWith(m.fail)).length;
-        const next = (() => {
-            const failed = rows.find((row) => row.startsWith(m.fail)) ?? "";
-            if (failed.includes("Preset")) return "Next: /bedrock use, or edit bedrock.json";
-            if (failed.includes("Node")) return "Next: upgrade Node to 22.19 or later";
-            if (failed.includes("AWS CLI")) return "Next: install AWS CLI v2";
-            if (failed.includes("AWS profile")) return "Next: /login, choose Amazon Bedrock (jig-bedrock)";
-            if (failed.includes("Sign-in")) return "Next: /bedrock login";
-            if (failed.includes("Models")) {
-                const status = sources.discoveryStatus?.();
-                return `Next: ${status === undefined || status === "ok" ? "check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh" : discoveryHelp(status, sources.discoveryMode?.())}`;
-            }
-            if (failed.includes("inference profile"))
-                return "Next: ask your AWS administrator for bedrock:GetInferenceProfile";
-            if (failed.includes("Spend command")) return "Next: see docs/spend-command.md";
-            if (failed.includes("Request")) {
-                if (/data retention mode .* is not available for this model/i.test(requestError))
-                    return 'Next: this model needs an AWS account data-retention setting; choose another model with /model (or --model), then /bedrock doctor call. See docs/troubleshooting.md "A Fable model is refused".';
-                return "Next: fix the request failure above, then /bedrock doctor call";
-            }
-            return "Next: /bedrock doctor";
-        })();
+        const next = nextSteps[0] ?? "Next: /bedrock doctor";
         if (problems === 0)
             rows.push(
                 call && requestOk

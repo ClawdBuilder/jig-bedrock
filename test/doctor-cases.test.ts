@@ -256,3 +256,12 @@ test("an empty tag result is a settings problem, not a permission", async (t) =>
     assert.match(text, /check regions and the tag or explicit list/);
     assert.doesNotMatch(text, /GetInferenceProfile|ListInferenceProfiles/);
 });
+
+test("the doctor's next step does not depend on a Models row's wording", async (t) => {
+    const text = await doctor(t, {
+        mode: "tag",
+        status: "permission_denied",
+        aws: [{ ok: false, text: "Inference profiles: it mentions an inference profile but is still the Models row" }],
+    });
+    assert.match(text, /Next: Ask your AWS administrator for tag:GetResources/);
+});
