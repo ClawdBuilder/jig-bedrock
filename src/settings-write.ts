@@ -37,7 +37,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Merge the discovery choice into bedrock.json. */
-export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: DiscoverySettings): SaveDiscoveryResult {
+export function saveDiscoverySettings(
+    env: NodeJS.ProcessEnv,
+    settings: DiscoverySettings,
+    preset?: string,
+): SaveDiscoveryResult {
     const file = bedrockFile(env);
     let document: Record<string, unknown> = {};
     try {
@@ -57,7 +61,13 @@ export function saveDiscoverySettings(env: NodeJS.ProcessEnv, settings: Discover
             };
         }
     }
-    const target = isObject(document.bedrock) ? document.bedrock : document;
+    const top = isObject(document.bedrock) ? document.bedrock : document;
+    let target = top;
+    if (preset !== undefined) {
+        if (!isObject(top.presets) || !isObject(top.presets[preset]))
+            return { file, written: false, shadowed: [], error: `Preset ${preset} is not defined.` };
+        target = top.presets[preset] as Record<string, unknown>;
+    }
     for (const key of modeKeys) delete target[key];
     if (settings.mode === "tag") {
         target.tagKey = settings.tagKey;
@@ -150,10 +160,20 @@ export function writeSettingsDocument(
 }
 
 /** Save the AWS profile chosen at /login, beside the discovery settings. */
-export function saveProfileSetting(env: NodeJS.ProcessEnv, profile: string): { ok: boolean; error?: string } {
+export function saveProfileSetting(
+    env: NodeJS.ProcessEnv,
+    profile: string,
+    preset?: string,
+): { ok: boolean; error?: string } {
     const doc = readSettingsDocument(env);
     if ("error" in doc) return { ok: false, error: doc.error };
-    doc.target.profile = profile;
+    if (preset === undefined) doc.target.profile = profile;
+    else {
+        const presets = isObject(doc.target.presets) ? doc.target.presets : undefined;
+        const target = presets !== undefined && isObject(presets[preset]) ? presets[preset] : undefined;
+        if (target === undefined) return { ok: false, error: `Preset ${preset} is not defined.` };
+        target.profile = profile;
+    }
     const saved = writeSettingsDocument(env, doc.document);
     return saved.ok ? { ok: true } : { ok: false, error: saved.error };
 }
