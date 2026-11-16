@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { SignatureV4 } from "@smithy/signature-v4";
-import { getCallerIdentity, getInferenceProfile, getResources, listInferenceProfiles } from "../src/aws-api.ts";
-import { category } from "../src/aws-discovery.ts";
+import {
+    AwsApiError,
+    getCallerIdentity,
+    getInferenceProfile,
+    getResources,
+    listInferenceProfiles,
+} from "../src/aws-api.ts";
+import { category, profileFailureMessage } from "../src/aws-discovery.ts";
 import { signRequest } from "../src/sigv4.ts";
 
 const credentials = { accessKeyId: "AKIAFIXTURE", secretAccessKey: "secret", sessionToken: "token" };
@@ -143,6 +149,44 @@ test("STS XML errors keep the AWS code and message for the advice", async () => 
             return true;
         });
     }
+});
+
+test("Bedrock errors take the type from the x-amzn-ErrorType header", async () => {
+    const header = (type: string) => ({
+        "x-amzn-ErrorType": `${type}:http://internal.amazon.com/coral/com.amazon.coral.service/`,
+    });
+    for (const [type, message, status, expected] of [
+        ["AccessDeniedException", "The request was denied.", 403, "permission_denied"],
+        ["ThrottlingException", "Please retry.", 400, "throttled"],
+        ["UnrecognizedClientException", "The request is not valid.", 403, "invalid_credentials"],
+    ] as const) {
+        const r = recorder(() => new Response(JSON.stringify({ message }), { status, headers: header(type) }));
+        await assert.rejects(
+            getInferenceProfile("us-east-1", "team/a", { credentials, fetch: r.fetch }),
+            (error: unknown) => {
+                assert.ok(error instanceof AwsApiError);
+                assert.equal(error.code, type);
+                assert.equal(category(error), expected);
+                return true;
+            },
+        );
+    }
+    const missing = recorder(
+        () =>
+            new Response(JSON.stringify({ message: "The resource was not found." }), {
+                status: 404,
+                headers: header("ResourceNotFoundException"),
+            }),
+    );
+    await assert.rejects(
+        getInferenceProfile("us-east-1", "team/a", { credentials, fetch: missing.fetch }),
+        (error: unknown) => {
+            assert.ok(error instanceof AwsApiError);
+            assert.equal(error.code, "ResourceNotFoundException");
+            assert.equal(profileFailureMessage(error), "AWS has no inference profile with that ARN in this region");
+            return true;
+        },
+    );
 });
 
 test("network and timeout failures are classified", async () => {

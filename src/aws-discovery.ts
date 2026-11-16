@@ -138,6 +138,8 @@ class StepError extends Error {
 
 /** A short, plain reason for one profile that could not be read. Never includes an account id. */
 export function profileFailureMessage(error: unknown): string {
+    if (error instanceof AwsApiError && error.code === "ResourceNotFoundException")
+        return "AWS has no inference profile with that ARN in this region";
     const text = String(error);
     if (/model ARN/.test(text)) return "its model address has an unexpected form";
     if (/model ID/.test(text)) return "its model id is empty or invalid";

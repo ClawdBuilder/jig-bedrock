@@ -105,8 +105,15 @@ async function call(
         throw error;
     }
     if (!response.ok) {
+        // Bedrock's REST errors name the type in a header and send only a message in the body; STS answers XML.
+        const headerType = response.headers.get("x-amzn-ErrorType") ?? "";
         const fields = errorFields(await response.text());
-        throw new AwsApiError(fields.code, response.status, fields.message || response.statusText);
+        const headerCode = headerType.split(":")[0]?.trim() ?? "";
+        throw new AwsApiError(
+            headerCode === "" ? fields.code : headerCode,
+            response.status,
+            fields.message || response.statusText,
+        );
     }
     return response;
 }

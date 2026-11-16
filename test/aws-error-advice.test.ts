@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Status } from "../src/aws-discovery.ts";
 import { createBedrockProvider } from "../src/provider.ts";
-import { type FakeAwsProfile, fakeAwsHttp } from "./support/fake-aws-http.ts";
+import { bedrockFailure, type FakeAwsFailure, type FakeAwsProfile, fakeAwsHttp } from "./support/fake-aws-http.ts";
 
 const account = "123456789012";
 const profile = (region = "us-east-1"): FakeAwsProfile => ({
@@ -112,7 +112,8 @@ interface Case {
     fail?: (
         operation: "sts" | "tagging" | "list" | "get",
         region: string,
-    ) => { status: number; body: string } | undefined;
+        request: { url: string; body: string },
+    ) => FakeAwsFailure | undefined;
     credentials?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
     status: Status;
     start: RegExp[];
@@ -184,6 +185,49 @@ const cases: Case[] = [
         refresh: [/Next: The AWS keys are not valid/, /region may not be enabled/],
         doctor: [/Models: .*credentials are not valid/, /Next: The AWS keys are not valid/],
         never: [/ListInferenceProfiles/, /administrator/],
+    },
+    {
+        name: "A Bedrock access denial",
+        fail: (operation) =>
+            operation === "get" ? bedrockFailure("AccessDeniedException", "The request was denied.", 403) : undefined,
+        status: "unavailable",
+        start: [/Could not read team-us-east-1: AWS denied access/],
+        refresh: [/Could not read team-us-east-1: AWS denied access/],
+        doctor: [/Models: .*AWS denied access/],
+        never: [/unexpected answer/],
+    },
+    {
+        name: "Bedrock throttling",
+        fail: (operation) => (operation === "get" ? bedrockFailure("ThrottlingException", "Please retry.") : undefined),
+        status: "unavailable",
+        start: [/Could not read team-us-east-1: AWS is limiting requests/],
+        refresh: [/Could not read team-us-east-1: AWS is limiting requests/],
+        doctor: [/Models: .*AWS is limiting requests/],
+        never: [/unexpected answer/],
+    },
+    {
+        name: "Bedrock invalid keys",
+        fail: (operation) =>
+            operation === "get"
+                ? bedrockFailure("UnrecognizedClientException", "The request is not valid.", 403)
+                : undefined,
+        status: "unavailable",
+        start: [/Could not read team-us-east-1: .*credentials are not valid/],
+        refresh: [/Could not read team-us-east-1: .*credentials are not valid/],
+        doctor: [/Models: .*credentials are not valid/],
+        never: [/unexpected answer/],
+    },
+    {
+        name: "a missing Bedrock profile",
+        fail: (operation) =>
+            operation === "get"
+                ? bedrockFailure("ResourceNotFoundException", "The resource was not found.", 404)
+                : undefined,
+        status: "unavailable",
+        start: [/Could not read team-us-east-1: AWS has no inference profile/],
+        refresh: [/Could not read team-us-east-1: AWS has no inference profile/],
+        doctor: [/Models: .*AWS has no inference profile/],
+        never: [/unexpected answer/],
     },
     {
         name: "An expired SSO sign-in",

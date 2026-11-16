@@ -8,6 +8,12 @@ export interface FakeAwsProfile {
     kind?: "application" | "system";
 }
 
+export interface FakeAwsFailure {
+    status: number;
+    body: string;
+    headers?: Record<string, string>;
+}
+
 export interface FakeAwsOptions {
     account?: string;
     profiles?: FakeAwsProfile[];
@@ -15,9 +21,19 @@ export interface FakeAwsOptions {
     fail?: (
         operation: "sts" | "tagging" | "list" | "get",
         region: string,
-    ) => { status: number; body: string } | undefined;
+        request: { url: string; body: string },
+    ) => FakeAwsFailure | undefined;
     /** The case-mismatch fixture: the tag query returns nothing, the unfiltered listing returns 13 profiles. */
     caseMismatch?: boolean;
+}
+
+/** A Bedrock REST error: the type is in the header, and the body has only the message. */
+export function bedrockFailure(type: string, message: string, status = 400): FakeAwsFailure {
+    return {
+        status,
+        headers: { "x-amzn-ErrorType": `${type}:http://internal.amazon.com/coral/com.amazon.coral.service/` },
+        body: JSON.stringify({ message }),
+    };
 }
 
 const account = "123456789012";
@@ -58,11 +74,11 @@ export function fakeAwsHttp(options: FakeAwsOptions = {}) {
               : text.includes("/inference-profiles/")
                 ? "get"
                 : "list";
-        const failure = options.fail?.(operation, region);
+        const failure = options.fail?.(operation, region, { url: text, body });
         if (failure !== undefined)
             return new Response(failure.body, {
                 status: failure.status,
-                headers: { "content-type": "application/json" },
+                headers: { "content-type": "application/json", ...failure.headers },
             });
         if (operation === "sts")
             return new Response(
