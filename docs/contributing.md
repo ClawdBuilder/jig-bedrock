@@ -73,6 +73,7 @@ adds a Claude model, run the second script for it before you trust the route rul
 | ---------------------------- | ---------------------------------------------------------------------- |
 | `src/aws-config-read.ts`     | Reads the AWS config and credentials files into sections.              |
 | `src/aws-config-write.ts`    | Adds the AWS profile chosen at /login, safely and with a backup.       |
+| `src/aws-api.ts`             | Signed HTTPS calls for discovery operations.                           |
 | `src/aws-discovery.ts`       | Finds inference profiles with the AWS CLI and keeps the catalog cache. |
 | `src/aws-profile.ts`         | Checks an AWS profile and verifies its STS identity.                   |
 | `src/bedrock-fetch.ts`       | Signs Bedrock requests with SigV4.                                     |
