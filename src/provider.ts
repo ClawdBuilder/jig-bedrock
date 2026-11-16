@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
@@ -1001,6 +1002,11 @@ export function createBedrockProvider(
             failure: () => catalog.failure?.(),
             discoveryStatus: () => catalog.status?.(),
             discoveryMode: () => config.mode,
+            hasStoredAuth: () =>
+                readStoredCredential(
+                    JIG_BEDROCK,
+                    path.join(config.agentDir ?? agentFolder(profileEnv), "auth.json"),
+                ) !== undefined,
             login: async () => {
                 const profile = lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");

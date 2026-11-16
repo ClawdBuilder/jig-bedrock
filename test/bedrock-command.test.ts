@@ -191,7 +191,6 @@ test("the status screen is one whole block with no spend-command row", async (t)
             "Bedrock · ready",
             "✓ AWS profile: fixture · signed in",
             "✓ Models: 1 loaded",
-            "– /logout does not remove bedrock.json; run /bedrock unset profile.",
             "– Selected model: none chosen",
             "✓ Spend: Nov $0.00 of $100",
         ].join("\n"),
@@ -859,7 +858,16 @@ test("login with no profile says exactly what to run, without a doctor loop", as
 });
 
 test("status says how to stop using the saved profile after /logout", async (t) => {
-    const h = harness(t, {});
+    const h = harness(t, {}, { hasStoredAuth: () => false });
     await h.result.bedrock("status", h.ctx as never);
     assert.match(h.notices.join("\n"), /\/bedrock unset profile/);
+});
+
+test("the /logout note appears only when Pi has no stored credential for jig-bedrock", async (t) => {
+    const absent = harness(t, {}, { hasStoredAuth: () => false });
+    await absent.result.bedrock("status", absent.ctx as never);
+    assert.match(absent.notices.join("\n"), /\/bedrock unset profile/);
+    const present = harness(t, {}, { hasStoredAuth: () => true });
+    await present.result.bedrock("status", present.ctx as never);
+    assert.doesNotMatch(present.notices.join("\n"), /\/bedrock unset profile/);
 });

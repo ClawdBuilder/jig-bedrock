@@ -118,6 +118,7 @@ export interface BedrockCommandSources {
     ) => Promise<Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>>;
     discoveryStatus?: () => Status | undefined;
     discoveryMode?: () => string | undefined;
+    hasStoredAuth?: () => boolean;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
     clearRefusals?: () => number;
     refused?: () => Array<{ arn: string; id: string; date: string }>;
@@ -262,7 +263,8 @@ export function registerBedrockCommands(
         if (sources.loading?.()) rows.push(`${m.skip} Models: loading from AWS…`);
         else if (list.length === 0) rows.push(`${m.skip} Models: not loaded`);
         else rows.push(`${m.ok} Models: ${list.length} loaded`);
-        rows.push(`${m.skip} /logout does not remove bedrock.json; run /bedrock unset profile.`);
+        if (sources.hasStoredAuth?.() === false && last.profile !== undefined)
+            rows.push(`${m.skip} /logout does not remove bedrock.json; run /bedrock unset profile.`);
         const selected = ctx.model;
         if (selected?.provider === "jig-bedrock") {
             const model = list.find((entry) => entry.id === selected.id);
