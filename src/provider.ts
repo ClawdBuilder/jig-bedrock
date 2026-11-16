@@ -12,7 +12,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { category, createAwsDiscovery, discoveryHelp, problemSummary } from "./aws-discovery.ts";
+import { category, createAwsDiscovery, discoveryHelp, partialDiscovery, problemSummary } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -632,19 +632,23 @@ export function createBedrockProvider(
                 const current = catalog.load();
                 const problems = current?.errors ?? [];
                 const warnings = current?.warnings ?? [];
+                const partial = partialDiscovery(current);
                 if (
                     !quiet &&
                     !failureNotice &&
                     ctx &&
                     (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
                 ) {
-                    if (warnings.length > 0 || problems.length > 0)
+                    if (warnings.length > 0 || problems.length > 0) {
+                        const details =
+                            partial === undefined
+                                ? [...warnings, problemSummary(problems)]
+                                : [`${partial.line}.`, partial.errors, ...partial.warnings];
                         ctx.ui.notify(
-                            [...warnings, ...(problems.length > 0 ? [problemSummary(problems)] : [])]
-                                .filter((part): part is string => part !== undefined)
-                                .join(" "),
+                            `Bedrock: ${details.filter((part): part is string => part !== undefined).join(" ")}`,
                             "warning",
                         );
+                    }
                     if (settingsChanged && (change.added > 0 || change.removed > 0)) {
                         ctx.ui.notify(
                             `Bedrock: ${models.length} models in /model (${Math.max(0, beforeCount - models.length)} left).`,
@@ -1065,6 +1069,7 @@ export function createBedrockProvider(
                 const choice = lastChoice.profile ?? config.profile;
                 const rows: Array<{
                     ok: boolean;
+                    warn?: boolean;
                     text: string;
                     check: "sign-in" | "models" | "one-profile";
                     next?: string;
@@ -1120,30 +1125,32 @@ export function createBedrockProvider(
                 }
                 const status = await refresh(true, false, true);
                 const reason = catalog.failure?.();
+                const partial = status === "ok" ? partialDiscovery(catalog.load()) : undefined;
+                const partialText =
+                    partial === undefined
+                        ? undefined
+                        : `Models: ${[`${partial.line}.`, partial.errors, ...partial.warnings]
+                              .filter((part): part is string => part !== undefined)
+                              .join(" ")}`;
                 rows.push({
-                    ok: status === "ok" && models.length > 0,
+                    ok: partial === undefined && status === "ok" && models.length > 0,
                     check: "models",
+                    ...(partial === undefined
+                        ? {}
+                        : {
+                              warn: true,
+                              next: "Next: check the failed profile or region in /bedrock settings, then /bedrock refresh.",
+                          }),
                     text:
-                        status === "ok"
+                        partialText ??
+                        (status === "ok"
                             ? models.length === 0
                                 ? config.mode === "tag"
                                     ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
                                     : `Models: no Claude models in ${config.regions.join(", ")}`
                                 : `Models: ${models.length} found in ${config.regions.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`
-                            : `Models: ${reason ?? "could not list"}`,
+                            : `Models: ${reason ?? "could not list"}`),
                 });
-                const errors = catalog.load()?.errors ?? [];
-                if (errors.length > 0) {
-                    const first = errors[0];
-                    if (first === undefined) return rows;
-                    const model = models.find((entry) => entry.arn === first.profile || entry.id === first.profile);
-                    rows.push({
-                        ok: false,
-                        check: "one-profile",
-                        next: "Next: ask your AWS administrator for bedrock:GetInferenceProfile",
-                        text: `Access denied for inference profile ${model?.id ?? first.profile}: ${first.message ?? "could not read"}; ask your AWS administrator for bedrock:GetInferenceProfile`,
-                    });
-                }
                 return rows;
             },
             clearRefusals: () => clearRefusals(profileEnv, config.profile, refusalAccount),

@@ -172,6 +172,38 @@ export function problemSummary(errors: Array<{ profile: string; message: string 
     return `Could not read ${shown.join("; ")}${rest}.`;
 }
 
+/** What a catalog loaded and what it could not, when some profiles or regions failed. */
+export interface PartialDiscovery {
+    /** "1 of 2 inference profiles loaded" or "1 model loaded from 1 of 2 regions". */
+    line: string;
+    /** The unread profiles, at most three; undefined when every profile was read. */
+    errors?: string;
+    /** Every warning in the catalog, including each failed region. */
+    warnings: string[];
+}
+
+export function partialDiscovery(catalog: Catalog | undefined): PartialDiscovery | undefined {
+    if (catalog === undefined) return;
+    const errors = catalog.errors ?? [];
+    const warnings = catalog.warnings ?? [];
+    const failedRegions = warnings.filter((warning) => /^[a-z0-9-]+ did not answer:/.test(warning));
+    if (errors.length === 0 && failedRegions.length === 0) return;
+    const loaded = catalog.profiles.length;
+    const parts: string[] = [];
+    if (errors.length > 0) {
+        const total = loaded + errors.length;
+        parts.push(`${loaded} of ${total} inference profile${total === 1 ? "" : "s"} loaded`);
+    }
+    if (failedRegions.length > 0) {
+        const answered = Math.max(0, catalog.regions.length - failedRegions.length);
+        const regions = catalog.regions.length;
+        parts.push(
+            `${loaded} model${loaded === 1 ? "" : "s"} loaded from ${answered} of ${regions} region${regions === 1 ? "" : "s"}`,
+        );
+    }
+    return { line: parts.join("; "), errors: problemSummary(errors), warnings };
+}
+
 function reasonOf(error: unknown): string {
     if (/byte limit|maxbuffer|buffer length/i.test(String(error))) return "the listing is larger than the 1 MiB limit";
     const status = category(error);
@@ -358,6 +390,7 @@ export function createAwsDiscovery(
                 seen = new Set<string>(),
                 explicitErrors: { profile: string; message: string }[] = [],
                 warnings: string[] = [];
+            let firstErrorStatus: Status | undefined;
             const info = (arn: string, region: string) => profile(region, arn);
             const foundation = async (value: Json, depth = 0): Promise<string> => {
                 if (!Array.isArray(value.models) || !value.models.length || value.models.length > 32)
@@ -554,6 +587,7 @@ export function createAwsDiscovery(
                     }
                 } catch (error) {
                     explicitErrors.push({ profile: candidate.profile, message: profileFailureMessage(error) });
+                    firstErrorStatus ??= category(error);
                 }
             });
             profiles.sort((a, b) => (a.arn < b.arn ? -1 : a.arn > b.arn ? 1 : 0));
@@ -615,6 +649,7 @@ export function createAwsDiscovery(
                 throw regionFailures[0].error;
             if (failed) {
                 lastFailure = problemSummary(explicitErrors) ?? "Could not read any Bedrock profile.";
+                lastStatus = firstErrorStatus ?? "unavailable";
                 return "unavailable";
             }
             const catalog: Catalog = {

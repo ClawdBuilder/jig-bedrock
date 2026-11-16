@@ -5,7 +5,7 @@ import { writeSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { discoveryHelp } from "./aws-discovery.ts";
+import { discoveryHelp, partialDiscovery } from "./aws-discovery.ts";
 import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
 import { isObject } from "./check.ts";
@@ -115,7 +115,9 @@ export interface BedrockCommandSources {
     loading?: () => boolean;
     doctorAws?: (
         signal: AbortSignal,
-    ) => Promise<Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>>;
+    ) => Promise<
+        Array<{ ok: boolean; warn?: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>
+    >;
     discoveryStatus?: () => Status | undefined;
     discoveryMode?: () => string | undefined;
     hasStoredAuth?: () => boolean;
@@ -608,7 +610,8 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        const warnings = sources.catalog?.load()?.warnings ?? [];
+        const catalog = sources.catalog?.load();
+        const warnings = catalog?.warnings ?? [];
         if (after.length === 0 && warnings.length > 0) {
             emit(ctx, "Bedrock refresh", [
                 `${m.warn} ${warnings.join(" ")}`,
@@ -616,13 +619,29 @@ export function registerBedrockCommands(
             ]);
             return;
         }
-        const rows = [
-            `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
-            ...(cleared > 0 ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`] : []),
-        ];
+        const partial = partialDiscovery(catalog);
+        const rows =
+            partial === undefined
+                ? [
+                      `${m.ok} ${after.length} model${after.length === 1 ? "" : "s"} loaded (${added} new, ${removed} gone).`,
+                      ...(cleared > 0
+                          ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`]
+                          : []),
+                  ]
+                : [
+                      `${m.warn} ${partial.line}.`,
+                      ...(cleared > 0
+                          ? [`${m.ok} ${cleared} refused model${cleared === 1 ? "" : "s"} offered again.`]
+                          : []),
+                  ];
         if (selectedBefore !== undefined && !after.some((model) => model.id === selectedBefore))
             rows.push("Choose /model if your selection was removed.");
-        for (const warning of warnings) rows.push(`${m.warn} ${warning}`);
+        if (partial === undefined) for (const warning of warnings) rows.push(`${m.warn} ${warning}`);
+        else {
+            if (partial.errors !== undefined) rows.push(`${m.warn} ${partial.errors}`);
+            for (const warning of partial.warnings) rows.push(`${m.warn} ${warning}`);
+            rows.push("Next: check the failed profile or region in /bedrock settings, then /bedrock refresh.");
+        }
         emit(ctx, "Bedrock refresh", rows);
     };
     const login = async (ctx: ExtensionCommandContext): Promise<void> => {
@@ -704,18 +723,25 @@ export function registerBedrockCommands(
                           : "";
             rows.push(`${m.ok} AWS profile: ${clean(profile)}${source ? ` (${source})` : ""}`);
         }
-        let awsRows: Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }> =
-            [];
+        let awsRows: Array<{
+            ok: boolean;
+            warn?: boolean;
+            text: string;
+            check: "sign-in" | "models" | "one-profile";
+            next?: string;
+        }> = [];
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
         else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
-        if (!offline) for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
+        const modelsWarning = awsRows.some((row) => row.check === "models" && row.warn === true);
+        if (!offline && !modelsWarning)
+            for (const warning of sources.catalog?.load()?.warnings ?? []) rows.push(`${m.warn} ${warning}`);
         for (const check of awsRows) {
             const text = check.text
                 .replace(/^AWS identity: /, "Sign-in: ")
                 .replace(/^Inference profiles: /, "Models: ")
                 .replace(/^One profile: /, "One inference profile: ");
-            rows.push(`${check.ok ? m.ok : m.fail} ${text}`);
+            rows.push(`${check.warn === true ? m.warn : check.ok ? m.ok : m.fail} ${text}`);
             if (!check.ok) {
                 if (check.next !== undefined) nextSteps.push(check.next);
                 else if (check.check === "models") {
@@ -774,15 +800,17 @@ export function registerBedrockCommands(
             }
         }
         const problems = rows.filter((row) => row.startsWith(m.fail)).length;
+        const warningRows = rows.filter((row) => row.startsWith(m.warn)).length;
         const next = nextSteps[0] ?? "Next: /bedrock doctor";
-        if (problems === 0)
+        if (problems === 0 && warningRows === 0)
             rows.push(
                 call && requestOk
                     ? "Bedrock is ready."
                     : "Setup looks right; no request was sent. /bedrock doctor call sends one.",
             );
-        else rows.push(`${problems} problem${problems === 1 ? "" : "s"}.`);
-        if (problems > 0) rows.push(next);
+        else if (problems > 0) rows.push(`${problems} problem${problems === 1 ? "" : "s"}.`);
+        else rows.push(`${warningRows} warning${warningRows === 1 ? "" : "s"}.`);
+        if (problems > 0 || warningRows > 0) rows.push(next);
         emit(ctx, "Bedrock doctor", rows);
     };
     const use = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
