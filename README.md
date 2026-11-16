@@ -105,7 +105,7 @@ Done when the last line is `Bedrock is ready.`
 
 ## No AWS setup yet?
 
-At `/login`, choose **Create an IAM Identity Center (SSO) profile**. It asks for four values: the start URL, the SSO region, the account ID and the role name. Find them in your AWS access portal, or ask your AWS administrator.
+At `/login`, choose **Create an IAM Identity Center (SSO) profile**. It asks for seven values: the AWS profile name, SSO session name, start URL, SSO region, account ID, role name and profile region. Find them in your AWS access portal, or ask your AWS administrator.
 
 ## Budget
 
