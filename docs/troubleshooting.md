@@ -51,7 +51,7 @@ In tag mode the row says `no inference profiles with tag Team=payments`.
 
 **Run:** `/bedrock refresh`
 
-**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. Then run `/bedrock models`.
+**Still wrong?** Run `/bedrock status`; choose an AWS profile with `/login` if none. Check `regions`, or the `tagKey`/`tagValue` pair. If one region fails, the others still load and the warning names the failed region. Then run `/bedrock models`.
 
 ## AccessDenied for a model
 

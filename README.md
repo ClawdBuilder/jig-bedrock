@@ -135,6 +135,7 @@ Named presets switch AWS profiles, model lists, budgets and spend; see [Presets]
 
 | Command            | What it does                     |
 | ------------------ | -------------------------------- |
+| `/bedrock`         | Opens the Bedrock menu.          |
 | `/bedrock status`  | Profile, sign-in, models, spend. |
 | `/bedrock doctor`  | Checks; one next step.           |
 | `/bedrock models`  | Models, route, price.            |
@@ -144,7 +145,7 @@ Named presets switch AWS profiles, model lists, budgets and spend; see [Presets]
 | `/bedrock spend`   | The same as `usage`.             |
 | `/bedrock use`     | List or switch presets.          |
 
-`/bedrock help` lists every command, including `settings`, `set` and `budget`.
+`/bedrock` opens a menu with Status, Check setup, Test one request, Models, Refresh models, Sign in again, Presets, Settings, Spend, Budget and Help. The typed forms in this table and `/bedrock help` stay for scripts and agents.
 
 ## When something is wrong
 
