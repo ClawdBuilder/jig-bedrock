@@ -114,3 +114,15 @@ test("a profile id containing 500 is not mistaken for an HTTP status", async (t)
     assert.equal(withDigits.includes("a-500-b"), true);
     assert.equal(isRefusalError(withDigits, withDigits.split("resource: ")[1]!.split(" because")[0]!), true);
 });
+
+test("the provider has one registration path with the refusal handler", async () => {
+    const source = await import("node:fs").then((fs) =>
+        fs.readFileSync(new URL("../src/provider.ts", import.meta.url), "utf8"),
+    );
+    assert.equal(
+        (source.match(/registerBedrockProvider\(/g) ?? []).length,
+        1,
+        "every provider registration goes through register()",
+    );
+    assert.ok((source.match(/await register\(\)/g) ?? []).length >= 4);
+});
