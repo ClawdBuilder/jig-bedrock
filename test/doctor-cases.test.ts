@@ -27,7 +27,7 @@ async function doctor(
     options: {
         check?: typeof ready;
         last?: Record<string, unknown>;
-        aws?: Array<{ ok: boolean; text: string }>;
+        aws?: Array<{ ok: boolean; text: string; check?: "sign-in" | "models" | "one-profile"; next?: string }>;
         models?: unknown[];
         spendCommand?: string[];
         profile?: string;
@@ -68,7 +68,17 @@ async function doctor(
         check: async () => (options.check ?? ready) as never,
         lastChoice: () => (options.last ?? { profile: "fixture", exists: true }) as never,
         unavailable: () => [],
-        doctorAws: async () => options.aws ?? [],
+        doctorAws: async () =>
+            (options.aws ?? []).map((row) => ({
+                ...row,
+                check:
+                    row.check ??
+                    (row.text.startsWith("Sign-in") || row.text.startsWith("AWS identity")
+                        ? ("sign-in" as const)
+                        : row.text.startsWith("One profile")
+                          ? ("one-profile" as const)
+                          : ("models" as const)),
+            })),
         discoveryStatus: options.status === undefined ? undefined : () => options.status,
         discoveryMode: options.mode === undefined ? undefined : () => options.mode,
         doctorCall:
@@ -261,7 +271,26 @@ test("the doctor's next step does not depend on a Models row's wording", async (
     const text = await doctor(t, {
         mode: "tag",
         status: "permission_denied",
-        aws: [{ ok: false, text: "Inference profiles: it mentions an inference profile but is still the Models row" }],
+        aws: [
+            {
+                ok: false,
+                text: "Profiles found: an inference profile appears here, but this is the Models check",
+            },
+        ],
     });
     assert.match(text, /Next: Ask your AWS administrator for tag:GetResources/);
+});
+
+test("a profileProblem row carries its own next step", async (t) => {
+    const text = await doctor(t, {
+        aws: [
+            {
+                ok: false,
+                text: "deploy uses source_profile base, which is not SSO",
+                check: "sign-in",
+                next: "Next: fix source_profile in the AWS config",
+            },
+        ],
+    });
+    assert.match(text, /Next: fix source_profile in the AWS config/);
 });

@@ -930,13 +930,32 @@ export function createBedrockProvider(
             },
             doctorAws: async (signal) => {
                 const choice = lastChoice.profile ?? config.profile;
-                const rows: Array<{ ok: boolean; text: string }> = [];
-                if (!choice) return [{ ok: false, text: "Sign-in: no profile chosen" }];
+                const rows: Array<{
+                    ok: boolean;
+                    text: string;
+                    check: "sign-in" | "models" | "one-profile";
+                    next?: string;
+                }> = [];
+                if (!choice)
+                    return [
+                        {
+                            ok: false,
+                            text: "Sign-in: no profile chosen",
+                            check: "sign-in",
+                            next: "Next: /login, choose Amazon Bedrock (jig-bedrock)",
+                        },
+                    ];
                 const problem =
                     (isSsoProfile(choice, profileEnv) ?? false)
                         ? await profileProblem(choice, { list: loginListProfiles, env: profileEnv, signal })
                         : undefined;
-                if (problem !== undefined) rows.push({ ok: false, text: problem });
+                if (problem !== undefined)
+                    rows.push({
+                        ok: false,
+                        text: problem,
+                        check: "sign-in",
+                        next: "Next: /login, choose Amazon Bedrock (jig-bedrock)",
+                    });
                 else {
                     try {
                         const check = await (
@@ -946,6 +965,8 @@ export function createBedrockProvider(
                         const expired = !check.ok && (isSsoProfile(choice, profileEnv) ?? false);
                         rows.push({
                             ok: check.ok,
+                            check: "sign-in",
+                            ...(check.ok ? {} : { next: "Next: /bedrock login" }),
                             text: check.ok
                                 ? "Sign-in: AWS answered"
                                 : expired
@@ -953,13 +974,19 @@ export function createBedrockProvider(
                                   : (check.message ?? "Sign-in: did not answer"),
                         });
                     } catch {
-                        rows.push({ ok: false, text: "Sign-in: did not answer" });
+                        rows.push({
+                            ok: false,
+                            text: "Sign-in: did not answer",
+                            check: "sign-in",
+                            next: "Next: /bedrock login",
+                        });
                     }
                 }
                 const status = await refresh(true, false, true);
                 const reason = catalog.failure?.();
                 rows.push({
                     ok: status === "ok" && models.length > 0,
+                    check: "models",
                     text:
                         status === "ok"
                             ? models.length === 0
@@ -976,6 +1003,8 @@ export function createBedrockProvider(
                     const model = models.find((entry) => entry.arn === first.profile || entry.id === first.profile);
                     rows.push({
                         ok: false,
+                        check: "one-profile",
+                        next: "Next: ask your AWS administrator for bedrock:GetInferenceProfile",
                         text: `Access denied for inference profile ${model?.id ?? first.profile}: ${first.message ?? "could not read"}; ask your AWS administrator for bedrock:GetInferenceProfile`,
                     });
                 }

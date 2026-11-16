@@ -113,7 +113,9 @@ export interface BedrockCommandSources {
     presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
-    doctorAws?: (signal: AbortSignal) => Promise<Array<{ ok: boolean; text: string }>>;
+    doctorAws?: (
+        signal: AbortSignal,
+    ) => Promise<Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }>>;
     discoveryStatus?: () => Status | undefined;
     discoveryMode?: () => string | undefined;
     doctorCall?: (signal: AbortSignal) => Promise<{ route: string; ms: number; cacheRead: number; cacheWrite: number }>;
@@ -590,7 +592,8 @@ export function registerBedrockCommands(
                           : "";
             rows.push(`${m.ok} AWS profile: ${clean(profile)}${source ? ` (${source})` : ""}`);
         }
-        let awsRows: Array<{ ok: boolean; text: string }> = [];
+        let awsRows: Array<{ ok: boolean; text: string; check: "sign-in" | "models" | "one-profile"; next?: string }> =
+            [];
         if (offline) rows.push(`${m.skip} AWS not checked: offline`);
         else if (health.aws.status !== "ready") rows.push(`${m.skip} AWS checks: not run (AWS CLI not ready)`);
         else if (sources.doctorAws) awsRows = await sources.doctorAws(ctx.signal ?? new AbortController().signal);
@@ -601,16 +604,18 @@ export function registerBedrockCommands(
                 .replace(/^Inference profiles: /, "Models: ")
                 .replace(/^One profile: /, "One inference profile: ");
             rows.push(`${check.ok ? m.ok : m.fail} ${text}`);
-            if (!check.ok && text.startsWith("Models")) {
-                const status = sources.discoveryStatus?.();
-                nextSteps.push(
-                    status === undefined || status === "ok"
-                        ? "Next: check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh"
-                        : `Next: ${discoveryHelp(status, sources.discoveryMode?.())}`,
-                );
-            } else if (!check.ok && text.startsWith("Sign-in")) nextSteps.push("Next: /bedrock login");
-            else if (!check.ok && text.startsWith("One inference profile"))
-                nextSteps.push("Next: ask your AWS administrator for bedrock:GetInferenceProfile");
+            if (!check.ok) {
+                if (check.next !== undefined) nextSteps.push(check.next);
+                else if (check.check === "models") {
+                    const status = sources.discoveryStatus?.();
+                    nextSteps.push(
+                        status === undefined || status === "ok"
+                            ? "Next: check regions and the tag or explicit list in /bedrock settings, then /bedrock refresh"
+                            : `Next: ${discoveryHelp(status, sources.discoveryMode?.())}`,
+                    );
+                } else if (check.check === "sign-in") nextSteps.push("Next: /bedrock login");
+                else nextSteps.push("Next: ask your AWS administrator for bedrock:GetInferenceProfile");
+            }
         }
         if (offline || health.aws.status !== "ready")
             rows.push(
@@ -786,31 +791,25 @@ export function registerBedrockCommands(
         return distance <= 2 ? best : undefined;
     };
     const menu = async (ctx: ExtensionCommandContext): Promise<void> => {
-        const choice = await ctx.ui.select("Bedrock", [
-            "Status — profile, models, spend",
-            "Check setup — doctor",
-            "Test one request — doctor call",
-            "Models — routes and prices",
-            "Refresh models",
-            "Sign in again",
-            "Presets",
-            "Settings",
-            "Spend",
-            "Budget",
-            "Help",
-        ]);
-        if (choice === undefined) return;
-        if (choice.startsWith("Status")) return status(ctx);
-        if (choice.startsWith("Check setup")) return doctor("", ctx);
-        if (choice.startsWith("Test one request")) return doctor("call", ctx);
-        if (choice.startsWith("Models")) return modelsMenu(ctx);
-        if (choice.startsWith("Refresh")) return refresh("", ctx);
-        if (choice.startsWith("Sign in")) return login(ctx);
-        if (choice.startsWith("Presets")) return presetsMenu(ctx);
-        if (choice.startsWith("Settings")) return settingsMenu(ctx);
-        if (choice.startsWith("Spend")) return spendMenu(ctx);
-        if (choice.startsWith("Budget")) return budgetMenu(ctx);
-        return help("", ctx);
+        const actions: Array<{ label: string; run: () => Promise<void> | void }> = [
+            { label: "Status — profile, models, spend", run: () => status(ctx) },
+            { label: "Check setup — doctor", run: () => doctor("", ctx) },
+            { label: "Test one request — doctor call", run: () => doctor("call", ctx) },
+            { label: "Models — routes and prices", run: () => modelsMenu(ctx) },
+            { label: "Refresh models", run: () => refresh("", ctx) },
+            { label: "Sign in again", run: () => login(ctx) },
+            { label: "Presets", run: () => presetsMenu(ctx) },
+            { label: "Settings", run: () => settingsMenu(ctx) },
+            { label: "Spend", run: () => spendMenu(ctx) },
+            { label: "Budget", run: () => budgetMenu(ctx) },
+            { label: "Help", run: () => help("", ctx) },
+        ];
+        const choice = await ctx.ui.select(
+            "Bedrock",
+            actions.map((action) => action.label),
+        );
+        const action = actions.find((entry) => entry.label === choice);
+        if (action !== undefined) await action.run();
     };
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<void> => {
         const list = sources.presetList?.() ?? [];
