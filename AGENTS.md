@@ -21,7 +21,7 @@ Add the key to `src/config.ts` and its row to `docs/settings.md` together. `test
 
 ## Add a command
 
-Add the sub-command to `BEDROCK_SUBCOMMANDS`, the `HELP` text, the command handler, and the pages that list commands. `test/docs.test.ts` checks the pages against the list.
+Add an entry (`name`, `usage`, `summary`) to `BEDROCK_COMMANDS` in `src/commands.ts`, which `BEDROCK_SUBCOMMANDS` and the help text come from, then the command handler and the pages that list commands. `test/docs.test.ts` checks the pages against the list.
 
 ## Read more
 
