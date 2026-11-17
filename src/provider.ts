@@ -8,11 +8,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { getResources } from "./aws-api.ts";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
-import { category, createAwsDiscovery, discoveryHelp, partialDiscovery, problemSummary } from "./aws-discovery.ts";
+import { category, discoveryHelp, partialDiscovery } from "./aws-discovery.ts";
 import {
     awsConfigFile,
     checkedRecovery,
@@ -23,12 +22,9 @@ import {
     type VerifyResult,
     verifyAwsProfile,
 } from "./aws-profile.ts";
-import { createSignedFetch } from "./bedrock-fetch.ts";
-import { catalogFileFor } from "./cache-root.ts";
 import type { BedrockModel } from "./catalog.ts";
 import {
     bedrockStream,
-    discoveredProfiles,
     registerBedrockProvider,
     registerBedrockSelectionGuard,
     updateModels,
@@ -40,23 +36,17 @@ import { type BedrockCommand, registerBedrockCommands, registerBrokenCommands } 
 import type { ConfigResult, ResolvedConfig } from "./config.ts";
 import { loadConfig, PRESET_FIELDS, presetNamePattern, TOP_LEVEL_PRESET } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
-import { createDebugLog, debugEnabled, withDebugCatalog, withDebugLog, withDebugRecover } from "./debug-log.ts";
+import { createDebugLog, debugEnabled, withDebugLog, withDebugRecover } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
-import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
+import { BEDROCK_PROVIDER_NAME, isOwnModel, JIG_BEDROCK, providerIdOf } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { askDiscoverySettings, askProfile, type LoginFlowOptions, runLoginFlow } from "./login-flow.ts";
 import { markers } from "./markers.ts";
+import { PresetRuntime } from "./preset-runtime.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
-import {
-    createListProfiles,
-    createProfileAuth,
-    loginOutcomeMessage,
-    memoizedList,
-    missingProfileNotice,
-    ProfileResolver,
-} from "./profile.ts";
-import { clearRefusals, isRefusalError, isRefused, refusedModels, rememberRefusal } from "./refusals.ts";
+import { createListProfiles, loginOutcomeMessage, memoizedList, missingProfileNotice } from "./profile.ts";
+import { clearRefusals, refusedModels } from "./refusals.ts";
 import {
     readSettingsDocument,
     saveDiscoverySettings,
@@ -64,7 +54,7 @@ import {
     writeSettingsDocument,
 } from "./settings-write.ts";
 import type { AwsCredentials } from "./sigv4.ts";
-import { SpendTracker } from "./spend.ts";
+import type { SpendTracker } from "./spend.ts";
 import type { Recover, RecoveredBedrock } from "./sso.ts";
 import { noticeFor, registerBedrockSsoRecovery, shareRecovery } from "./sso.ts";
 import type { SsoState } from "./sso-check.ts";
@@ -263,9 +253,6 @@ export function createBedrockProvider(
                 else await migration(args, context);
             },
         });
-        const models: BedrockModel[] = [];
-        let discoverySlow = false;
-        let refreshInFlight: Promise<Status> | undefined;
         let guard: ReturnType<typeof registerBedrockSelectionGuard>;
         const settingsFile = userSettingsFile(options.env ?? process.env).problem;
         const unknownSettings = resolved.unknown ?? [];
@@ -296,23 +283,15 @@ export function createBedrockProvider(
         // environment, then the default profile. Pi's credential is read through its registry, never from auth.json.
         const profileEnv = options.env ?? (options.config === undefined ? process.env : {});
         const m = markers(profileEnv);
-        const profiles = new ProfileResolver({
-            settings: { setting: config.profile, settingSource: config.profileSource, env: profileEnv },
-            ...(options.listProfiles === undefined ? {} : { listProfiles: options.listProfiles }),
-        });
-        const currentProfile = (): string | undefined => (options.preserveNativeAuth ? undefined : config.profile);
-        let lastChoice: ProfileChoice = {};
-        // True only when AWS itself answered this session: the doctor's identity check, a successful tiny
-        // request, or a reply. The profile's presence in the AWS config says nothing about the sign-in.
-        let signInConfirmed = false;
-        // Pi stores a credential for this provider at /login and removes it at /logout. The note after a logout is
-        // only true when one existed earlier in this session; a hand-written bedrock.json never had one.
-        let storedAuthSeen = false;
-        const storedAuthNow = (): boolean =>
-            readStoredCredential(JIG_BEDROCK, path.join(config.agentDir ?? agentFolder(profileEnv), "auth.json")) !==
-            undefined;
-        let autoProfile = false;
-        let autoProfileFailed = false;
+        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
+        const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
+        const lifetime = new AbortController();
+        const backgroundRefresh = options.backgroundRefresh !== false;
+        let ctx: ExtensionContext | undefined;
+        let native: Provider | undefined;
+        let messages: RecoveredBedrock["messages"];
+        let failed = false;
+        let disposed = false;
         let afterProfileLogin:
             | ((
                   profile: string | undefined,
@@ -320,7 +299,54 @@ export function createBedrockProvider(
                   signal: AbortSignal,
               ) => Promise<void>)
             | undefined;
-        const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
+        const firstRunNotice = (context: ExtensionContext): void => {
+            if (!context.hasUI) return;
+            if (context.model !== undefined && context.model.provider !== "unknown" && !isOwnModel(context.model))
+                return;
+            const marker = path.join(agentFolder(options.env), ".bedrock-first-run");
+            if (existsSync(marker)) return;
+            try {
+                writeFileSync(marker, new Date().toISOString(), { mode: 0o600 });
+            } catch {
+                return;
+            }
+            const line = "Bedrock: run /login, choose Amazon Bedrock (jig-bedrock), then /model.";
+            if (context.hasUI) context.ui.notify(line, "info");
+            else process.stdout.write(`${line}\n`);
+        };
+        // One runtime in 0.6.3's shape: the settings in force (the top level, or the active preset), under the one
+        // provider id Pi already knows.
+        const runtime = new PresetRuntime({
+            host: {
+                pi,
+                env: profileEnv,
+                options,
+                debug,
+                context: () => ctx,
+                streams: () => (native === undefined ? undefined : { provider: native, messages }),
+                guard: () => guard,
+                agentDir: () => config.agentDir ?? agentFolder(profileEnv),
+                signal: () => lifetime.signal,
+                disposed: () => disposed,
+                firstRunNotice,
+                registerModels: () => register(),
+                login: {
+                    listed: loginListProfiles,
+                    guided: (interaction) => guided(interaction),
+                    after: (profile, interaction, signal) =>
+                        afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
+                },
+            },
+            config,
+            providerId: providerIdOf(undefined),
+            displayName: BEDROCK_PROVIDER_NAME,
+        });
+        const models = runtime.models;
+        const profiles = runtime.profiles;
+        const spend = runtime.spend;
+        const currentProfile = (): string | undefined => runtime.currentProfile();
+        // The runtime owns the catalog; the provider's own reads follow it when a preset switch recreates it.
+        let catalog = runtime.catalog;
         // The tag listing /login's second-tag offer reads; the guided preset setup uses the same one.
         const loginTagMatches: NonNullable<LoginFlowOptions["tagMatches"]> = async (
             profile,
@@ -405,12 +431,6 @@ export function createBedrockProvider(
             if (saveFailure !== undefined) setTimeout(() => ctx?.ui.notify(saveFailure!, "warning"), 0);
             return credential;
         };
-        const auth = createProfileAuth(profiles, loginListProfiles, {
-            unavailable: () => autoProfileFailed && models.length === 0,
-            guided,
-            afterLogin: (profile, interaction, signal) =>
-                afterProfileLogin?.(profile, interaction, signal) ?? Promise.resolve(),
-        });
         // A profile that can be known without starting a program: the setting, AWS_PROFILE, AWS_DEFAULT_PROFILE,
         // the default section in the AWS files, or the ambient chain. This lets a cache made for that profile load at
         // the factory, before session_start, so --model and --list-models see the models.
@@ -422,75 +442,11 @@ export function createBedrockProvider(
                 if (names?.includes("default")) config.profile = "default";
             }
         }
-        const identity = { profile: currentProfile, auth };
-        const debug = createDebugLog({ enabled: debugEnabled(options.env ?? process.env, config), env: options.env });
-        const catalogPath = () =>
-            catalogFileFor(
-                {
-                    profile: config.profile,
-                    mode: config.mode,
-                    tagKey: config.tagKey,
-                    tagValue: config.tagValue,
-                    activeTagKey: config.activeTagKey,
-                    activeTagValue: config.activeTagValue,
-                    profiles: config.profiles,
-                    regions: config.regions,
-                },
-                profileEnv,
-                true,
-            );
-        let catalog = withDebugCatalog(
-            options.catalog ??
-                createAwsDiscovery(config, catalogPath, undefined, profileEnv, {
-                    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-                    ...(options.discoveryCredentials === undefined
-                        ? {}
-                        : { credentials: options.discoveryCredentials }),
-                }),
-            debug,
-            () => ({ mode: config.mode, regions: config.regions }),
-        );
-        const spend = options.spend ?? new SpendTracker(config, options.env ?? process.env);
         registerSwitchNotice(pi, { env: options.env });
-        const lifetime = new AbortController();
-        const backgroundRefresh = options.backgroundRefresh !== false;
-        let ctx: ExtensionContext | undefined;
-        let native: Provider | undefined;
-        let messages: RecoveredBedrock["messages"];
-        let failed = false;
-        let disposed = false;
-        const firstRunNotice = (context: ExtensionContext): void => {
-            if (!context.hasUI) return;
-            if (context.model !== undefined && context.model.provider !== "unknown" && !isOwnModel(context.model))
-                return;
-            const marker = path.join(agentFolder(options.env), ".bedrock-first-run");
-            if (existsSync(marker)) return;
-            try {
-                writeFileSync(marker, new Date().toISOString(), { mode: 0o600 });
-            } catch {
-                return;
-            }
-            const line = "Bedrock: run /login, choose Amazon Bedrock (jig-bedrock), then /model.";
-            if (context.hasUI) context.ui.notify(line, "info");
-            else process.stdout.write(`${line}\n`);
-        };
-        let refusalAccount: string | undefined;
-        const refusalMessage = (model: BedrockModel, message: string): string | undefined => {
-            if (!isRefusalError(message, model.arn)) return undefined;
-            const unremembered = rememberRefusal(
-                profileEnv,
-                config.profile,
-                catalog.load()?.account_id,
-                model.arn,
-                model.id,
-            );
-            const index = models.findIndex((entry) => entry.arn === model.arn);
-            if (index >= 0) models.splice(index, 1);
-            guard?.refusalHidden(model.id);
-            void register();
-            const plain = `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
-            return unremembered === undefined ? plain : `${plain}\n${unremembered.message}`;
-        };
+        const refusalMessage = (model: BedrockModel, message: string): string | undefined =>
+            runtime.refusalMessage(model, message);
+        // The one registration path every model change goes through, with the refusal handler attached. It reads the
+        // runtime's current catalog and models, so a preset switch registers the new ones.
         const register = async (): Promise<void> => {
             if (!native) return;
             await registerBedrockProvider(
@@ -498,25 +454,17 @@ export function createBedrockProvider(
                 config.agentDir || "",
                 native,
                 models,
-                catalog.load,
-                identity,
+                runtime.catalog.load,
+                runtime.identity(),
                 refusalMessage,
                 messages,
-                signedFetch,
-                (options) => refreshForModelSelector(options.force),
+                runtime.signedFetch,
+                (options) => runtime.refreshForModelSelector(options.force),
+                runtime.providerId,
+                runtime.displayName,
             );
         };
-
-        const readModels = () => {
-            const result = discoveredProfiles(catalog.load(), "", config);
-            const account = catalog.load()?.account_id;
-            refusalAccount = account;
-            result.available = result.available.filter(
-                (model) => !isRefused(profileEnv, config.profile, account, model.arn),
-            );
-            if (options.transformModels) result.available = options.transformModels(result.available);
-            return result;
-        };
+        const readModels = () => runtime.readModels();
         // A repair the sign-in makes for WSL is told in one line, the way the notices of a waiting request are.
         const say = (line: string): void => {
             if (ctx) noticeFor(ctx)(line, "info");
@@ -529,33 +477,6 @@ export function createBedrockProvider(
         // waiting) and be an SSO profile, or no `aws sso login` child starts.
         const recoveryForLogin =
             options.ssoRecover ?? checkedRecovery(recovery, { manualList: loginListProfiles, env: profileEnv });
-        // The Messages route signs with the profile's SSO credentials; the credential chain is loaded from this package's own SDK on
-        // the first request, so nothing here reaches AWS at registration. Tests supply both.
-        const signedFetch = createSignedFetch({
-            credentials:
-                options.credentials ??
-                (() => {
-                    // One chain per profile, made on the first request: it caches the role's credentials and
-                    // refreshes them. No profile means the SDK's own chain (environment, container, instance).
-                    let chain: { profile: string | undefined; load: () => Promise<AwsCredentials> } | undefined;
-                    return async () => {
-                        const profile = currentProfile();
-                        let entry = chain;
-                        if (entry === undefined || entry.profile !== profile) {
-                            const provider = await loadCredentialProvider();
-                            entry = {
-                                profile,
-                                load: provider(
-                                    profile === undefined ? {} : { profile },
-                                ) as () => Promise<AwsCredentials>,
-                            };
-                            chain = entry;
-                        }
-                        return entry.load();
-                    };
-                })(),
-            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-        });
         try {
             const recovered = await registerBedrockSsoRecovery(
                 pi,
@@ -568,166 +489,13 @@ export function createBedrockProvider(
             messages = logged.messages;
             await usePiAnthropicRegistry();
             usePiRegistry(native);
-            models.push(...readModels().available);
+            runtime.loadCachedModels();
             await register();
         } catch {
             failed = true;
         }
-        let noticeFailureOnce = false;
-        let settingsChanged = false;
-        let settingsBaseline: number | undefined;
-        let saveWarned = false;
-        const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> => {
-            noticeFailureOnce ||= notifyFailure;
-            if (refreshInFlight !== undefined) return refreshInFlight;
-            refreshInFlight = (async (): Promise<Status> => {
-                const status = await catalog.refresh(force);
-                if (disposed) return status;
-                const save = catalog.saveFailure?.();
-                if (save !== undefined && ctx !== undefined && !quiet && !saveWarned) {
-                    saveWarned = true;
-                    ctx.ui.notify(save.message, "warning");
-                } else if (save === undefined) saveWarned = false;
-                discoverySlow = status === "timeout";
-                autoProfileFailed = autoProfile && status !== "ok";
-                let failureNotice = false;
-                if (!quiet && status !== "ok" && ctx && (noticeFailureOnce || models.length === 0)) {
-                    failureNotice = true;
-                    const reason = catalog.failure?.();
-                    if (autoProfile && lastChoice.profile === undefined && config.profile === undefined)
-                        firstRunNotice(ctx);
-                    else {
-                        const name = lastChoice.profile ?? config.profile ?? "the configured AWS profile";
-                        let message: string;
-                        switch (status) {
-                            case "timeout":
-                                message =
-                                    "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
-                                break;
-                            case "credentials":
-                                message = `Bedrock: the AWS profile ${name} has no credentials.`;
-                                break;
-                            case "sso_expired":
-                                message = `Bedrock: sign-in expired for the AWS profile ${name}.`;
-                                break;
-                            case "permission_denied":
-                                message = `Bedrock: the AWS profile ${name} was refused by AWS.`;
-                                break;
-                            case "throttled":
-                                message = `Bedrock: AWS is limiting requests for the AWS profile ${name}; wait a minute, then /bedrock refresh.`;
-                                break;
-                            case "aws_error":
-                                message = `Bedrock: AWS had a problem on its side for the AWS profile ${name}; try again later.`;
-                                break;
-                            case "expired_credentials":
-                                message = isSsoProfile(name, profileEnv)
-                                    ? `Bedrock: sign-in expired for the AWS profile ${name}. Run /bedrock login, then /bedrock refresh.`
-                                    : `Bedrock: the AWS credentials for the AWS profile ${name} have expired. Refresh the keys, then /bedrock refresh.`;
-                                break;
-                            case "invalid_credentials":
-                                message = `Bedrock: AWS says the keys for the AWS profile ${name} are not valid: they may be revoked or wrong, or a region may not be enabled for the account. Check the keys and the region, then /bedrock refresh.`;
-                                break;
-                            default:
-                                message = `${reason ?? "Bedrock could not load models."} ${discoveryHelp(status)}`;
-                        }
-                        ctx.ui.notify(message, "warning");
-                    }
-                }
-                const updated = readModels().available;
-                const selected = ctx?.model;
-                const selectedGone =
-                    isOwnModel(selected) &&
-                    selected !== undefined &&
-                    !updated.some((model) => model.id === selected.id);
-                if (isOwnModel(selected)) {
-                    const previous = models.find((m) => m.id === selected?.id);
-                    const replacement = updated.find((m) => m.id === selected?.id);
-                    if (
-                        !replacement ||
-                        (previous &&
-                            (previous.arn !== replacement.arn ||
-                                previous.foundationModelId !== replacement.foundationModelId))
-                    ) {
-                        guard.blockUntilChoice();
-                    }
-                }
-                const beforeCount = settingsBaseline ?? models.length;
-                settingsBaseline = undefined;
-                const change = updateModels(models, updated);
-                if (change.changed && native) await register();
-                if (change.changed && guard?.unresolved() && ctx !== undefined && !settingsChanged)
-                    await guard.restoreSaved(ctx);
-                const current = catalog.load();
-                const problems = current?.errors ?? [];
-                const warnings = current?.warnings ?? [];
-                const partial = partialDiscovery(current);
-                if (
-                    !quiet &&
-                    !failureNotice &&
-                    ctx &&
-                    (change.added > 0 || change.removed > 0 || problems.length > 0 || warnings.length > 0)
-                ) {
-                    if (warnings.length > 0 || problems.length > 0) {
-                        const details =
-                            partial === undefined
-                                ? [...warnings, problemSummary(problems)]
-                                : [`${partial.line}.`, partial.errors, ...partial.warnings];
-                        ctx.ui.notify(
-                            `Bedrock: ${details.filter((part): part is string => part !== undefined).join(" ")}`,
-                            "warning",
-                        );
-                    }
-                    if (settingsChanged && (change.added > 0 || change.removed > 0)) {
-                        const left = Math.max(0, beforeCount - models.length);
-                        const why =
-                            status !== "ok"
-                                ? `${catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status)}`
-                                : warnings.length > 0
-                                  ? warnings.join(" ")
-                                  : problems.length > 0
-                                    ? (problemSummary(problems) ?? "")
-                                    : "";
-                        ctx.ui.notify(
-                            `Bedrock: ${models.length} models in /model (${left} left).${why === "" ? "" : ` ${why}`}`,
-                            status === "ok" ? "info" : "warning",
-                        );
-                    } else if (change.added > 0) {
-                        ctx.ui.notify(
-                            `Bedrock: ${change.added} new model${change.added === 1 ? "" : "s"} in /model.`,
-                            "info",
-                        );
-                    } else if (change.removed > 0) {
-                        ctx.ui.notify(
-                            `Bedrock: ${change.removed} model${change.removed === 1 ? "" : "s"} left /model.`,
-                            "info",
-                        );
-                    }
-                    if (selectedGone && selected !== undefined) {
-                        if (settingsChanged) guard.suppressWarnings();
-                        ctx.ui.notify(
-                            settingsChanged
-                                ? `Bedrock: ${selected.id} is not in the list for the new settings; choose another with /model.`
-                                : `Bedrock: ${selected.id} is no longer in your account; choose another with /model.`,
-                            "warning",
-                        );
-                    }
-                }
-                settingsChanged = false;
-                return status;
-            })().finally(() => {
-                refreshInFlight = undefined;
-                noticeFailureOnce = false;
-            });
-            return refreshInFlight;
-        };
-        async function refreshForModelSelector(force: boolean): Promise<void> {
-            if (refreshInFlight !== undefined) return;
-            const status = await refresh(force, false, true);
-            if (status !== "ok")
-                throw new Error(
-                    `${catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status, config?.mode)}`,
-                );
-        }
+        const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> =>
+            runtime.refresh(force, notifyFailure, quiet);
         /** True while this session uses the top-level settings, even when JIG_BEDROCK_PRESET is set. */
         let topLevelForced = false;
         const reloadSettings = () => {
@@ -739,31 +507,14 @@ export function createBedrockProvider(
                 ...(config.preset === undefined ? {} : { presetOverride: config.preset }),
             });
         };
-        const replaceConfig = (next: ResolvedConfig): void => {
-            for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
-                if (!(key in next)) delete config[key];
-            Object.assign(config, next);
-            profiles.updateSetting(config.profile, config.profileSource);
-            lastChoice =
-                config.profile === undefined
-                    ? { ambient: true }
-                    : {
-                          profile: config.profile,
-                          source: config.profileSource === "env" ? "env" : "setting",
-                          exists: true,
-                      };
-        };
-        const applyResolved = (next: ConfigResult): boolean => {
-            if (!next.config) return false;
-            replaceConfig(next.config);
-            return true;
-        };
+        const replaceConfig = (next: ResolvedConfig): void => runtime.replaceConfig(next);
+        const applyResolved = (next: ConfigResult): boolean => runtime.applyResolved(next);
         afterProfileLogin = async (profile, interaction, signal) => {
-            storedAuthSeen = true;
+            runtime.storedAuthSeen = true;
             if (profile === undefined) config.profile = undefined;
             else config.profile = profile;
             profiles.stored = profile;
-            lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
+            runtime.lastChoice = profile === undefined ? { ambient: true } : { profile, source: "login", exists: true };
             interaction.notify({ type: "progress", message: "Loading Bedrock models…" });
             {
                 const savedProfile = saveProfileSetting(profileEnv, profile, config.preset);
@@ -789,12 +540,12 @@ export function createBedrockProvider(
                         message: `profile ${resolved.profile} overrides the profile chosen at /login.`,
                     });
             }
-            settingsBaseline = models.length;
+            runtime.settingsBaseline = models.length;
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) {
                 await register();
             }
-            settingsChanged = true;
+            runtime.settingsChanged = true;
             let settled = true;
             const timeout = new Promise<void>((resolve) => {
                 const timer = setTimeout(() => {
@@ -965,20 +716,11 @@ export function createBedrockProvider(
             }
             topLevelForced = toTop;
             applyConfig(next.config);
-            lastChoice = { profile: config.profile, source: toTop ? "setting" : "preset", exists: true };
+            runtime.lastChoice = { profile: config.profile, source: toTop ? "setting" : "preset", exists: true };
             const switchName = toTop ? "the top-level settings" : `preset ${name}`;
             if (native) {
-                catalog = withDebugCatalog(
-                    options.catalog ??
-                        createAwsDiscovery(config, catalogPath, undefined, profileEnv, {
-                            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-                            ...(options.discoveryCredentials === undefined
-                                ? {}
-                                : { credentials: options.discoveryCredentials }),
-                        }),
-                    debug,
-                    () => ({ mode: config.mode, regions: config.regions }),
-                );
+                runtime.rebuildCatalog();
+                catalog = runtime.catalog;
                 const updated = readModels().available;
                 updateModels(models, updated);
                 await register();
@@ -1191,7 +933,7 @@ export function createBedrockProvider(
                 return;
             }
             applyConfig(next.config);
-            lastChoice = { profile: config.profile, source: "preset", exists: true };
+            runtime.lastChoice = { profile: config.profile, source: "preset", exists: true };
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) await register();
             // The footer is the active scope's figure; it must not restart at $0 just because a preset now exists.
@@ -1260,17 +1002,17 @@ export function createBedrockProvider(
             failure: () => catalog.failure?.(),
             discoveryStatus: () => catalog.status?.(),
             discoveryMode: () => config.mode,
-            signedIn: () => signInConfirmed,
-            storedAuthLost: () => storedAuthSeen && !storedAuthNow(),
+            signedIn: () => runtime.signInConfirmed,
+            storedAuthLost: () => runtime.storedAuthLost(),
             login: async () => {
-                const profile = lastChoice.profile ?? config.profile;
+                const profile = runtime.lastChoice.profile ?? config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
                 await recoveryForLogin(profile, undefined, "manual");
                 await refresh(true, true);
             },
             unavailable: () => readModels().unavailable,
-            lastChoice: () => lastChoice,
-            loading: () => refreshInFlight !== undefined && models.length === 0,
+            lastChoice: () => runtime.lastChoice,
+            loading: () => runtime.loading(),
             presetNames: () => config.presetNames ?? [],
             presetList: () => presetList(),
             activePreset: () => ({ name: config.preset, source: config.presetSource }),
@@ -1283,7 +1025,7 @@ export function createBedrockProvider(
                 if (!applyResolved(next)) return;
                 if (config.profile !== undefined && options.listProfiles !== undefined) {
                     const listed = await options.listProfiles(undefined);
-                    lastChoice = {
+                    runtime.lastChoice = {
                         profile: config.profile,
                         source: config.profileSource === "env" ? "env" : "setting",
                         exists: listed === undefined ? true : listed.includes(config.profile),
@@ -1292,15 +1034,15 @@ export function createBedrockProvider(
                 // A save that changes no discovery setting (a budget, a model route) starts no refresh; marking it would
                 // make the next unrelated refresh report this save's stale count instead of what changed.
                 if (refreshModels) {
-                    settingsChanged = true;
-                    settingsBaseline = models.length;
+                    runtime.settingsChanged = true;
+                    runtime.settingsBaseline = models.length;
                 }
                 if (ctx) spend.updateFooter(ctx);
                 const updated = readModels().available;
                 if (updateModels(models, updated).changed && native) await register();
             },
             doctorAws: async (signal) => {
-                const choice = lastChoice.profile ?? config.profile;
+                const choice = runtime.lastChoice.profile ?? config.profile;
                 const rows: Array<{
                     ok: boolean;
                     warn?: boolean;
@@ -1334,7 +1076,7 @@ export function createBedrockProvider(
                             options.verifyProfile ??
                             ((profile, sig) => verifyAwsProfile(profile, { env: profileEnv, signal: sig }))
                         )(choice, signal);
-                        if (check.ok) signInConfirmed = true;
+                        if (check.ok) runtime.markSignedIn();
                         const expired =
                             !check.ok &&
                             (isSsoProfile(choice, profileEnv) ?? false) &&
@@ -1400,8 +1142,8 @@ export function createBedrockProvider(
                     });
                 return rows;
             },
-            clearRefusals: () => clearRefusals(profileEnv, config.profile, refusalAccount),
-            refused: () => refusedModels(profileEnv, config.profile, refusalAccount),
+            clearRefusals: () => clearRefusals(profileEnv, config.profile, runtime.refusalAccount),
+            refused: () => refusedModels(profileEnv, config.profile, runtime.refusalAccount),
             doctorCall: async (signal) => {
                 const current = ctx?.model;
                 const selected = models.find((model) => model.id === current?.id);
@@ -1412,7 +1154,7 @@ export function createBedrockProvider(
                     { converse: native.stream, ...(messages ? { messages: messages.stream } : {}) },
                     catalog.load,
                     currentProfile,
-                    signedFetch,
+                    runtime.signedFetch,
                     refusalMessage,
                 );
                 let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {};
@@ -1428,7 +1170,7 @@ export function createBedrockProvider(
                     if (event.type === "error") failure = event.error?.errorMessage ?? "the tiny call failed";
                 }
                 if (failure !== undefined) throw new Error(failure);
-                signInConfirmed = true;
+                runtime.markSignedIn();
                 return {
                     route: routeOf(selected),
                     ms: Math.round(performance.now() - started),
@@ -1439,34 +1181,11 @@ export function createBedrockProvider(
         });
         bedrockCommand = commands.bedrock;
         bedrockCompletions = commands.completions;
-        const resolveProfile = async (context: ExtensionContext): Promise<ProfileChoice> => {
-            if (!options.preserveNativeAuth) {
-                // Pi resolves this provider's auth from its credential store; the credential is passed to the provider's
-                // resolve, which records /login's env.AWS_PROFILE here. Nothing reads auth.json.
-                const registry = (
-                    context as {
-                        modelRegistry?: { getProviderAuth?: (id: string) => Promise<unknown> };
-                    }
-                ).modelRegistry;
-                try {
-                    await registry?.getProviderAuth?.(JIG_BEDROCK);
-                } catch {}
-            }
-            const choice = await profiles.resolve({ signal: lifetime.signal });
-            config.profile = choice.profile;
-            lastChoice = choice;
-            autoProfile =
-                choice.ambient === true ||
-                choice.source === "default" ||
-                choice.source === "AWS_PROFILE" ||
-                choice.source === "AWS_DEFAULT_PROFILE";
-            autoProfileFailed = autoProfile && models.length === 0;
-            return choice;
-        };
+        const resolveProfile = (context: ExtensionContext): Promise<ProfileChoice> => runtime.resolveProfile(context);
         pi.on("session_start", async (_event, context) => {
             disposed = false;
             ctx = context;
-            if (storedAuthNow()) storedAuthSeen = true;
+            runtime.markStoredAuthSeen();
             const choice = await resolveProfile(context);
             if (config.presetUnknown !== undefined) {
                 context.ui.notify(
@@ -1484,7 +1203,7 @@ export function createBedrockProvider(
             } else if (choice.exists === false) {
                 context.ui.notify(missingProfileNotice(choice), "warning");
             } else if (failed) context.ui.notify("Bedrock unavailable; update Pi and /reload.", "warning");
-            else if (!models.length && !autoProfile)
+            else if (!models.length && !runtime.autoProfile)
                 context.ui.notify(
                     "Bedrock: reading the models from AWS; they appear in /model in a few seconds (first start).",
                     "info",
@@ -1510,7 +1229,7 @@ export function createBedrockProvider(
         pi.on("message_end", (event, context) => {
             const message = event.message as unknown as Json | undefined;
             if (message?.role !== "assistant" || message.provider !== "jig-bedrock") return;
-            if (message.stopReason !== "error" && message.stopReason !== "aborted") signInConfirmed = true;
+            if (message.stopReason !== "error" && message.stopReason !== "aborted") runtime.markSignedIn();
             const selected = models.find((model) => model.id === message.model);
             const session = context.sessionManager.getSessionId();
             const result = spend.record(message as Json, session, selected);
@@ -1525,8 +1244,8 @@ export function createBedrockProvider(
         // checks the model list can explain a missing saved model; a refresh that never starts cannot.
         guard = registerBedrockSelectionGuard(pi, models, {
             ...(options.selection ?? { agentDir: config?.agentDir }),
-            deferStartupWarning: () => refreshInFlight !== undefined && models.length === 0,
-            discoverySlow: () => discoverySlow,
+            deferStartupWarning: () => runtime.loading(),
+            discoverySlow: () => runtime.isDiscoverySlow(),
         });
         // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share.
         // Registered after the handler above, so the profile it resolves is already in force.

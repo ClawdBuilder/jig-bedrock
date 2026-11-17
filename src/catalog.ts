@@ -551,12 +551,13 @@ export function bedrockStream(
     profile: () => string | undefined,
     signedFetch?: typeof globalThis.fetch,
     onRefusal?: (model: BedrockModel, message: string) => string | undefined,
+    providerId: string = JIG_BEDROCK,
 ): Stream {
     const approved = [...models];
     return (model, context, options) => {
         const physical = approved.find((m) => m.id === model.id);
         if (
-            model.provider !== JIG_BEDROCK ||
+            model.provider !== providerId ||
             !physical ||
             !load()?.profiles.some(
                 (p) => p.arn === physical.arn && p.foundation_model_id === physical.foundationModelId,
@@ -587,7 +588,7 @@ export function bedrockStream(
         };
         // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
         // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
-        const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
+        const logical = { ...model, ...physical, provider: providerId, id: physical.id };
         // A credential failure is recorded for this request only, so the error event below can say what happened
         // instead of Pi's "Connection error."; a later successful attempt clears it again.
         let credentialFailure: string | undefined;
@@ -725,20 +726,22 @@ export async function registerBedrockProvider(
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
     refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
+    providerId: string = JIG_BEDROCK,
+    displayName: string = BEDROCK_PROVIDER_NAME,
 ): Promise<BedrockModel[]> {
     const makePicker = () =>
         models.map(({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
             ...m,
             type: "chat" as const,
-            provider: JIG_BEDROCK,
+            provider: providerId,
         }));
     let picker = makePicker();
     const fillPicker = (): void => {
         picker = makePicker();
     };
     pi.registerProvider({
-        id: JIG_BEDROCK,
-        name: BEDROCK_PROVIDER_NAME,
+        id: providerId,
+        name: displayName,
         auth: identity.auth,
         getModels: () => picker,
         getAllModels: () => picker,
@@ -767,6 +770,7 @@ export async function registerBedrockProvider(
             identity.profile,
             signedFetch,
             onRefusal,
+            providerId,
         ) as typeof native.stream,
         streamSimple: bedrockStream(
             models,
@@ -778,6 +782,7 @@ export async function registerBedrockProvider(
             identity.profile,
             signedFetch,
             onRefusal,
+            providerId,
         ),
     });
     return models;
