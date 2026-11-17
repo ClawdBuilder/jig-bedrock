@@ -661,7 +661,7 @@ test("the presets menu says there are no presets and offers only what makes sens
     await h.result.bedrock("", h.ctx as never);
     const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
     assert.equal(calls.length, 2);
-    assert.match(calls[1]!.title, /No presets yet\. Save the current settings as one first\./);
+    assert.match(calls[1]!.title, /No presets yet\. Create one with New preset…, or save the current settings\./);
     assert.deepEqual(calls[1]!.options, ["New preset…", "Save current settings as a preset…", "Back"]);
 });
 

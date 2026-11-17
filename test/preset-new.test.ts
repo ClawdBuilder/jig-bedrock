@@ -159,6 +159,8 @@ test("a guided AWS-defined preset is saved with discovery and switched to", asyn
         calls.some((call) => call.title === "Which inference profiles should Bedrock list?"),
         JSON.stringify(calls),
     );
+    const namePrompt = calls.find((call) => call.title.startsWith("New preset name"));
+    assert.match(namePrompt?.title ?? "", /letters, digits, \. _ - · up to 40/, JSON.stringify(calls));
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as {
         preset?: string;
         presets: Record<string, Record<string, unknown>>;

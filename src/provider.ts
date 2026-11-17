@@ -38,7 +38,7 @@ import {
 import { isObject } from "./check.ts";
 import { type BedrockCommand, registerBedrockCommands, registerBrokenCommands } from "./commands.ts";
 import type { ConfigResult, ResolvedConfig } from "./config.ts";
-import { loadConfig, PRESET_FIELDS, presetNamePattern } from "./config.ts";
+import { loadConfig, PRESET_FIELDS, presetNamePattern, TOP_LEVEL_PRESET } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import { createDebugLog, debugEnabled, withDebugCatalog, withDebugLog, withDebugRecover } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
@@ -734,12 +734,17 @@ export function createBedrockProvider(
                     `${catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status, config?.mode)}`,
                 );
         }
-        const reloadSettings = () =>
-            loadConfig({
+        /** True while this session uses the top-level settings, even when JIG_BEDROCK_PRESET is set. */
+        let topLevelForced = false;
+        const reloadSettings = () => {
+            const env = { ...(options.env ?? process.env) };
+            if (topLevelForced) delete env.JIG_BEDROCK_PRESET;
+            return loadConfig({
                 raw: userSettings(options.env ?? process.env),
-                env: options.env ?? process.env,
+                env,
                 ...(config.preset === undefined ? {} : { presetOverride: config.preset }),
             });
+        };
         const replaceConfig = (next: ResolvedConfig): void => {
             for (const key of Object.keys(config) as Array<keyof ResolvedConfig>)
                 if (!(key in next)) delete config[key];
@@ -864,7 +869,10 @@ export function createBedrockProvider(
         const presetModeName = (mode: ResolvedConfig["mode"]): string =>
             mode === "explicit" ? "listed" : mode === "tag" ? "by tag" : "AWS-defined";
         const presetList = () => {
-            const raw = userSettings(profileEnv)?.presets;
+            const settings = userSettings(profileEnv);
+            const raw = settings?.presets;
+            const top = reloadForPreset(undefined, undefined, true).config;
+            const topProfile = top?.profile ?? (typeof settings?.profile === "string" ? settings.profile : undefined);
             // The labels a person reads must be the ones the preset would really run: the effective settings merge the
             // preset over the top level, exactly as switching does.
             const modeLabel = (mode: ResolvedConfig["mode"], body: Record<string, unknown>): string => {
@@ -878,32 +886,51 @@ export function createBedrockProvider(
                       ? "by tag"
                       : "AWS-defined";
             };
-            return Object.keys(isObject(raw) ? raw : {})
-                .sort()
-                .map((name) => {
-                    const body = isObject(raw) && isObject(raw[name]) ? (raw[name] as Record<string, unknown>) : {};
-                    const effective = config.preset === name ? config : reloadForPreset(name).config;
-                    const profile = effective?.profile ?? (typeof body.profile === "string" ? body.profile : undefined);
-                    return {
-                        name,
-                        profile,
-                        mode: modeLabel(effective?.mode, body),
-                        active: config.preset === name,
-                        source: config.preset === name ? config.presetSource : undefined,
-                    };
-                });
+            return [
+                {
+                    name: TOP_LEVEL_PRESET,
+                    label: "Top-level settings",
+                    profile: topProfile,
+                    mode: presetModeName(top?.mode),
+                    active: config.preset === undefined,
+                    source: "top-level",
+                },
+                ...Object.keys(isObject(raw) ? raw : {})
+                    .sort()
+                    .map((name) => {
+                        const body = isObject(raw) && isObject(raw[name]) ? (raw[name] as Record<string, unknown>) : {};
+                        const effective = config.preset === name ? config : reloadForPreset(name).config;
+                        const profile =
+                            effective?.profile ?? (typeof body.profile === "string" ? body.profile : undefined);
+                        return {
+                            name,
+                            profile,
+                            mode: modeLabel(effective?.mode, body),
+                            active: config.preset === name,
+                            source: config.preset === name ? config.presetSource : undefined,
+                        };
+                    }),
+            ];
         };
         const saveSettings = (document: Record<string, unknown>): string | undefined => {
             const saved = writeSettingsDocument(profileEnv, document);
             return saved.ok ? undefined : saved.error;
         };
         const applyConfig = (next: ResolvedConfig): void => replaceConfig(next);
-        const reloadForPreset = (name: string | undefined, _context?: ExtensionCommandContext): ConfigResult => {
+        const reloadForPreset = (
+            name: string | undefined,
+            _context?: ExtensionCommandContext,
+            ignoreEnvPreset = false,
+        ): ConfigResult => {
             const raw = userSettings(profileEnv) ?? {};
             const env = { ...profileEnv };
-            if (name !== undefined && env.JIG_BEDROCK_PRESET !== undefined) env.JIG_BEDROCK_PRESET = name;
+            if (ignoreEnvPreset) delete env.JIG_BEDROCK_PRESET;
+            else if (name !== undefined && env.JIG_BEDROCK_PRESET !== undefined) env.JIG_BEDROCK_PRESET = name;
+            const scopedRaw = { ...raw };
+            if (name === undefined) delete scopedRaw.preset;
+            else scopedRaw.preset = name;
             const next = loadConfig({
-                raw: name === undefined ? raw : { ...raw, preset: name },
+                raw: scopedRaw,
                 env,
                 agentDir: config.agentDir,
                 presetOverride: name,
@@ -915,9 +942,10 @@ export function createBedrockProvider(
             context: ExtensionCommandContext,
             switchOptions: { newlySaved?: boolean } = {},
         ): Promise<void> => {
+            const toTop = name === TOP_LEVEL_PRESET;
             const before = new Set(config.presetNames ?? []);
             if (switchOptions.newlySaved === true) before.add(name);
-            if (!before.has(name)) {
+            if (!toTop && !before.has(name)) {
                 emitPreset(context, [
                     `${m.fail} Unknown preset ${name}.`,
                     `Known presets: ${[...before].sort().join(", ") || "none"}.`,
@@ -927,7 +955,8 @@ export function createBedrockProvider(
             const document = readSettingsDocument(profileEnv);
             if (!("error" in document)) {
                 if (profileEnv.JIG_BEDROCK_PRESET === undefined) {
-                    document.target.preset = name;
+                    if (toTop) delete document.target.preset;
+                    else document.target.preset = name;
                     const error = saveSettings(document.document);
                     if (error !== undefined) {
                         emitPreset(context, [`${m.fail} ${error}`]);
@@ -935,13 +964,15 @@ export function createBedrockProvider(
                     }
                 }
             }
-            const next = reloadForPreset(name, context);
+            const next = reloadForPreset(toTop ? undefined : name, context, toTop);
             if (!next.config) {
                 emitPreset(context, [`${m.fail} ${next.error}`]);
                 return;
             }
+            topLevelForced = toTop;
             applyConfig(next.config);
-            lastChoice = { profile: config.profile, source: "preset", exists: true };
+            lastChoice = { profile: config.profile, source: toTop ? "setting" : "preset", exists: true };
+            const switchName = toTop ? "the top-level settings" : `preset ${name}`;
             if (native) {
                 catalog = withDebugCatalog(
                     options.catalog ??
@@ -970,20 +1001,20 @@ export function createBedrockProvider(
                     selectionNotified = true;
                     guard.blockUntilChoice();
                     context.ui.notify(
-                        `Bedrock: ${selectedId} is not in preset ${name}; choose one with /model.`,
+                        `Bedrock: ${selectedId} is not in ${switchName}; choose one with /model.`,
                         "warning",
                     );
                 };
                 const afterDiscovery = async (): Promise<void> => {
                     const status = await refresh(false, false, true);
                     if (status !== "ok") {
-                        context.ui.notify(`Bedrock: could not read the models for preset ${name}.`, "warning");
+                        context.ui.notify(`Bedrock: could not read the models for ${switchName}.`, "warning");
                         return;
                     }
                     checkSelection();
                 };
                 if (models.length === 0) {
-                    context.ui.notify(`Bedrock: reading the models for ${name}…`, "info");
+                    context.ui.notify(`Bedrock: reading the models for ${switchName}…`, "info");
                     void afterDiscovery();
                 } else {
                     checkSelection();
@@ -992,11 +1023,13 @@ export function createBedrockProvider(
             }
             spend.updateFooter(context);
             context.ui.notify(
-                switchOptions.newlySaved === true
-                    ? `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
-                    : profileEnv.JIG_BEDROCK_PRESET === undefined
-                      ? `Bedrock: preset ${name} is active.`
-                      : `Bedrock: preset ${name} is active for this Pi only.`,
+                toTop
+                    ? `Top-level settings are active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
+                    : switchOptions.newlySaved === true
+                      ? `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
+                      : profileEnv.JIG_BEDROCK_PRESET === undefined
+                        ? `Bedrock: preset ${name} is active.`
+                        : `Bedrock: preset ${name} is active for this Pi only.`,
                 "info",
             );
         };
@@ -1040,7 +1073,7 @@ export function createBedrockProvider(
                 for (;;) {
                     const answer = await interaction.prompt({
                         type: "text",
-                        message: "New preset name",
+                        message: "New preset name · letters, digits, . _ - · up to 40",
                         placeholder: "work",
                     });
                     const value = answer.trim();
@@ -1049,6 +1082,13 @@ export function createBedrockProvider(
                         interaction.notify({
                             type: "info",
                             message: `${value} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens.`,
+                        });
+                        continue;
+                    }
+                    if (value === TOP_LEVEL_PRESET) {
+                        interaction.notify({
+                            type: "info",
+                            message: `${value} is reserved for the top-level settings; choose another name.`,
                         });
                         continue;
                     }

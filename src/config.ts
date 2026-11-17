@@ -103,6 +103,8 @@ export const PRESET_FIELDS = [
 ] as const;
 export const MACHINE_FIELDS = ["ssoLoginCommand", "signInAtStart", "browser", "debug"] as const;
 export const presetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+/** The typed word for the top-level settings; it is never a preset name. */
+export const TOP_LEVEL_PRESET = "top";
 export const FIELDS = [
     "presets",
     "preset",
@@ -316,6 +318,8 @@ function readPresets(value: unknown): { presets?: Record<string, Record<string, 
     if (!isObject(value)) return { error: "presets must be an object of named presets" };
     const presets: Record<string, Record<string, unknown>> = {};
     for (const [name, body] of Object.entries(value)) {
+        if (name === TOP_LEVEL_PRESET)
+            return { error: `presets.${name} is reserved for the top-level settings; choose another preset name` };
         if (!presetNamePattern.test(name))
             return {
                 error: `presets.${name} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
@@ -368,6 +372,8 @@ export function loadConfig(
               : undefined);
     if (requested !== undefined && !presetNamePattern.test(requested))
         return { error: `preset must be a preset name: ${requested}` };
+    if (requested === TOP_LEVEL_PRESET)
+        return { error: `preset ${TOP_LEVEL_PRESET} means the top-level settings; leave preset unset to use them` };
     if (requested !== undefined && presets[requested] === undefined)
         return {
             config: {
