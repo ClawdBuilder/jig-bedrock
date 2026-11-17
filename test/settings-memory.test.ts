@@ -75,11 +75,22 @@ async function start(initial: Record<string, unknown>, envExtra: Record<string, 
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
+        model: undefined as unknown,
         ui: { notify: (text: string) => notices.push(text), setStatus() {} },
         sessionManager: { getSessionId: () => "s" },
         modelRegistry: { find: () => undefined },
     };
     return { dir, env, raw, resolved, commands, notices, signed, providers, ctx };
+}
+
+/** Make the session run one preset's model, which is what decides the command's scope in 0.7.0. */
+function focus(h: { providers: any[]; ctx: { model: unknown } }, preset: string): void {
+    const model = [...h.providers]
+        .reverse()
+        .find((provider: any) => provider.id === `jig-bedrock-${preset}`)
+        ?.getModels?.()[0];
+    assert.ok(model, `${preset} has a model`);
+    h.ctx.model = model;
 }
 
 test("set profile then login renews the new profile, and status shows it", async (t) => {
@@ -205,6 +216,8 @@ test("every settings-menu example is a value its own key accepts", async (t) => 
 test("a set under an active preset writes into the preset", async (t) => {
     const s = await start({ preset: "work", presets: { work: { profile: "old" } }, regions: ["us-east-1"] });
     try {
+        // 0.7.0: the model in use decides the scope, not the `preset` key alone.
+        focus(s, "work");
         await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
         const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
         assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
@@ -243,6 +256,8 @@ test("a preset chosen for the session survives an env preset on the next save", 
     );
     try {
         await s.commands.get("bedrock").handler("use personal", s.ctx);
+        // Step 4 makes `use` select the model; until then, a session on personal's model is what routes the save there.
+        focus(s, "personal");
         await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
         const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
         assert.deepEqual(saved.presets.personal.regions, ["eu-west-1"]);

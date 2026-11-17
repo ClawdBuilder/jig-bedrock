@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BedrockModel } from "./catalog.ts";
 import type { ResolvedConfig } from "./config.ts";
-import { isOwnModel } from "./identity.ts";
+import { isOwnModel, isOwnProvider, presetOf } from "./identity.ts";
 import { markers } from "./markers.ts";
 
 type Json = Record<string, unknown>;
@@ -555,7 +555,13 @@ export class SpendTracker {
         session: string,
         model: BedrockModel | undefined,
     ): { reply?: SpendReply; error?: string } | undefined {
-        if (message.role !== "assistant" || message.provider !== "jig-bedrock") return undefined;
+        if (
+            message.role !== "assistant" ||
+            !isOwnProvider(typeof message.provider === "string" ? message.provider : undefined)
+        )
+            return undefined;
+        // A preset's own reply carries its provider id; the plain provider is the top level, or 0.6.3's active preset.
+        const preset = presetOf(String(message.provider)) ?? this.config.preset;
         const usage = (message.usage ?? {}) as Json;
         const route = message.api === "anthropic-messages" ? "messages" : "converse";
         const cost = usage.cost && (usage.cost as Json).total;
@@ -570,7 +576,7 @@ export class SpendTracker {
         const priced = model !== undefined ? model.rateSource === "Pi registry" : typeof cost === "number" && spent > 0;
         const reply: SpendReply = {
             type: "reply",
-            ...(this.config.preset === undefined ? {} : { preset: this.config.preset }),
+            ...(preset === undefined ? {} : { preset }),
             at: new Date(this.now()).toISOString(),
             session,
             model: typeof message.model === "string" ? message.model : (model?.id ?? "unknown"),
@@ -637,16 +643,18 @@ export class SpendTracker {
         if (limit === undefined || limit <= 0) return;
         const view = this.withCommand(this.local());
         const month = monthOf(this.now());
+        // With presets, a bare "Bedrock spend…" would not say which budget the line is about.
+        const prefix = this.config.preset === undefined ? "" : `${this.config.preset}: `;
         if (atStart && view.spentUsd > limit) {
             // One line per session while over budget; mark the 100% threshold so a later reply does not repeat it.
             claim(this.env, month, this.config.preset, limit, "warned100");
             context.ui.notify(
-                `Bedrock spend is over the ${money(limit)} monthly budget: ${money(view.spentUsd)}. This is a display figure, not an AWS limit; requests are not blocked.`,
+                `${prefix}Bedrock spend is over the ${money(limit)} monthly budget: ${money(view.spentUsd)}. This is a display figure, not an AWS limit; requests are not blocked.`,
                 "warning",
             );
         } else if (view.spentUsd >= limit && claim(this.env, month, this.config.preset, limit, "warned100")) {
             context.ui.notify(
-                `Bedrock spend is over the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit; requests are not blocked.`,
+                `${prefix}Bedrock spend is over the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit; requests are not blocked.`,
                 "warning",
             );
         } else if (
@@ -655,7 +663,7 @@ export class SpendTracker {
             claim(this.env, month, this.config.preset, limit, "warned80")
         ) {
             context.ui.notify(
-                `Bedrock spend is at ${Math.floor((view.spentUsd / limit) * 100)}% of the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit.`,
+                `${prefix}Bedrock spend is at ${Math.floor((view.spentUsd / limit) * 100)}% of the ${money(limit)} monthly budget (${money(view.spentUsd)}). This is a display figure, not an AWS limit.`,
                 "warning",
             );
         }
@@ -715,7 +723,8 @@ export class SpendTracker {
             `${m.warn} Not an AWS limit; no request is blocked.`,
             ...(limit === undefined ? ["Next: /bedrock budget 200"] : []),
         ];
-        emit(ctx, "Bedrock budget", rows);
+        // The budget a person reads is the scope of the model in use, not the machine's whole record.
+        emit(ctx, this.config.preset === undefined ? "Bedrock budget" : `Bedrock budget · ${this.config.preset}`, rows);
     }
 }
 export function regionOf(baseUrl: string): string {

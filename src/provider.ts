@@ -38,7 +38,7 @@ import { loadConfig, PRESET_FIELDS, presetNamePattern, TOP_LEVEL_PRESET } from "
 import { loadCredentialProvider } from "./credential-provider.ts";
 import { createDebugLog, debugEnabled, withDebugLog, withDebugRecover } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
-import { isOwnModel, JIG_BEDROCK, providerIdOf, providerNameOf } from "./identity.ts";
+import { isOwnModel, isOwnProvider, JIG_BEDROCK, presetOf, providerIdOf, providerNameOf } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
 import { askDiscoverySettings, askProfile, type LoginFlowOptions, runLoginFlow } from "./login-flow.ts";
@@ -245,12 +245,20 @@ export function createBedrockProvider(
         const migration = registerMigration(pi, options.env ?? process.env);
         let bedrockCommand: BedrockCommand | undefined;
         let bedrockCompletions: ((prefix: string) => Array<{ value: string; label: string }>) | undefined;
+        // The command being run, so every source it reads (settings, spend, catalog, models) follows the runtime that
+        // command acts on; the model in use decides that runtime.
+        let commandContext: ExtensionCommandContext | undefined;
         pi.registerCommand("bedrock", {
             description: "Bedrock status, models, spend and settings",
             getArgumentCompletions: (prefix) => (bedrockCompletions ? bedrockCompletions(prefix) : null),
             handler: async (args, context) => {
-                if (bedrockCommand) await bedrockCommand(args, context);
-                else await migration(args, context);
+                commandContext = context;
+                try {
+                    if (bedrockCommand) await bedrockCommand(args, context);
+                    else await migration(args, context);
+                } finally {
+                    commandContext = undefined;
+                }
             },
         });
         let guard: ReturnType<typeof registerBedrockSelectionGuard>;
@@ -404,18 +412,44 @@ export function createBedrockProvider(
         const runtimes = [...runtimeFor.values()];
         const primary = runtimeFor.get(primaryPreset) ?? runtimeFor.get(undefined);
         if (primary === undefined) return undefined;
+        const topLevel = runtimeFor.get(undefined) ?? primary;
+        /** The registered runtime a provider id names, if any (the plain id is the top level). */
+        const runtimeForProviderId = (providerId: string | undefined): PresetRuntime | undefined => {
+            if (providerId === undefined) return undefined;
+            if (providerId === JIG_BEDROCK) return runtimeFor.get(undefined);
+            const preset = presetOf(providerId);
+            return preset === undefined ? undefined : runtimeFor.get(preset);
+        };
+        /** Pi's saved default, which decides the runtime until a model is chosen (design §4). */
+        const savedDefaultProvider = (): string | undefined => {
+            try {
+                const settings = JSON.parse(
+                    readFileSync(path.join(config.agentDir ?? agentFolder(profileEnv), "settings.json"), "utf8"),
+                ) as { defaultProvider?: unknown };
+                return typeof settings.defaultProvider === "string" && settings.defaultProvider !== ""
+                    ? settings.defaultProvider
+                    : undefined;
+            } catch {
+                return undefined;
+            }
+        };
+        /**
+         * Which preset the footer, the spend record and /bedrock act on: the model in use when it is ours, else the
+         * runtime of Pi's saved default when that is one of ours, else the top-level settings (design §4).
+         */
+        const currentRuntime = (context?: { model?: { provider?: string } }): PresetRuntime =>
+            runtimeForProviderId(context?.model?.provider) ?? runtimeForProviderId(savedDefaultProvider()) ?? topLevel;
+        /** The runtime the command being handled acts on; outside a command, the session's model decides. */
+        const commandRuntime = (): PresetRuntime => currentRuntime(commandContext);
         // The runtime 0.6.3 would use is registered last, so it is also the newest registration.
         const orderedRuntimes = [...runtimes.filter((runtime) => runtime !== primary), primary];
         const models = primary.models;
         const profiles = primary.profiles;
-        const spend = primary.spend;
         const currentProfile = (): string | undefined => primary.currentProfile();
         const registerPrimary = (): Promise<void> => register(primary);
         const readModels = () => primary.readModels();
         // The primary runtime owns the catalog; the provider's own reads follow it when a preset switch recreates it.
         let catalog = primary.catalog;
-        const refusalMessage = (model: BedrockModel, message: string): string | undefined =>
-            primary.refusalMessage(model, message);
         // The tag listing /login's second-tag offer reads; the guided preset setup uses the same one.
         const loginTagMatches: NonNullable<LoginFlowOptions["tagMatches"]> = async (
             profile,
@@ -552,17 +586,11 @@ export function createBedrockProvider(
         }
         const refresh = (force = true, notifyFailure = false, quiet = false): Promise<Status> =>
             primary.refresh(force, notifyFailure, quiet);
-        /** True while this session uses the top-level settings, even when JIG_BEDROCK_PRESET is set. */
-        let topLevelForced = false;
-        const reloadSettings = () => {
-            const env = { ...(options.env ?? process.env) };
-            if (topLevelForced) delete env.JIG_BEDROCK_PRESET;
-            return loadConfig({
-                raw: userSettings(options.env ?? process.env),
-                env,
-                ...(config.preset === undefined ? {} : { presetOverride: config.preset }),
-            });
-        };
+        /** Reload the file for one runtime's scope: its preset, or the top level even when JIG_BEDROCK_PRESET is set. */
+        const reloadSettings = (runtime: PresetRuntime = primary): ConfigResult =>
+            runtime.config.preset === undefined
+                ? reloadForPreset(undefined, undefined, true)
+                : reloadForPreset(runtime.config.preset);
         const replaceConfig = (next: ResolvedConfig): void => primary.replaceConfig(next);
         const applyResolved = (next: ConfigResult): boolean => primary.applyResolved(next);
         afterProfileLogin = async (profile, interaction, signal) => {
@@ -750,7 +778,6 @@ export function createBedrockProvider(
                 emitPreset(context, [`${m.fail} ${next.error}`]);
                 return;
             }
-            topLevelForced = toTop;
             applyConfig(next.config);
             primary.lastChoice = { profile: config.profile, source: toTop ? "setting" : "preset", exists: true };
             const switchName = toTop ? "the top-level settings" : `preset ${name}`;
@@ -793,7 +820,7 @@ export function createBedrockProvider(
                     void afterDiscovery();
                 }
             }
-            spend.updateFooter(context);
+            currentRuntime(context).spend.updateFooter(context);
             const activated = toTop
                 ? `Top-level settings are active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
                 : `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`;
@@ -973,7 +1000,7 @@ export function createBedrockProvider(
             const updated = readModels().available;
             if (updateModels(models, updated).changed && native) await registerPrimary();
             // The footer is the active scope's figure; it must not restart at $0 just because a preset now exists.
-            spend.updateFooter(context);
+            currentRuntime(context).spend.updateFooter(context);
             emitPreset(context, [
                 `${m.ok} Preset ${name} saved and active; models reloaded.`,
                 `The footer now shows ${name}'s spend, including this month's spend from before presets.`,
@@ -1021,64 +1048,74 @@ export function createBedrockProvider(
                 ? "Next: /bedrock login"
                 : keysAdviceNext(name, "/bedrock doctor.");
         const commands = registerBedrockCommands(pi, {
-            config,
-            spend,
-            catalog: {
-                load: () => catalog.load(),
-                refresh: (force = false) => catalog.refresh(force),
-                failure: () => catalog.failure?.(),
+            // Read per command: the provider rebinds these to the runtime the model in use names (design §4).
+            get config() {
+                return commandRuntime().config;
             },
-            models: () => models,
+            get spend() {
+                return commandRuntime().spend;
+            },
+            catalog: {
+                load: () => commandRuntime().catalog.load(),
+                refresh: (force = false) => commandRuntime().catalog.refresh(force),
+                failure: () => commandRuntime().catalog.failure?.(),
+            },
+            models: () => commandRuntime().models,
             profiles,
             stored: () => profiles.stored,
             listProfiles: loginListProfiles,
             env: profileEnv,
             migrate: migration,
-            refresh: () => refresh(true, true, true),
-            failure: () => catalog.failure?.(),
-            discoveryStatus: () => catalog.status?.(),
-            discoveryMode: () => config.mode,
-            signedIn: () => primary.signInConfirmed,
-            storedAuthLost: () => primary.storedAuthLost(),
+            refresh: () => commandRuntime().refresh(true, true, true),
+            failure: () => commandRuntime().catalog.failure?.(),
+            discoveryStatus: () => commandRuntime().catalog.status?.(),
+            discoveryMode: () => commandRuntime().config.mode,
+            signedIn: () => commandRuntime().signInConfirmed,
+            storedAuthLost: () => commandRuntime().storedAuthLost(),
             login: async () => {
-                const profile = primary.lastChoice.profile ?? config.profile;
+                const runtime = commandRuntime();
+                const profile = runtime.lastChoice.profile ?? runtime.config.profile;
                 if (!profile) throw new Error("No AWS profile is chosen. Run /login first.");
                 await recoveryForLogin(profile, undefined, "manual");
-                await refresh(true, true);
+                await runtime.refresh(true, true);
             },
-            unavailable: () => readModels().unavailable,
-            lastChoice: () => primary.lastChoice,
-            loading: () => primary.loading(),
-            presetNames: () => config.presetNames ?? [],
+            unavailable: () => commandRuntime().readModels().unavailable,
+            lastChoice: () => commandRuntime().lastChoice,
+            loading: () => commandRuntime().loading(),
+            presetNames: () => commandRuntime().config.presetNames ?? [],
             presetList: () => presetList(),
             activePreset: () => ({ name: config.preset, source: config.presetSource }),
-            usePreset: (name, commandContext) => switchPreset(name, commandContext),
-            presetNew: (commandContext) => newPreset(commandContext),
-            presetAdd: (name, commandContext) => addPreset(name, commandContext),
-            presetRemove: (name, commandContext) => removePreset(name, commandContext),
+            usePreset: (name, context) => switchPreset(name, context),
+            presetNew: (context) => newPreset(context),
+            presetAdd: (name, context) => addPreset(name, context),
+            presetRemove: (name, context) => removePreset(name, context),
             apply: async (refreshModels = false) => {
-                const next = reloadSettings();
-                if (!applyResolved(next)) return;
-                if (config.profile !== undefined && options.listProfiles !== undefined) {
+                const runtime = commandRuntime();
+                const next = reloadSettings(runtime);
+                if (!runtime.applyResolved(next)) return;
+                if (runtime.config.profile !== undefined && options.listProfiles !== undefined) {
                     const listed = await options.listProfiles(undefined);
-                    primary.lastChoice = {
-                        profile: config.profile,
-                        source: config.profileSource === "env" ? "env" : "setting",
-                        exists: listed === undefined ? true : listed.includes(config.profile),
+                    runtime.lastChoice = {
+                        profile: runtime.config.profile,
+                        source: runtime.config.profileSource === "env" ? "env" : "setting",
+                        exists: listed === undefined ? true : listed.includes(runtime.config.profile),
                     };
                 }
                 // A save that changes no discovery setting (a budget, a model route) starts no refresh; marking it would
                 // make the next unrelated refresh report this save's stale count instead of what changed.
                 if (refreshModels) {
-                    primary.settingsChanged = true;
-                    primary.settingsBaseline = models.length;
+                    runtime.settingsChanged = true;
+                    runtime.settingsBaseline = runtime.models.length;
                 }
-                if (ctx) spend.updateFooter(ctx);
-                const updated = readModels().available;
-                if (updateModels(models, updated).changed && native) await registerPrimary();
+                const context = commandContext ?? ctx;
+                if (context) runtime.spend.updateFooter(context);
+                const updated = runtime.readModels().available;
+                if (updateModels(runtime.models, updated).changed && native) await register(runtime);
             },
             doctorAws: async (signal) => {
-                const choice = primary.lastChoice.profile ?? config.profile;
+                const runtime = commandRuntime();
+                const runtimeConfig = runtime.config;
+                const choice = runtime.lastChoice.profile ?? runtimeConfig.profile;
                 const rows: Array<{
                     ok: boolean;
                     warn?: boolean;
@@ -1112,7 +1149,7 @@ export function createBedrockProvider(
                             options.verifyProfile ??
                             ((profile, sig) => verifyAwsProfile(profile, { env: profileEnv, signal: sig }))
                         )(choice, signal);
-                        if (check.ok) primary.markSignedIn();
+                        if (check.ok) runtime.markSignedIn();
                         const expired =
                             !check.ok &&
                             (isSsoProfile(choice, profileEnv) ?? false) &&
@@ -1136,19 +1173,19 @@ export function createBedrockProvider(
                         });
                     }
                 }
-                const status = await refresh(true, false, true);
-                const reason = catalog.failure?.();
-                const current = catalog.load();
-                const partial = status === "ok" ? partialDiscovery(current) : undefined;
-                const errors = current?.errors ?? [];
+                const status = await runtime.refresh(true, false, true);
+                const reason = runtime.catalog.failure?.();
+                const catalogNow = runtime.catalog.load();
+                const partial = status === "ok" ? partialDiscovery(catalogNow) : undefined;
+                const errors = catalogNow?.errors ?? [];
                 const failedRegions = new Set(
-                    (current?.warnings ?? [])
+                    (catalogNow?.warnings ?? [])
                         .filter((warning) => /^[a-z0-9-]+ did not answer:/.test(warning))
                         .map((warning) => warning.slice(0, warning.indexOf(" "))),
                 );
-                const answered = config.regions.filter((region) => !failedRegions.has(region));
+                const answered = runtimeConfig.regions.filter((region) => !failedRegions.has(region));
                 rows.push({
-                    ok: errors.length === 0 && status === "ok" && models.length > 0,
+                    ok: errors.length === 0 && status === "ok" && runtime.models.length > 0,
                     check: "models",
                     ...(errors.length === 0 || partial === undefined
                         ? {}
@@ -1159,15 +1196,15 @@ export function createBedrockProvider(
                     text:
                         status !== "ok"
                             ? `Models: ${reason ?? "could not list"}`
-                            : models.length === 0
-                              ? config.mode === "tag"
-                                  ? `Models: no inference profiles with tag ${config.tagKey}=${config.tagValue} in ${config.regions.join(", ")}`
-                                  : `Models: no Claude models in ${config.regions.join(", ")}`
+                            : runtime.models.length === 0
+                              ? runtimeConfig.mode === "tag"
+                                  ? `Models: no inference profiles with tag ${runtimeConfig.tagKey}=${runtimeConfig.tagValue} in ${runtimeConfig.regions.join(", ")}`
+                                  : `Models: no Claude models in ${runtimeConfig.regions.join(", ")}`
                               : errors.length > 0 && partial !== undefined
                                 ? `Models: ${partial.line}. ${partial.errors}`
-                                : `Models: ${models.length} found in ${answered.join(", ")} (${config.mode === "tag" ? "tag" : config.mode === "explicit" ? "explicit list" : "AWS-defined"})`,
+                                : `Models: ${runtime.models.length} found in ${answered.join(", ")} (${runtimeConfig.mode === "tag" ? "tag" : runtimeConfig.mode === "explicit" ? "explicit list" : "AWS-defined"})`,
                 });
-                const save = catalog.saveFailure?.();
+                const save = runtime.catalog.saveFailure?.();
                 if (save !== undefined)
                     rows.push({
                         ok: false,
@@ -1178,25 +1215,32 @@ export function createBedrockProvider(
                     });
                 return rows;
             },
-            clearRefusals: () => clearRefusals(profileEnv, config.profile, primary.refusalAccount),
-            refused: () => refusedModels(profileEnv, config.profile, primary.refusalAccount),
+            clearRefusals: () => {
+                const runtime = commandRuntime();
+                return clearRefusals(profileEnv, runtime.config.profile, runtime.refusalAccount);
+            },
+            refused: () => {
+                const runtime = commandRuntime();
+                return refusedModels(profileEnv, runtime.config.profile, runtime.refusalAccount);
+            },
             doctorCall: async (signal) => {
-                const current = ctx?.model;
-                const selected = models.find((model) => model.id === current?.id);
+                const runtime = commandRuntime();
+                const selected = runtime.models.find((model) => model.id === (commandContext ?? ctx)?.model?.id);
                 if (!selected || !native) throw new Error("No selected Bedrock model to call.");
                 const started = performance.now();
                 const stream = bedrockStream(
                     [selected],
                     { converse: native.stream, ...(messages ? { messages: messages.stream } : {}) },
-                    catalog.load,
-                    currentProfile,
-                    primary.signedFetch,
-                    refusalMessage,
+                    runtime.catalog.load,
+                    () => runtime.currentProfile(),
+                    runtime.signedFetch,
+                    (model, message) => runtime.refusalMessage(model, message),
+                    runtime.providerId,
                 );
                 let usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } = {};
                 let failure: string | undefined;
                 for await (const event of stream(
-                    { ...selected, provider: JIG_BEDROCK },
+                    { ...selected, provider: runtime.providerId },
                     {
                         messages: [{ role: "user", content: "Reply with one word: ready", timestamp: Date.now() }],
                     } as never,
@@ -1206,7 +1250,7 @@ export function createBedrockProvider(
                     if (event.type === "error") failure = event.error?.errorMessage ?? "the tiny call failed";
                 }
                 if (failure !== undefined) throw new Error(failure);
-                primary.markSignedIn();
+                runtime.markSignedIn();
                 return {
                     route: routeOf(selected),
                     ms: Math.round(performance.now() - started),
@@ -1221,7 +1265,10 @@ export function createBedrockProvider(
         pi.on("session_start", async (_event, context) => {
             disposed = false;
             ctx = context;
+            // The session's focus: the model Pi restored, else Pi's saved default, else the top-level settings.
+            const focus = currentRuntime(context);
             primary.markStoredAuthSeen();
+            if (focus !== primary) focus.markStoredAuthSeen();
             const choice = await resolveProfile(context);
             if (config.presetUnknown !== undefined) {
                 context.ui.notify(
@@ -1263,48 +1310,64 @@ export function createBedrockProvider(
                         await runtime.refresh(false, false, true);
                     })().catch(() => {});
                 }
-            void spend
+            void focus.spend
                 .start(
                     config.agentDir ?? agentFolder(options.env),
                     context,
-                    (arn) => models.find((model) => model.arn === arn)?.id,
+                    (arn) => focus.models.find((model) => model.arn === arn)?.id,
                 )
                 .catch(() => {});
             // UI notices are queued until the session's UI is ready; the footer can be set immediately.
             setTimeout(() => {
-                if (ctx === context) spend.notice(context, true);
+                if (ctx === context) focus.spend.notice(context, true);
             }, 1000).unref();
         });
         pi.on("message_end", (event, context) => {
             const message = event.message as unknown as Json | undefined;
-            if (message?.role !== "assistant" || message.provider !== "jig-bedrock") return;
-            if (message.stopReason !== "error" && message.stopReason !== "aborted") primary.markSignedIn();
-            const selected = models.find((model) => model.id === message.model);
+            if (
+                message?.role !== "assistant" ||
+                !isOwnProvider(typeof message.provider === "string" ? message.provider : undefined)
+            )
+                return;
+            // The reply names its own provider: a preset's spend line is recorded under that preset, whatever is selected now.
+            const runtime = runtimeForProviderId(String(message.provider)) ?? currentRuntime(context);
+            if (message.stopReason !== "error" && message.stopReason !== "aborted") runtime.markSignedIn();
+            const selected = runtime.models.find((model) => model.id === message.model);
             const session = context.sessionManager.getSessionId();
-            const result = spend.record(message as Json, session, selected);
-            const writeError = result?.error === undefined ? undefined : spend.takeWriteError(session);
+            const result = runtime.spend.record(message as Json, session, selected);
+            const writeError = result?.error === undefined ? undefined : runtime.spend.takeWriteError(session);
             if (writeError !== undefined && context.hasUI) context.ui.notify(writeError, "warning");
-            spend.updateFooter(context);
-            spend.notice(context);
-            if (config.spendCommand !== undefined) void spend.refresh(false).then(() => spend.updateFooter(context));
+            const active = currentRuntime(context);
+            active.spend.updateFooter(context);
+            active.spend.notice(context);
+            if (active.config.spendCommand !== undefined)
+                void active.spend.refresh(false).then(() => active.spend.updateFooter(context));
         });
-        pi.on("model_select", (_event, context) => spend.updateFooter(context));
+        pi.on("model_select", (event, context) => {
+            const runtime = currentRuntime(context);
+            runtime.spend.updateFooter(context);
+            // A pick in /model re-points the footer and checks that preset's budget; another provider's model clears it.
+            if ((event.source === "set" || event.source === "cycle") && isOwnModel(context.model))
+                runtime.spend.notice(context);
+        });
         // Registered after the provider's session_start handler, so a refresh that is already running when the guard
         // checks the model list can explain a missing saved model; a refresh that never starts cannot.
         guard = registerBedrockSelectionGuard(pi, models, {
             ...(options.selection ?? { agentDir: config?.agentDir }),
-            deferStartupWarning: () => primary.loading(),
-            discoverySlow: () => primary.isDiscoverySlow(),
+            deferStartupWarning: () => (ctx === undefined ? primary : currentRuntime(ctx)).loading(),
+            discoverySlow: () => (ctx === undefined ? primary : currentRuntime(ctx)).isDiscoverySlow(),
+            isRegistered: (providerId) => runtimeForProviderId(providerId) !== undefined,
+            modelsFor: (providerId) => runtimeForProviderId(providerId)?.models,
         });
         // Sign in when Pi starts and the session has expired, through the recovery the commands and requests share.
         // Registered after the handler above, so the profile it resolves is already in force.
         registerSignInAtStart(pi, {
             signInAtStart: config.signInAtStart,
-            profile: () => currentProfile(),
+            profile: () => (ctx === undefined ? primary : currentRuntime(ctx)).currentProfile(),
             recover: recoveryForLogin,
             check: options.ssoCheck ?? ((profile, signal) => checkSso(profile, systemSsoDeps(options.env), signal)),
-            refresh: () => refresh(false),
-            models: () => models.length,
+            refresh: () => (ctx === undefined ? primary : currentRuntime(ctx)).refresh(false),
+            models: () => (ctx === undefined ? primary : currentRuntime(ctx)).models.length,
         });
         pi.on("session_shutdown", () => {
             lifetime.abort();

@@ -1,7 +1,11 @@
 export const JIG_BEDROCK = "jig-bedrock";
 /** The one display name: Pi files it under API key, next to its own "Amazon Bedrock". */
 export const BEDROCK_PROVIDER_NAME = "Amazon Bedrock (jig-bedrock)";
-export const isOwnModel = (model: { provider?: string } | undefined) => model?.provider === JIG_BEDROCK;
+/** True for the plain provider and for every preset's `jig-bedrock-<preset>`. */
+export const isOwnProvider = (providerId: string | undefined): boolean =>
+    providerId === JIG_BEDROCK || (providerId !== undefined && presetOf(providerId) !== undefined);
+/** True for a model of this package: the top level's or any preset's. */
+export const isOwnModel = (model: { provider?: string } | undefined): boolean => isOwnProvider(model?.provider);
 
 /** The Pi provider id a preset's models live under; the top level keeps the plain id. */
 export function providerIdOf(preset: string | undefined): string {

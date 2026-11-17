@@ -269,12 +269,18 @@ test("/login choosing AWS-defined under a preset writes discovery and the refres
     assert.equal(catalogs[0]?.mode, "system", "the saved choice is what the refresh used");
     assert.equal(tagging(fake.calls).length, 0, "the login refresh made no tag call");
 
-    // The next refresh after the dialog keeps the saved mode.
+    // The next refresh after the dialog keeps the saved mode. 0.7.0 routes the command by the model in use: a session
+    // on the preset's model is what makes /bedrock refresh read the preset the dialog just wrote.
+    const devProvider = [...providers].reverse().find((entry) => entry?.id === "jig-bedrock-dev");
+    const devModel = devProvider
+        ?.getModels?.()
+        .find((model: { provider: string }) => model.provider === "jig-bedrock-dev");
+    assert.ok(devModel, "the preset's model is registered");
     const ctx = {
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
-        model: undefined,
+        model: devModel,
         ui: { notify: (text: string) => notices.push(text) },
         sessionManager: { getSessionId: () => "test" },
         modelRegistry: { find: () => undefined },

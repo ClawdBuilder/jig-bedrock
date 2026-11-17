@@ -797,6 +797,10 @@ export function registerBedrockSelectionGuard(
         deferStartupWarning?: () => boolean;
         /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
         discoverySlow?: () => boolean;
+        /** The provider ids this package has registered now; a saved id whose preset is gone is not ours. */
+        isRegistered?: (providerId: string) => boolean;
+        /** One registered provider's models, for resolving a saved selection that names it. */
+        modelsFor?: (providerId: string) => BedrockModel[] | undefined;
     } = {},
 ): {
     blockUntilChoice(): void;
@@ -814,17 +818,23 @@ export function registerBedrockSelectionGuard(
         "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
     const loadingWarning =
         "Saved Bedrock model is not loaded yet; the models are still arriving. Choose one with /model after they appear.";
-    const warning = () =>
-        options.discoverySlow?.() === true || models.length === 0 ? loadingWarning : unavailableWarning;
+    const warning = (list: BedrockModel[] = models) =>
+        options.discoverySlow?.() === true || list.length === 0 ? loadingWarning : unavailableWarning;
     // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
-    // built-in model and must be left alone.
+    // built-in model and must be left alone. A preset id counts only while its preset is registered: a saved default
+    // naming a removed preset must not block input.
     const oldRecorded = (model: { provider?: string; id?: string } | undefined) =>
         model?.provider === "amazon-bedrock" && typeof model.id === "string" && model.id.startsWith("arn:");
-    const ours = (model: { provider?: string; id?: string } | undefined) => isOwnModel(model) || oldRecorded(model);
+    const registered = (providerId: string | undefined): boolean =>
+        options.isRegistered === undefined ? providerId === JIG_BEDROCK : options.isRegistered(providerId ?? "");
+    const modelsOf = (providerId: string | undefined): BedrockModel[] =>
+        options.modelsFor?.(providerId ?? "") ?? models;
+    const ours = (model: { provider?: string; id?: string } | undefined) =>
+        oldRecorded(model) || (isOwnModel(model) && registered(model?.provider));
     const unsupported = (ctx: ExtensionContext) =>
         hiddenRefusal !== undefined ||
         unresolvedSavedSelection ||
-        (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
+        (ours(ctx.model) && !modelsOf(ctx.model?.provider).some((m) => m.id === ctx.model?.id));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
         // Pi 1.2 reports a session switch as session_start with reason new, resume or fork.
         const switched =
@@ -856,18 +866,20 @@ export function registerBedrockSelectionGuard(
             }
         }
         if ((!options.explicitSelection?.() || switched) && ours({ provider, id: id || "" })) {
-            const match = resolveSelection(models, id || ""),
-                target = match && ctx.modelRegistry.find(JIG_BEDROCK, match.id);
+            const match = resolveSelection(modelsOf(provider), id || ""),
+                // A 0.2.x ARN under Pi's own provider moves to the plain provider; anything else keeps its provider.
+                targetProvider = oldRecorded({ provider }) ? JIG_BEDROCK : (provider ?? JIG_BEDROCK),
+                target = match && ctx.modelRegistry.find(targetProvider, match.id);
             if (!target) {
                 unresolvedSavedSelection = true;
                 if (options.deferStartupWarning?.() !== true) {
-                    ctx.ui.notify(warning(), "warning");
+                    ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
                 }
             } else if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
-                    ctx.ui.notify(warning(), "warning");
+                    ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
                 } else {
                     unresolvedSavedSelection = false;
@@ -876,7 +888,7 @@ export function registerBedrockSelectionGuard(
             }
         }
         if (!warned && options.deferStartupWarning?.() !== true && unsupported(ctx))
-            ctx.ui.notify(warning(), "warning");
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
     };
     pi.on("session_start", restore);
     pi.on("model_select", (event, ctx) => {
@@ -885,7 +897,8 @@ export function registerBedrockSelectionGuard(
             suppressWarnings = false;
             hiddenRefusal = undefined;
         }
-        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings)
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
@@ -896,7 +909,8 @@ export function registerBedrockSelectionGuard(
         }
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
-        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings)
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
         return { action: "handled" };
     });
     return {
