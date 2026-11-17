@@ -789,7 +789,7 @@ export function createBedrockProvider(
             return saved.ok ? undefined : saved.error;
         };
         /** This session's last model for a provider, from Pi's own branch. */
-        const rememberedModel = (context: ExtensionCommandContext, providerId: string): string | undefined => {
+        const rememberedModel = (context: ExtensionContext, providerId: string): string | undefined => {
             const branch = (context.sessionManager?.getBranch?.() ?? []) as unknown as Json[];
             for (let i = branch.length - 1; i >= 0; i--) {
                 const entry = branch[i];
@@ -823,7 +823,7 @@ export function createBedrockProvider(
             }
         };
         /** What /bedrock use picks: this session's last for it, else the saved default if it is that provider, else its first. */
-        const chooseModel = (runtime: PresetRuntime, context: ExtensionCommandContext): BedrockModel | undefined => {
+        const chooseModel = (runtime: PresetRuntime, context: ExtensionContext): BedrockModel | undefined => {
             for (const id of [rememberedModel(context, runtime.providerId), savedModelFor(runtime.providerId)]) {
                 if (id === undefined) continue;
                 const found = runtime.models.find((model) => model.id === id);
@@ -832,7 +832,7 @@ export function createBedrockProvider(
             return runtime.models[0];
         };
         /** Select one runtime's model through Pi, so the footer, budget and scope follow it (design §6). */
-        const selectModel = async (runtime: PresetRuntime, context: ExtensionCommandContext): Promise<boolean> => {
+        const selectModel = async (runtime: PresetRuntime, context: ExtensionContext): Promise<boolean> => {
             const model = chooseModel(runtime, context);
             if (model === undefined) return false;
             const target = context.modelRegistry?.find?.(runtime.providerId, model.id);
@@ -1387,13 +1387,66 @@ export function createBedrockProvider(
         bedrockCommand = commands.bedrock;
         bedrockCompletions = commands.completions;
         const resolveProfile = (context: ExtensionContext): Promise<ProfileChoice> => primary.resolveProfile(context);
+        /** Pi's saved default provider and model, read beside bedrock.json (never rewritten here). */
+        const savedDefaults = (): { provider?: string; model?: string } => {
+            try {
+                const settings = JSON.parse(
+                    readFileSync(path.join(config.agentDir ?? agentFolder(profileEnv), "settings.json"), "utf8"),
+                ) as { defaultProvider?: unknown; defaultModel?: unknown };
+                return {
+                    ...(typeof settings.defaultProvider === "string" && settings.defaultProvider !== ""
+                        ? { provider: settings.defaultProvider }
+                        : {}),
+                    ...(typeof settings.defaultModel === "string" && settings.defaultModel !== ""
+                        ? { model: settings.defaultModel }
+                        : {}),
+                };
+            } catch {
+                return {};
+            }
+        };
+        /** A one-line start-up notice, once per marker file beside `.bedrock-first-run`. */
+        const noticeOnce = (context: ExtensionContext, markerName: string, line: string): void => {
+            if (!context.hasUI) return;
+            const marker = path.join(agentFolder(options.env), markerName);
+            if (existsSync(marker)) return;
+            try {
+                writeFileSync(marker, new Date().toISOString(), { mode: 0o600 });
+            } catch {
+                return;
+            }
+            context.ui.notify(line, "warning");
+        };
+        /**
+         * Design §6: `preset` is the model a NEW session opens on, when Pi restored no model and settings hold no saved
+         * default. A cold cache starts its discovery and selects the model when that lands.
+         */
+        const openOnRequestedPreset = async (context: ExtensionContext): Promise<void> => {
+            if (context.model !== undefined && context.model.provider !== "unknown") return;
+            if (savedDefaults().provider !== undefined) return;
+            const requested = config.preset;
+            if (requested === undefined) return;
+            const runtime = runtimeFor.get(requested);
+            if (runtime === undefined) return;
+            const select = async (): Promise<void> => {
+                if (disposed) return;
+                if (context.model !== undefined && context.model.provider !== "unknown") return;
+                if (runtime.models.length === 0) return;
+                await selectModel(runtime, context);
+            };
+            if (runtime.models.length > 0) {
+                await select();
+                return;
+            }
+            void runtime
+                .refresh(false)
+                .then(select)
+                .catch(() => {});
+        };
         pi.on("session_start", async (_event, context) => {
             disposed = false;
             ctx = context;
-            // The session's focus: the model Pi restored, else Pi's saved default, else the top-level settings.
-            const focus = currentRuntime(context);
             primary.markStoredAuthSeen();
-            if (focus !== primary) focus.markStoredAuthSeen();
             const choice = await resolveProfile(context);
             if (config.presetUnknown !== undefined) {
                 context.ui.notify(
@@ -1416,6 +1469,34 @@ export function createBedrockProvider(
                     "Bedrock: reading the models from AWS; they appear in /model in a few seconds (first start).",
                     "info",
                 );
+            // `preset` opens a new session on its model when Pi restored none and no saved default says otherwise.
+            await openOnRequestedPreset(context);
+            const focus = currentRuntime(context);
+            if (focus !== primary) focus.markStoredAuthSeen();
+            // Design §5/§8: one line for a saved default whose preset is gone, and one for the 0.6.3 upgrade.
+            const saved = savedDefaults();
+            const savedPreset = saved.provider === undefined ? undefined : presetOf(saved.provider);
+            if (savedPreset !== undefined && !presetCatalogNames.includes(savedPreset))
+                noticeOnce(
+                    context,
+                    ".bedrock-removed-preset",
+                    `Bedrock: ${saved.model ?? "the saved default model"} is saved under ${saved.provider}, whose preset no longer exists. Choose another with /model; Pi keeps the saved settings.`,
+                );
+            const requestedPreset = config.preset;
+            if (requestedPreset !== undefined && saved.provider === JIG_BEDROCK && saved.model !== undefined) {
+                const presetRuntime = runtimeFor.get(requestedPreset);
+                if (
+                    presetRuntime !== undefined &&
+                    presetRuntime.models.length > 0 &&
+                    !topLevel.models.some((model) => model.id === saved.model) &&
+                    presetRuntime.models.some((model) => model.id === saved.model)
+                )
+                    noticeOnce(
+                        context,
+                        ".bedrock-preset-upgrade",
+                        `Bedrock: preset ${requestedPreset} is saved, but the saved default model ${saved.model} is only in it. Run /bedrock use ${requestedPreset}, then Ctrl+S in /model.`,
+                    );
+            }
             // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
             // discovery cannot succeed, so it is not started (the notice above already says what to do).
             const canRefresh =

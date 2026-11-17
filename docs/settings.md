@@ -52,7 +52,7 @@ A model AWS refuses with AccessDenied is remembered for seven days per AWS profi
 
 Each preset is its own Pi provider, `jig-bedrock-<preset>`, so every preset's models appear in `/model` at once, with that id in the bracket at the end of the row; the top-level settings stay the plain `jig-bedrock` provider. `/login` lists one Amazon Bedrock entry per preset, and signing in on one saves the AWS profile and discovery into that preset. A saved default names the provider it was saved from, so `/model` then Ctrl+S keeps it.
 
-A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
+A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `preset` names the model a new session opens on when Pi restored no model and no saved default exists; it never changes the plain provider's settings. `JIG_BEDROCK_PRESET` narrows the provider list to the plain provider plus that preset, and wins over nothing else.
 
 ```json
 {
@@ -64,7 +64,7 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 }
 ```
 
-`/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset new` (or the Presets menu's `New preset…`) asks for a preset name, the AWS profile, discovery and regions with the same prompts as `/login`, saves the preset and switches to it; without a UI it says to use `/bedrock preset add <name>` or edit the file. `/bedrock preset add work` saves the settings in force as a preset and activates it, and `/bedrock preset remove work` deletes it. The top-level settings are the row labelled `Top-level settings` at the top of the Presets menu, and `/bedrock use top` switches back to them; `top` cannot be a preset name. Unsetting `preset` also returns to the top-level settings and reloads their models. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The preset's footer shows its spend, including this month's spend from before presets existed, and `preset add` says so. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+`/bedrock use` lists the presets and switches to one by selecting a model of it: this session's last model for that provider, else Pi's saved default if it belongs to that provider, else its first. While its models are still arriving it starts the discovery and says so, changing nothing else. `/bedrock preset new` (or the Presets menu's `New preset…`) asks for a preset name, the AWS profile, discovery and regions with the same prompts as `/login`, saves the preset and switches to it; without a UI it says to use `/bedrock preset add <name>` or edit the file. `/bedrock preset add work` copies the settings in force into a new preset, registers it at once from the same cached catalog (no discovery) and selects its model; `/bedrock preset remove work` deletes it and unregisters its provider. The top-level settings are the row labelled `Top-level settings` at the top of the Presets menu, and `/bedrock use top` selects the top-level model; `top` cannot be a preset name. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The footer shows the spend of the model in use, including this month's spend from before presets existed. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it the plain provider plus `work`.
 
 `discovery` names the way models are found: `"aws-defined"` lists every AWS-defined Claude inference profile, `"tag"` needs `tagKey` and `tagValue`, and `"list"` needs `profiles`. A preset that sets `discovery` uses only its own discovery keys: it does not inherit a top-level `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `team` or `profiles`. A preset that does not set it inherits the top-level `discovery`; with neither set, the way is inferred from the keys as before. `/bedrock set discovery aws-defined` reloads the models at once, and `/login` saves the word for the choice it asks.
 
@@ -81,7 +81,7 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 }
 ```
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, and `set` writes there too, not the top level.
+Precedence for every preset key: environment variable, the preset being viewed, top-level file, then the AWS-profile fallbacks below. The scope of a command is the model in use: `/login` on `jig-bedrock-<preset>` saves the AWS profile and discovery into that preset, and `/bedrock set`, `unset` and `budget` write there too, not the top level.
 
 ## Which AWS profile is used
 
