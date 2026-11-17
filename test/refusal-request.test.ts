@@ -140,7 +140,7 @@ test("the provider has one registration path with the refusal handler", async ()
     assert.match(source, /for \(const entry of runtimeConfigs\)[\s\S]*?new PresetRuntime\(\{/);
     assert.match(source, /providerId: allPresetModels \? providerIdOf\(entry\.preset\) : providerIdOf\(undefined\)/);
     assert.ok(
-        (source.match(/await register\(/g) ?? []).length >= 3,
+        (source.match(/await register\(/g) ?? []).length >= 4,
         "the factory and every later live change register through the same function",
     );
 });

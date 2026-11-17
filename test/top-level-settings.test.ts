@@ -201,6 +201,7 @@ test("/bedrock unset preset selects the top-level model and says so", async (t) 
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as { preset?: string };
     assert.equal(saved.preset, undefined);
     assert.equal(h.ctx.model.provider, "jig-bedrock");
+    assert.equal(h.ctx.model.id, "claude-sonnet-5-5", "the top-level settings' model, not the preset's");
     assert.match(h.notices.join("\n"), /Top-level settings are active: fixture · by tag/);
 });
 

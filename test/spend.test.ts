@@ -639,11 +639,9 @@ test("adding a preset keeps the spend the footer showed and says what it counts"
         /The footer now shows work's spend, including this month's spend from before presets\./,
         notices.join("\n"),
     );
-    // Its models were not cached in this fixture, so the footer stays on the scope in use; the figure must not reset.
-    assert.ok(
-        statuses.some((status) => status?.includes("Nov $120")),
-        JSON.stringify(statuses),
-    );
+    // Pi's setStatus is the footer the user sees; after `preset add` it must name work and keep the month's figure.
+    const footer = statuses.at(-1);
+    assert.match(String(footer), /^work · Nov \$120/, JSON.stringify(statuses));
     assert.ok(
         statuses.every((status) => !status?.includes("$0.00")),
         JSON.stringify(statuses),

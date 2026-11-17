@@ -216,6 +216,8 @@ test("/bedrock use marks the model's preset active", async (t) => {
     const listing = s.notices.at(-1) ?? "";
     assert.match(listing, /ok personal .* · active \(model in use\)/, listing);
     assert.doesNotMatch(listing, /ok Top-level settings/, listing);
+    assert.match(listing, /work/, "every preset is listed");
+    assert.match(listing, /Top-level settings/, "the top-level settings stay a choice");
 });
 
 test("preset add copies the current runtime's config, registers at once and selects its model", async (t) => {
@@ -282,6 +284,8 @@ test("preset remove unregisters at once, and on the next model change when its m
     await s.commands.get("bedrock")?.handler("preset remove personal", s.ctx);
     assert.deepEqual(s.h.unregistered, ["jig-bedrock-personal"]);
     assert.equal(providerOf(s.h, "jig-bedrock-personal"), undefined);
+    const afterFirst = JSON.parse(readFileSync(s.file, "utf8")) as { presets: Record<string, unknown> };
+    assert.equal(afterFirst.presets.personal, undefined, "the removed preset is gone from bedrock.json");
 
     const inUse = await start(t);
     const work = providerOf(inUse.h, "jig-bedrock-work");
@@ -290,6 +294,8 @@ test("preset remove unregisters at once, and on the next model change when its m
     await inUse.commands.get("bedrock")?.handler("preset remove work", inUse.ctx);
     assert.deepEqual(inUse.h.unregistered, [], "the provider stays while its model is in use");
     assert.match(inUse.notices.join("\n"), /removed while its model is in use/);
+    const removed = JSON.parse(readFileSync(inUse.file, "utf8")) as { presets: Record<string, unknown> };
+    assert.equal(removed.presets.work, undefined, "the removed preset is gone from bedrock.json");
     const inputHook = inUse.h.hooks.get("input")?.[0];
     assert.ok(inputHook, "the selection guard registers an input hook");
     const input = (await inputHook({ text: "hi", source: "interactive" }, inUse.ctx)) as { action?: string };
@@ -300,10 +306,14 @@ test("preset remove unregisters at once, and on the next model change when its m
     await fireHooks(inUse.h, "model_select", { source: "set", model: inUse.ctx.model }, inUse.ctx);
     assert.deepEqual(inUse.h.unregistered, ["jig-bedrock-work"]);
     assert.equal(providerOf(inUse.h, "jig-bedrock-work"), undefined);
-    assert.equal(
-        (JSON.parse(readFileSync(inUse.file, "utf8")) as { preset?: string; presets: Record<string, unknown> }).preset,
-        undefined,
-    );
+    const after = JSON.parse(readFileSync(inUse.file, "utf8")) as { preset?: string; presets: Record<string, unknown> };
+    assert.equal(after.preset, undefined);
+    assert.equal(after.presets.work, undefined);
+    // The next listing has no active mark on a preset that no longer exists: the top level is what is in use.
+    await inUse.commands.get("bedrock")?.handler("use", inUse.ctx);
+    const listing = inUse.notices.at(-1) ?? "";
+    assert.match(listing, /Top-level settings .* active \(top-level\)/, listing);
+    assert.doesNotMatch(listing, /^ok (?:personal|work)\b/m, listing);
 });
 
 test("the presets menu labels a preset with the mode it really runs", async (t) => {
