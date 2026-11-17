@@ -420,8 +420,8 @@ export function createBedrockProvider(
                 new PresetRuntime({
                     host,
                     config: entry.config,
-                    providerId: providerIdOf(entry.preset),
-                    displayName: providerNameOf(entry.preset),
+                    providerId: allPresetModels ? providerIdOf(entry.preset) : providerIdOf(undefined),
+                    displayName: allPresetModels ? providerNameOf(entry.preset) : providerNameOf(undefined),
                 }),
             );
         const runtimes = [...runtimeFor.values()];
@@ -750,25 +750,30 @@ export function createBedrockProvider(
                       ? "by tag"
                       : "AWS-defined";
             };
+            // In 0.6.3's shape the one plain provider carries one preset; otherwise a preset is active when its
+            // model is in use (design §4).
+            const carried = allPresetModels ? undefined : primary.config.preset;
             return [
                 {
                     name: TOP_LEVEL_PRESET,
                     label: "Top-level settings",
                     profile: topProfile,
                     mode: presetModeName(top.mode),
-                    active: activeRuntime === topLevel,
+                    active: allPresetModels ? activeRuntime === topLevel : carried === undefined,
                     source: "top-level",
                 },
                 ...Object.keys(isObject(raw) ? raw : {})
                     .sort()
-                    .filter((name) => runtimeFor.has(name))
+                    .filter((name) => !allPresetModels || runtimeFor.has(name))
                     .map((name) => {
                         const body = isObject(raw) && isObject(raw[name]) ? (raw[name] as Record<string, unknown>) : {};
                         const runtime = runtimeFor.get(name);
                         const effective = runtime?.config ?? reloadForPreset(name).config;
                         const profile =
                             effective?.profile ?? (typeof body.profile === "string" ? body.profile : undefined);
-                        const active = runtime !== undefined && activeRuntime === runtime;
+                        const active = allPresetModels
+                            ? runtime !== undefined && activeRuntime === runtime
+                            : carried === name;
                         return {
                             name,
                             profile,
@@ -778,7 +783,9 @@ export function createBedrockProvider(
                             source: active
                                 ? config.preset === name
                                     ? config.presetSource
-                                    : "model in use"
+                                    : allPresetModels
+                                      ? "model in use"
+                                      : undefined
                                 : undefined,
                         };
                     }),
@@ -870,12 +877,71 @@ export function createBedrockProvider(
                 "info",
             );
         };
+        /** 0.6.3's shape: /bedrock use replaces the one plain provider's settings and models. */
+        const usePreset060 = async (
+            name: string,
+            context: ExtensionCommandContext,
+            switchOptions: { newlySaved?: boolean } = {},
+        ): Promise<void> => {
+            const toTop = name === TOP_LEVEL_PRESET;
+            if (!toTop && !(config.presetNames ?? []).includes(name)) {
+                emitPreset(context, [
+                    `${m.fail} Unknown preset ${name}.`,
+                    `Known presets: ${[...(config.presetNames ?? [])].sort().join(", ") || "none"}.`,
+                ]);
+                return;
+            }
+            const next = reloadForPreset(toTop ? undefined : name, undefined, toTop);
+            if (!next.config) {
+                emitPreset(context, [`${m.fail} ${next.error}`]);
+                return;
+            }
+            primary.replaceConfig(next.config);
+            primary.lastChoice = {
+                profile: primary.config.profile,
+                source: toTop ? "setting" : "preset",
+                exists: true,
+            };
+            primary.rebuildCatalog();
+            const updated = primary.readModels().available;
+            updateModels(primary.models, updated);
+            if (native) await register(primary);
+            if (primary.models.length === 0) {
+                context.ui.notify(toTop ? "Loading the top-level models…" : `Loading ${name}'s models…`, "info");
+                if (switchOptions.newlySaved !== true) {
+                    void primary.refresh(false).catch(() => {});
+                    return;
+                }
+                const error = writePresetSetting(toTop ? undefined : name);
+                if (error !== undefined) {
+                    emitPreset(context, [`${m.fail} ${error}`]);
+                    return;
+                }
+                announceActivated(primary, name, context);
+                void primary.refresh(true).catch(() => {});
+                return;
+            }
+            if (!(await selectModel(primary, context))) {
+                emitPreset(context, [`${m.fail} Could not select a model for ${presetName(primary)}.`]);
+                return;
+            }
+            const error = writePresetSetting(toTop ? undefined : name);
+            if (error !== undefined) {
+                emitPreset(context, [`${m.fail} ${error}`]);
+                return;
+            }
+            announceActivated(primary, name, context);
+        };
         const usePreset = async (
             name: string,
             context: ExtensionCommandContext,
             switchOptions: { newlySaved?: boolean } = {},
         ): Promise<void> => {
             const toTop = name === TOP_LEVEL_PRESET;
+            if (!allPresetModels) {
+                await usePreset060(name, context, switchOptions);
+                return;
+            }
             const runtime = toTop ? topLevel : runtimeFor.get(name);
             if (runtime === undefined) {
                 const known = [...runtimeFor.keys()].filter((preset): preset is string => preset !== undefined).sort();
@@ -1146,6 +1212,10 @@ export function createBedrockProvider(
                 emitPreset(context, [`${m.fail} ${next.error}`]);
                 return false;
             }
+            if (!allPresetModels) {
+                await usePreset(name, context, { newlySaved: true });
+                return true;
+            }
             const runtime = adoptRuntime(name, next.config);
             runtime.loadCachedModels();
             if (!native) return false;
@@ -1209,7 +1279,12 @@ export function createBedrockProvider(
             loading: () => commandRuntime().loading(),
             presetNames: () => commandRuntime().config.presetNames ?? [],
             presetList: () => presetList(),
-            activePreset: () => ({ name: config.preset, source: config.presetSource }),
+            activePreset: () => {
+                const runtime = commandRuntime();
+                if (!allPresetModels || config.preset === runtime.config.preset)
+                    return { name: runtime.config.preset, source: config.presetSource };
+                return { name: runtime.config.preset, source: "model in use" };
+            },
             usePreset: (name, context) => usePreset(name, context),
             presetNew: (context) => newPreset(context),
             presetAdd: (name, context) => addPreset(name, context),
@@ -1449,8 +1524,11 @@ export function createBedrockProvider(
             primary.markStoredAuthSeen();
             const choice = await resolveProfile(context);
             if (config.presetUnknown !== undefined) {
+                const known = (config.presetNames ?? []).join(", ") || "none";
                 context.ui.notify(
-                    `Bedrock: preset ${config.presetUnknown} is not defined; known: ${(config.presetNames ?? []).join(", ") || "none"}.`,
+                    profileEnv.JIG_BEDROCK_PRESET === config.presetUnknown
+                        ? `Bedrock: JIG_BEDROCK_PRESET=${config.presetUnknown} is not a known preset; showing the plain provider only. Known: ${known}.`
+                        : `Bedrock: preset ${config.presetUnknown} is not defined; known: ${known}.`,
                     "warning",
                 );
             } else if (options.preserveNativeAuth) {
@@ -1497,25 +1575,34 @@ export function createBedrockProvider(
                         `Bedrock: preset ${requestedPreset} is saved, but the saved default model ${saved.model} is only in it. Run /bedrock use ${requestedPreset}, then Ctrl+S in /model.`,
                     );
             }
-            // Start in the background; session startup never awaits AWS. No profile and no ambient chain means
-            // discovery cannot succeed, so it is not started (the notice above already says what to do).
-            const canRefresh =
-                config.presetUnknown === undefined &&
-                (choice.ambient === true || (config.profile !== undefined && choice.exists !== false));
-            if (backgroundRefresh && canRefresh) void refresh(false).catch(() => {});
-            // Every preset's own models load in the background too, in parallel and without holding the session.
-            // Their failures stay quiet here; the line that counts them belongs with the routing step.
-            if (backgroundRefresh)
-                for (const runtime of runtimes) {
-                    if (runtime === primary) continue;
-                    void (async () => {
-                        const own = await runtime.resolveProfile(context);
-                        if (disposed) return;
-                        if (own.ambient !== true && (runtime.config.profile === undefined || own.exists === false))
-                            return;
-                        await runtime.refresh(false, false, true);
-                    })().catch(() => {});
-                }
+            // Every runtime reads its own models in the background. The model in use's failure is said in full; the
+            // other presets are counted in one line, so ten presets can never print ten warnings (design §5).
+            if (backgroundRefresh) {
+                const canRefresh = (runtime: PresetRuntime, own: ProfileChoice): boolean =>
+                    own.ambient === true || (runtime.config.profile !== undefined && own.exists !== false);
+                const run = async (runtime: PresetRuntime, full: boolean): Promise<boolean> => {
+                    const own = runtime === primary ? choice : await runtime.resolveProfile(context);
+                    if (disposed) return false;
+                    if (!canRefresh(runtime, own)) return false;
+                    const status = await runtime.refresh(false, false, !full);
+                    return status !== "ok";
+                };
+                void run(focus, true).catch(() => {});
+                void Promise.all(
+                    runtimes
+                        .filter((runtime) => runtime !== focus)
+                        .map((runtime) => run(runtime, false).catch(() => false)),
+                )
+                    .then((failed) => {
+                        const count = failed.filter(Boolean).length;
+                        if (count > 0 && ctx === context && !disposed)
+                            context.ui.notify(
+                                `Bedrock: ${count} other preset${count === 1 ? "" : "s"} could not load their models: /bedrock status in each.`,
+                                "warning",
+                            );
+                    })
+                    .catch(() => {});
+            }
             void focus.spend
                 .start(
                     config.agentDir ?? agentFolder(options.env),
