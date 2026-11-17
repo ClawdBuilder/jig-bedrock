@@ -1,5 +1,5 @@
 // Signed HTTPS calls for discovery. One credentials resolution per run, one request per operation, and the same JSON shapes
-// the AWS CLI printed, so aws-discovery.ts can parse either path with one parser.
+// the AWS CLI prints, so aws-discovery.ts reads every response with one parser.
 import { type AwsCredentials, signRequest } from "./sigv4.ts";
 
 export interface AwsApiOptions {
@@ -7,7 +7,7 @@ export interface AwsApiOptions {
     credentials: AwsCredentials;
     /** Injected in tests; global fetch in production. */
     fetch?: typeof globalThis.fetch;
-    /** The CLI path's per-call timeout. */
+    /** The per-call timeout in milliseconds; 20 seconds when unset. */
     timeoutMs?: number;
     signal?: AbortSignal;
     now?: Date;

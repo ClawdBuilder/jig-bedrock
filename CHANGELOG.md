@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Changed: when discovery cannot start, the advice no longer sends you to the AWS CLI or the PATH; it says to check the AWS profile and regions.
+
 ## [0.6.3] - 2026-11-17
 
 - Added: a preset can name its discovery — AWS-defined, by tag, or listed — so one preset can list all AWS-defined models while another uses a tag.
