@@ -475,6 +475,21 @@ test("the settings menu saves a fixed choice and a comma-separated list", async 
     ]);
 });
 
+test("the settings menu offers the discovery mode as a choice", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "discovery", "Set", "aws-defined"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.discovery, "aws-defined");
+});
+
+test("/bedrock settings shows the discovery mode and its source", async (t) => {
+    const h = harness(t, {}, { config: { ...config, discovery: "aws-defined" } });
+    writeFileSync(join(h.root, "bedrock.json"), JSON.stringify({ discovery: "aws-defined" }));
+    await h.result.bedrock("settings", h.ctx as never);
+    assert.match(h.notices.join("\n"), /discovery: aws-defined \(file\)/);
+});
+
 test("the settings menu refuses an invalid value and writes nothing", async (t) => {
     const h = harness(t, {});
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);
@@ -579,6 +594,33 @@ test("the presets menu saves a valid name and refuses an invalid one", async (t)
     assert.match(bad.notices.join("\n"), /not a preset name/);
 });
 
+test("the presets menu starts the guided new preset", async (t) => {
+    let started = 0;
+    const h = harness(t, {}, { presetNew: async () => void started++ });
+    withUi(h, ["Presets", "New preset"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(started, 1);
+});
+
+test("preset new without a UI points at preset add and the file", async (t) => {
+    const h = harness(t, {});
+    h.ctx.hasUI = false;
+    h.ctx.mode = "rpc";
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        await h.result.bedrock("preset new", h.ctx as never);
+    } finally {
+        process.stdout.write = original;
+    }
+    assert.match(writes.join(""), /\/bedrock preset add/);
+    assert.match(writes.join(""), /bedrock\.json/);
+});
+
 test("the presets menu removes a preset after confirmation", async (t) => {
     let removed = "";
     const h = harness(
@@ -619,8 +661,8 @@ test("the presets menu says there are no presets and offers only what makes sens
     await h.result.bedrock("", h.ctx as never);
     const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
     assert.equal(calls.length, 2);
-    assert.match(calls[1]!.title, /No presets yet\. Save the current settings as one first\./);
-    assert.deepEqual(calls[1]!.options, ["Save current settings as a preset…", "Back"]);
+    assert.match(calls[1]!.title, /No presets yet\. Create one with New preset…, or save the current settings\./);
+    assert.deepEqual(calls[1]!.options, ["New preset…", "Save current settings as a preset…", "Back"]);
 });
 
 test("Back returns to the menu above, and Escape closes everything", async (t) => {

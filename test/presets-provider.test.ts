@@ -140,7 +140,7 @@ test("/bedrock use changes the registered model list with no reload", async (t) 
         true,
     );
     assert.notEqual(workFile, personalFile);
-    assert.match(s.notices.join("\n"), /preset personal is active/);
+    assert.match(s.notices.join("\n"), /Preset personal is active: personal · AWS-defined/);
 });
 
 test("a fresh switch makes no discovery, a missing list makes one", async (t) => {
@@ -247,7 +247,9 @@ test("preset remove of the active preset unsets it, and the next list has no act
     assert.equal(parsed.preset, undefined);
     assert.equal(parsed.presets.extra, undefined);
     await s.commands.get("bedrock")?.handler("use", s.ctx);
-    assert.doesNotMatch(s.notices.at(-1) ?? "", /active/);
+    const listing = s.notices.at(-1) ?? "";
+    assert.match(listing, /Top-level settings .* active \(top-level\)/);
+    assert.doesNotMatch(listing, /^ok (?:personal|work)\b/m);
 });
 
 test("a switch with no saved list waits for discovery before judging the selected id", async (t) => {

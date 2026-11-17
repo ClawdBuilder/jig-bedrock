@@ -22,7 +22,7 @@ export interface SaveDiscoveryResult {
 }
 
 /** Keys that encode the discovery mode; replaced together, so one choice never leaves another's keys behind. */
-const modeKeys = ["team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
+const modeKeys = ["discovery", "team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
 
 function bedrockFile(env: NodeJS.ProcessEnv): string {
     const folder =
@@ -69,6 +69,8 @@ export function saveDiscoverySettings(
         target = top.presets[preset] as Record<string, unknown>;
     }
     for (const key of modeKeys) delete target[key];
+    // The word is saved with the keys: the choice is exactly what the next refresh uses, not an inferred guess.
+    target.discovery = settings.mode === "tag" ? "tag" : settings.mode === "explicit" ? "list" : "aws-defined";
     if (settings.mode === "tag") {
         target.tagKey = settings.tagKey;
         target.tagValue = settings.tagValue;

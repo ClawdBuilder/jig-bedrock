@@ -28,6 +28,7 @@ test("login under an active preset writes into the preset and leaves the top lev
         const saved = JSON.parse(readFileSync(join(dir, "bedrock.json"), "utf8"));
         assert.deepEqual(saved.presets.work, {
             profile: "keys",
+            discovery: "list",
             regions: ["eu-west-1"],
             profiles: ["arn:test"],
         });

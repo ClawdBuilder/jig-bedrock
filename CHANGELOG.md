@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-17
+
+- Added: a preset can name its discovery — AWS-defined, by tag, or listed — so one preset can list all AWS-defined models while another uses a tag.
+- Added: "New preset…" in the Presets menu walks through the AWS profile, discovery, tags and regions, then switches to the new preset.
+- Added: the top-level settings are a choice in the Presets menu and `/bedrock use top`; `top` cannot be a preset name.
+- Changed: a preset switch loads quietly from its cached list or says it is loading; the typed and menu forms print the same line.
+- Fixed: `/bedrock unset preset` reloads the models.
+- Changed: /login's second-tag lookup calls AWS directly (faster).
+- Fixed: after a first /login with no model chosen, one model is selected for the session and the line says how to keep it.
+
 ## [0.6.2] - 2026-11-17
 
 - Changed: model discovery calls AWS directly, about four times faster; the AWS CLI is still used to sign in and list your AWS profiles.

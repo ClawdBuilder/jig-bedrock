@@ -50,8 +50,8 @@ type Method = (typeof methods)[number]["id"] | "keys" | "role" | "sso";
 
 const profileCredential = (profile: string): ApiKeyCredential => ({ type: "api_key", env: { AWS_PROFILE: profile } });
 
-/** A profile from the CLI's list, or a typed name; never a secret. */
-async function askProfile(
+/** A profile from the CLI's list, or a typed name; never a secret. Also reused by the guided preset setup. */
+export async function askProfile(
     interaction: ProviderAuthInteraction,
     listed: string[] | undefined,
     message = "Which AWS profile should Bedrock use?",
@@ -154,11 +154,11 @@ async function confirmConfig(
     return true;
 }
 
-async function askDiscovery(
+export async function askDiscoverySettings(
     interaction: ProviderAuthInteraction,
-    options: LoginFlowOptions,
+    options: Pick<LoginFlowOptions, "regions" | "tagMatches" | "reportNote">,
     profile?: string,
-): Promise<void> {
+): Promise<DiscoverySettings> {
     const mode = await interaction.prompt({
         type: "select",
         message: "Which inference profiles should Bedrock list?",
@@ -260,6 +260,15 @@ async function askDiscovery(
             }
         }
     }
+    return settings;
+}
+
+async function askDiscovery(
+    interaction: ProviderAuthInteraction,
+    options: LoginFlowOptions,
+    profile?: string,
+): Promise<void> {
+    const settings = await askDiscoverySettings(interaction, options, profile);
     const save = options.saveDiscovery?.(settings);
     if (save === undefined) return;
     if (!save.written)

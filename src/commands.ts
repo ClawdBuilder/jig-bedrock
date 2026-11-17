@@ -10,7 +10,7 @@ import { keysAdviceNext, signsInWithKeys } from "./aws-profile.ts";
 import type { BedrockModel } from "./catalog.ts";
 import { routeOf } from "./catalog.ts";
 import { isObject } from "./check.ts";
-import { DEFAULTS, FIELDS, loadConfig, type ResolvedConfig } from "./config.ts";
+import { DEFAULTS, FIELDS, loadConfig, type ResolvedConfig, TOP_LEVEL_PRESET } from "./config.ts";
 import { debugEnabled, debugLogPath } from "./debug-log.ts";
 import { checkLocalDependencies } from "./doctor.ts";
 import { markers } from "./markers.ts";
@@ -43,7 +43,7 @@ export const BEDROCK_COMMANDS: readonly BedrockCommandSpec[] = [
     { name: "unset", usage: "unset <key>", summary: "remove one setting from bedrock.json" },
     { name: "migrate", usage: "migrate", summary: "copy a 0.2.x jig.json section once" },
     { name: "use", usage: "use [name]", summary: "switch presets, or list them" },
-    { name: "preset", usage: "preset add|remove <name>", summary: "add or remove a preset" },
+    { name: "preset", usage: "preset new|add|remove [name]", summary: "create, save or remove a preset" },
     { name: "help", usage: "help [name]", summary: "this list" },
 ] as const;
 export const BEDROCK_SUBCOMMANDS = BEDROCK_COMMANDS.map((command) => command.name);
@@ -110,9 +110,18 @@ export interface BedrockCommandSources {
     apply?: (refreshModels?: boolean) => Promise<void> | void;
     lastChoice?: () => ProfileChoice;
     presetNames?: () => string[];
-    presetList?: () => Array<{ name: string; profile?: string; mode?: string; active: boolean; source?: string }>;
+    presetList?: () => Array<{
+        name: string;
+        label?: string;
+        profile?: string;
+        mode?: string;
+        active: boolean;
+        source?: string;
+    }>;
     activePreset?: () => { name?: string; source?: string };
     usePreset?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
+    /** The guided "New preset…" setup; it asks with the UI and saves and switches like usePreset. */
+    presetNew?: (ctx: ExtensionCommandContext) => Promise<void>;
     presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
@@ -136,6 +145,7 @@ export interface BedrockCommandSources {
     refused?: () => Array<{ arn: string; id: string; date: string }>;
 }
 export const SETTING_EXAMPLES: Record<string, string> = {
+    discovery: "aws-defined",
     regions: "us-east-1",
     profiles: "global.anthropic.claude-sonnet-5-5",
     monthlyBudgetUsd: "200",
@@ -503,6 +513,12 @@ export function registerBedrockCommands(
                 }
             }
             if (key === "preset") {
+                if (value === TOP_LEVEL_PRESET) {
+                    emit(ctx, "Bedrock settings", [
+                        `${m.fail} ${TOP_LEVEL_PRESET} is the top-level settings, not a preset; run /bedrock use ${TOP_LEVEL_PRESET} to switch to them.`,
+                    ]);
+                    return false;
+                }
                 const known = config.presetNames ?? [];
                 if (!known.includes(value)) {
                     emit(ctx, "Bedrock settings", [
@@ -550,11 +566,29 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return false;
         }
+        // Choosing the preset setting switches like /bedrock use: reload the models and say one line.
+        const chosenPreset = pairs.find(([key]) => key === "preset")?.[1];
+        if (chosenPreset !== undefined) {
+            if (sources.usePreset === undefined) {
+                emit(ctx, "Bedrock settings", [`${m.fail} This install cannot switch presets.`]);
+                return false;
+            }
+            await sources.usePreset(chosenPreset, ctx);
+            return true;
+        }
         const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = pairs.some(([key]) =>
-            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
-                key,
-            ),
+            [
+                "discovery",
+                "team",
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+            ].includes(key),
         );
         await sources.apply?.(needsRefresh);
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
@@ -582,8 +616,6 @@ export function registerBedrockCommands(
             ...(needsRefresh ? ["Saved. Loading models for the new settings…"] : []),
         ]);
         if (needsRefresh) await refresh("", ctx, beforeModels, false);
-        const preset = pairs.find(([key]) => key === "preset")?.[1];
-        if (preset !== undefined) await sources.usePreset?.(preset, ctx);
         return true;
     };
     const unset = async (args: string, ctx: ExtensionCommandContext, fromMenu = false): Promise<void> => {
@@ -624,11 +656,28 @@ export function registerBedrockCommands(
             emit(ctx, "Bedrock settings", [`${m.fail} ${saved.error}`]);
             return;
         }
+        // Removing the preset setting returns to the top-level settings, exactly like /bedrock use top.
+        if (keys.includes("preset")) {
+            if (sources.usePreset === undefined) {
+                emit(ctx, "Bedrock settings", [`${m.fail} This install cannot switch presets.`]);
+                return;
+            }
+            await sources.usePreset(TOP_LEVEL_PRESET, ctx);
+            return;
+        }
         const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = keys.some((key) =>
-            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
-                key,
-            ),
+            [
+                "discovery",
+                "team",
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+            ].includes(key),
         );
         await sources.apply?.(needsRefresh);
         emit(ctx, "Bedrock settings", [
@@ -936,9 +985,9 @@ export function registerBedrockCommands(
                 ...list.map((entry) => {
                     const active = entry.active ? " · active" : "";
                     const source = entry.active && entry.source !== undefined ? ` (${entry.source})` : "";
-                    return `${entry.active ? m.ok : m.skip} ${entry.name} · ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${active}${source}`;
+                    return `${entry.active ? m.ok : m.skip} ${entry.label ?? entry.name} · ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${active}${source}`;
                 }),
-                "Next: /bedrock use <name>",
+                `Next: /bedrock use <name>, or /bedrock use ${TOP_LEVEL_PRESET} for the top-level settings`,
             ]);
             return;
         }
@@ -950,8 +999,30 @@ export function registerBedrockCommands(
     };
     const preset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const [action = "", name = ""] = args.trim().split(/\s+/);
+        if (action === "new") {
+            if (name !== "") {
+                emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
+                return;
+            }
+            if (ctx.mode !== "tui" || !ctx.hasUI || toStdout(ctx) || sources.presetNew === undefined) {
+                emit(ctx, "Bedrock presets", [`${m.skip} Use /bedrock preset add <name>, or edit bedrock.json.`]);
+                return;
+            }
+            await sources.presetNew(ctx);
+            return;
+        }
         if (action === "add") {
-            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
+            if (name === "") {
+                emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
+                return;
+            }
+            if (name === TOP_LEVEL_PRESET) {
+                emit(ctx, "Bedrock presets", [
+                    `${m.fail} ${TOP_LEVEL_PRESET} is reserved for the top-level settings; choose another name.`,
+                ]);
+                return;
+            }
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
                 emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
                 return;
             }
@@ -1064,11 +1135,19 @@ export function registerBedrockCommands(
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<boolean> => {
         const list = sources.presetList?.() ?? [];
         const actions = new Map<string, () => unknown>();
+        actions.set("New preset…", async () => {
+            if (sources.presetNew === undefined) {
+                emit(ctx, "Bedrock presets", [`${m.skip} This install cannot set up presets.`]);
+                return false;
+            }
+            await sources.presetNew(ctx);
+            return false;
+        });
         for (const entry of list) {
             const active = entry.active ? `${m.ok} ` : "";
             const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";
             actions.set(
-                `${active}${entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`,
+                `${active}${entry.label ?? entry.name} — ${entry.profile ?? "no AWS profile"} · ${entry.mode ?? "AWS-defined"}${why}`,
                 () => sources.usePreset?.(entry.name, ctx),
             );
         }
@@ -1078,23 +1157,26 @@ export function registerBedrockCommands(
                 "work",
             );
             if (name === undefined) return false;
-            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
+            if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name) || name === TOP_LEVEL_PRESET) {
                 emit(ctx, "Bedrock presets", [
-                    `${m.fail} ${clean(name, 40)} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
+                    name === TOP_LEVEL_PRESET
+                        ? `${m.fail} ${TOP_LEVEL_PRESET} is reserved for the top-level settings; choose another name.`
+                        : `${m.fail} ${clean(name, 40)} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens`,
                 ]);
                 return false;
             }
             await sources.presetAdd?.(name, ctx);
             return false;
         });
-        if (list.length > 0)
+        const named = list.filter((entry) => entry.name !== TOP_LEVEL_PRESET);
+        if (named.length > 0)
             actions.set("Remove a preset…", async () => {
                 // The rows carry " — remove", so a preset named Back, or one like another action, is still removable.
-                const choices = list.map((entry) => `${entry.name} — remove`);
+                const choices = named.map((entry) => `${entry.name} — remove`);
                 const selected = await ctx.ui.select("Remove preset", [...choices, "Back"]);
                 if (selected === undefined) return false;
                 if (selected === "Back") return true;
-                const name = list[choices.indexOf(selected)]?.name;
+                const name = named[choices.indexOf(selected)]?.name;
                 if (name === undefined) return false;
                 const confirmed = await ctx.ui.confirm("Remove preset", `Remove ${name}?`);
                 if (!confirmed) return false;
@@ -1102,8 +1184,8 @@ export function registerBedrockCommands(
                 return false;
             });
         const title =
-            list.length === 0
-                ? "Bedrock presets · No presets yet. Save the current settings as one first."
+            named.length === 0
+                ? "Bedrock presets · No presets yet. Create one with New preset…, or save the current settings."
                 : "Bedrock presets";
         for (;;) {
             const choice = await ctx.ui.select(title, [...actions.keys(), "Back"]);
@@ -1178,6 +1260,15 @@ export function registerBedrockCommands(
                 if (key === "api") {
                     const answer = await ctx.ui.select("api (example: messages)", ["messages", "converse"]);
                     if (answer !== undefined) await set(`api ${answer}`, ctx, true);
+                    return false;
+                }
+                if (key === "discovery") {
+                    const answer = await ctx.ui.select(`discovery (current: ${String(current ?? "unset")})`, [
+                        "aws-defined",
+                        "tag",
+                        "list",
+                    ]);
+                    if (answer !== undefined) await set(`discovery ${answer}`, ctx, true);
                     return false;
                 }
                 if (key === "signInAtStart" || key === "debug") {
