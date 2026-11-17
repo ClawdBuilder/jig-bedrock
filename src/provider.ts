@@ -832,9 +832,32 @@ export function createBedrockProvider(
             // The login dialog closes as soon as the credential is returned; defer the chat line until after that, so
             // the dialog's teardown cannot clear the only lasting explanation of what happened.
             const context = ctx;
+            // Pi captures its model when the login dialog opens, so a first /login can end with no model chosen. Pick
+            // the first registered one for this session; a model that was already selected is left alone.
+            let selectedLine: string | undefined;
+            if (
+                context !== undefined &&
+                (context.model === undefined || context.model.provider === "unknown") &&
+                models.length > 0
+            ) {
+                const first = models[0];
+                const target = first === undefined ? undefined : context.modelRegistry?.find?.(JIG_BEDROCK, first.id);
+                if (target !== undefined) {
+                    try {
+                        if (await pi.setModel(target)) {
+                            selectedLine = `Selected ${first.id} for this session. To keep it for every start: /model, select it, Ctrl+S.`;
+                        }
+                    } catch {
+                        // The selection is a convenience; a failed one never fails the login.
+                    }
+                }
+            }
             if (context) {
                 const shown = presetMessage === undefined ? message : `${message} ${presetMessage}`;
-                const timer = setTimeout(() => context.ui.notify(shown, "info"), 300);
+                const timer = setTimeout(() => {
+                    context.ui.notify(shown, "info");
+                    if (selectedLine !== undefined) context.ui.notify(selectedLine, "info");
+                }, 300);
                 timer.unref();
             }
         };
