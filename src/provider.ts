@@ -1008,7 +1008,7 @@ export function createBedrockProvider(
                     checkSelection();
                 };
                 if (models.length === 0) {
-                    context.ui.notify(`Bedrock: reading the models for ${switchName}…`, "info");
+                    context.ui.notify(toTop ? "Loading the top-level models…" : `Loading ${name}'s models…`, "info");
                     void afterDiscovery();
                 } else {
                     checkSelection();
@@ -1016,14 +1016,11 @@ export function createBedrockProvider(
                 }
             }
             spend.updateFooter(context);
+            const activated = toTop
+                ? `Top-level settings are active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
+                : `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`;
             context.ui.notify(
-                toTop
-                    ? `Top-level settings are active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
-                    : switchOptions.newlySaved === true
-                      ? `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
-                      : profileEnv.JIG_BEDROCK_PRESET === undefined
-                        ? `Bedrock: preset ${name} is active.`
-                        : `Bedrock: preset ${name} is active for this Pi only.`,
+                profileEnv.JIG_BEDROCK_PRESET === undefined || toTop ? activated : `${activated} (for this Pi only)`,
                 "info",
             );
         };

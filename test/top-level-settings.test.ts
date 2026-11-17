@@ -194,6 +194,42 @@ test("/bedrock set preset switches like use and says one line", async (t) => {
     assert.equal(models.includes("claude-sonnet-5-5"), false, JSON.stringify(models));
 });
 
+test("a preset switch says Loading only when its list is not cached", async (t) => {
+    const h = await start(t, TOP_WITH_DEV);
+    assert.equal(await h.handle.refresh(false), "ok");
+    const before = h.notices.length;
+    await command(h, "use dev");
+    const loading = h.notices.slice(before).join("\n");
+    assert.match(loading, /^Loading dev's models…$/m, loading);
+    assert.doesNotMatch(loading, /reading the models from AWS|first start/, loading);
+    await untilModel(h, "claude-haiku-5-5");
+
+    // The top-level list was loaded at the start, so switching back needs no loading line.
+    const beforeBack = h.notices.length;
+    await command(h, "use top");
+    const back = h.notices.slice(beforeBack).join("\n");
+    assert.doesNotMatch(back, /Loading (dev's|the top-level) models/, back);
+    assert.match(back, /Top-level settings are active: fixture · by tag/, back);
+});
+
+test("typed use and the menu print the same preset line", async (t) => {
+    const typed = await start(t, TOP_WITH_DEV);
+    await typed.handle.refresh(false);
+    await command(typed, "use dev");
+    assert.ok(typed.notices.includes("Preset dev is active: fixture · AWS-defined"), JSON.stringify(typed.notices));
+
+    const menu = await start(t, TOP_WITH_DEV);
+    await menu.handle.refresh(false);
+    const answers: Array<string | undefined> = ["Presets", "dev — fixture · AWS-defined"];
+    menu.ctx.ui.select = async (title: string, options: string[] = []) => {
+        const wanted = answers.shift();
+        if (wanted === undefined) return undefined;
+        return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
+    };
+    await command(menu, "");
+    assert.ok(menu.notices.includes("Preset dev is active: fixture · AWS-defined"), JSON.stringify(menu.notices));
+});
+
 test("top is reserved and can never be a preset name", async (t) => {
     const loaded = loadConfig({
         raw: { regions: [REGION], presets: { top: { profile: "fixture" } } },

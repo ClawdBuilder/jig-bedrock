@@ -140,7 +140,7 @@ test("/bedrock use changes the registered model list with no reload", async (t) 
         true,
     );
     assert.notEqual(workFile, personalFile);
-    assert.match(s.notices.join("\n"), /preset personal is active/);
+    assert.match(s.notices.join("\n"), /Preset personal is active: personal · AWS-defined/);
 });
 
 test("a fresh switch makes no discovery, a missing list makes one", async (t) => {
