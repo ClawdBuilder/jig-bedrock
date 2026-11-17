@@ -1183,10 +1183,13 @@ export function createBedrockProvider(
                 return;
             }
             const runtime = runtimeFor.get(name);
+            let removedInUse = false;
             if (runtime !== undefined) {
                 if (currentRuntime(context) === runtime) {
                     // Its model is in use: keep the provider until the person picks another, and stop input meanwhile.
+                    removedInUse = true;
                     guard?.blockUntilChoice();
+                    guard?.removedPreset(name);
                     unregisterLater.add(runtime.providerId);
                     context.ui.notify(
                         `Bedrock: preset ${name} was removed while its model is in use. Choose another with /model.`,
@@ -1206,9 +1209,14 @@ export function createBedrockProvider(
             }
             emitPreset(context, [
                 `${m.ok} Preset ${name} removed.`,
-                currentRuntime(context) === topLevel
-                    ? "Top-level settings are active."
-                    : `Preset ${currentRuntime(context).config.preset ?? "?"} is active.`,
+                // A removed preset whose model is still in use is not active: the warning above is the whole story.
+                ...(removedInUse
+                    ? []
+                    : [
+                          currentRuntime(context) === topLevel
+                              ? "Top-level settings are active."
+                              : `Preset ${currentRuntime(context).config.preset ?? "?"} is active.`,
+                      ]),
             ]);
         };
         /**

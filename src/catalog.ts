@@ -808,10 +808,12 @@ export function registerBedrockSelectionGuard(
     restoreSaved(ctx: ExtensionContext): Promise<void>;
     suppressWarnings(): void;
     refusalHidden(id: string): void;
+    /** The preset whose model is in use was removed: the next prompt says why it is held. */
+    removedPreset(name: string): void;
 } {
     let unresolvedSavedSelection = false;
     let suppressWarnings = false;
-    let hiddenRefusal: string | undefined;
+    let blockedReason: string | undefined;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
@@ -832,7 +834,7 @@ export function registerBedrockSelectionGuard(
     const ours = (model: { provider?: string; id?: string } | undefined) =>
         oldRecorded(model) || (isOwnModel(model) && registered(model?.provider));
     const unsupported = (ctx: ExtensionContext) =>
-        hiddenRefusal !== undefined ||
+        blockedReason !== undefined ||
         unresolvedSavedSelection ||
         (ours(ctx.model) && !modelsOf(ctx.model?.provider).some((m) => m.id === ctx.model?.id));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
@@ -895,16 +897,16 @@ export function registerBedrockSelectionGuard(
         if (event.source === "set" || event.source === "cycle") {
             unresolvedSavedSelection = false;
             suppressWarnings = false;
-            hiddenRefusal = undefined;
+            blockedReason = undefined;
         }
         if (unresolvedSavedSelection && !suppressWarnings)
             ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
-        if (hiddenRefusal !== undefined) {
+        if (blockedReason !== undefined) {
             if (typeof ctx.ui.setEditorText === "function") ctx.ui.setEditorText(event.text);
-            ctx.ui.notify(hiddenRefusal, "warning");
+            ctx.ui.notify(blockedReason, "warning");
             return { action: "handled" };
         }
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
@@ -923,7 +925,10 @@ export function registerBedrockSelectionGuard(
             suppressWarnings = true;
         },
         refusalHidden: (id: string) => {
-            hiddenRefusal = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
+            blockedReason = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
+        },
+        removedPreset: (name: string) => {
+            blockedReason = `Preset ${name} was removed; its model is no longer available. Choose another with /model; your message is still in the editor.`;
         },
     };
 }

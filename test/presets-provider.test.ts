@@ -53,6 +53,7 @@ function setup(t: test.TestContext, shared?: string, settings?: Record<string, u
         selected: [] as Array<{ provider: string; id: string }>,
         unregistered: [] as string[],
         branch: [] as Array<Record<string, unknown>>,
+        editor: [] as string[],
     };
     const pi = {
         on(name: string, fn: (event: unknown, ctx: unknown) => unknown) {
@@ -85,6 +86,7 @@ function setup(t: test.TestContext, shared?: string, settings?: Record<string, u
         ui: {
             notify: (text: string) => h.notices.push(text),
             setStatus: () => {},
+            setEditorText: (text: string) => h.editor.push(text),
         },
     };
     return { dir, file, h, pi, ctx, calls: () => calls, bump: () => calls++ };
@@ -314,6 +316,49 @@ test("preset remove unregisters at once, and on the next model change when its m
     const listing = inUse.notices.at(-1) ?? "";
     assert.match(listing, /Top-level settings .* active \(top-level\)/, listing);
     assert.doesNotMatch(listing, /^ok (?:personal|work)\b/m, listing);
+});
+
+/** Start a provider on `work`'s model, then remove `work` while that model is in use. */
+async function removeInUse(t: test.TestContext) {
+    const s = await start(t);
+    const work = providerOf(s.h, "jig-bedrock-work");
+    assert.ok(work);
+    s.ctx.model = { ...(work.getModels?.()[0] as never), provider: "jig-bedrock-work" } as never;
+    await s.commands.get("bedrock")?.handler("preset remove work", s.ctx);
+    return s;
+}
+
+test("removing the preset in use prints only the removal line and the warning", async (t) => {
+    const s = await removeInUse(t);
+    const removal = s.notices.find((text) => text.includes("Preset work removed.")) ?? "";
+    assert.equal(removal.split("\n").length, 2, `only the title and the removal line: ${removal}`);
+    assert.doesNotMatch(removal, /is active/, removal);
+    assert.doesNotMatch(s.notices.join("\n"), /Preset work is active/, s.notices.join("\n"));
+    assert.match(
+        s.notices.join("\n"),
+        /Bedrock: preset work was removed while its model is in use\. Choose another with \/model\./,
+        s.notices.join("\n"),
+    );
+});
+
+test("the prompt held after removing the preset in use says why and keeps the text", async (t) => {
+    const s = await removeInUse(t);
+    const inputHook = s.h.hooks.get("input")?.[0];
+    assert.ok(inputHook, "the selection guard registers an input hook");
+    const input = (await inputHook({ text: "send this later", source: "interactive" }, s.ctx)) as {
+        action?: string;
+    };
+    assert.equal(input?.action, "handled", "the prompt is not sent");
+    assert.ok(
+        s.notices.some((text) =>
+            text.includes(
+                "Preset work was removed; its model is no longer available. Choose another with /model; your message is still in the editor.",
+            ),
+        ),
+        s.notices.join("\n"),
+    );
+    assert.deepEqual(s.h.editor, ["send this later"], "the message stays in the editor");
+    assert.doesNotMatch(s.notices.join("\n"), /Saved Bedrock model is unavailable or ambiguous/);
 });
 
 test("the presets menu labels a preset with the mode it really runs", async (t) => {
