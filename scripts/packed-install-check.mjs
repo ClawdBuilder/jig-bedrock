@@ -436,6 +436,7 @@ async function main() {
                     "– api: messages (default)",
                     "– debug: false (default)",
                     "– preset: not set",
+                    "– discovery: not set",
                     "– tagKey: not set",
                     "– tagValue: not set",
                     "– activeTagKey: not set",

@@ -1,6 +1,7 @@
 // The Bedrock provider's settings: bedrock.json, over the package defaults, over which environment
 // variables win. Diagnostics name fields and never echo configuration values or parser output.
 //
+//   discovery          how models are found: aws-defined, tag or list; absent means inferred from the keys (0.6.2 files)
 //   team               your exact AWS "Team" tag value: the inference profiles that carry it (and Active=true) are the models
 //   profile            the AWS profile to sign in with; absent means /login's choice, then AWS_PROFILE, then the
 //                      default profile if AWS lists it (no placeholder)
@@ -22,6 +23,8 @@ import type { Check } from "./check.ts";
 import { isObject, knownKeys } from "./check.ts";
 
 export interface ResolvedConfig {
+    /** The explicit choice; absent when the way is inferred from the keys, as 0.6.2 files do. */
+    discovery?: DiscoverySetting;
     team?: string;
     tagKey?: string;
     tagValue?: string;
@@ -63,6 +66,15 @@ export interface ResolvedConfig {
 
 /** The two ways to reach the same models: the Anthropic Messages route, or the older Converse route. */
 export type BedrockApi = "messages" | "converse";
+/** The `discovery` setting's words: AWS-defined profiles, a tag, or a list of ARNs or ids. */
+export type DiscoverySetting = "aws-defined" | "tag" | "list";
+/** The mode the discovery branch runs, from the setting's word; undefined for an absent or unknown value. */
+export function modeOfDiscovery(value: unknown): "explicit" | "tag" | "system" | undefined {
+    if (value === "aws-defined") return "system";
+    if (value === "tag") return "tag";
+    if (value === "list") return "explicit";
+    return undefined;
+}
 export type ConfigResult =
     | { config: ResolvedConfig; error?: never; unknown?: string[]; warning?: string }
     | { config?: never; error: string; unknown?: never; warning?: never };
@@ -75,6 +87,7 @@ const browserPattern = /^(?:\/[^\s\x00-\x1f\x7f]{1,4095}|[A-Za-z0-9][A-Za-z0-9._
 /** Every setting of the `bedrock` section. A key that is not one of these is an error. */
 export const PRESET_FIELDS = [
     "profile",
+    "discovery",
     "regions",
     "tagKey",
     "tagValue",
@@ -93,6 +106,7 @@ export const presetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 export const FIELDS = [
     "presets",
     "preset",
+    "discovery",
     "team",
     "tagKey",
     "tagValue",
@@ -130,6 +144,7 @@ const control = /[\x00-\x1f\x7f]/;
 export function problemsOf(c: Record<string, unknown>): string[] {
     const problems: string[] = [];
     const {
+        discovery,
         team,
         tagKey,
         tagValue,
@@ -159,6 +174,16 @@ export function problemsOf(c: Record<string, unknown>): string[] {
     if ((tagKey === undefined) !== (tagValue === undefined)) problems.push("tagKey and tagValue must be set together");
     if ((activeTagKey === undefined) !== (activeTagValue === undefined))
         problems.push("activeTagKey and activeTagValue must be set together");
+    if (discovery !== undefined && discovery !== "aws-defined" && discovery !== "tag" && discovery !== "list")
+        problems.push('discovery must be "aws-defined", "tag" or "list" (for example "aws-defined")');
+    if (discovery === "tag" && team === undefined && (tagKey === undefined || tagValue === undefined))
+        problems.push(
+            'discovery "tag" needs tagKey and tagValue; set both (for example /bedrock set tagKey Team tagValue my-team), or choose discovery "aws-defined"',
+        );
+    if (discovery === "list" && !(Array.isArray(profiles) && profiles.length > 0))
+        problems.push(
+            'discovery "list" needs profiles; set the inference-profile ARNs or ids (for example /bedrock set profiles <arn>), or choose discovery "aws-defined"',
+        );
     for (const [name, value] of [
         ["tagKey", tagKey],
         ["tagValue", tagValue],
@@ -356,7 +381,7 @@ export function loadConfig(
             ...(unknown.length === 0 ? {} : { unknown }),
         };
     const active = requested === undefined ? {} : (presets[requested] ?? {});
-    const modeKeys = ["team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
+    const modeKeys = ["discovery", "team", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const;
     const activeDefinesMode = modeKeys.some((key) => Object.hasOwn(active, key));
     const inherited =
         requested === undefined || !activeDefinesMode
@@ -416,7 +441,10 @@ export function loadConfig(
     c.team = team;
     c.tagValue = tagValue;
     if (profileSource !== undefined) c.profileSource = profileSource;
-    c.mode = explicit ? "explicit" : tagValue !== undefined || c.tagKey !== undefined ? "tag" : "system";
+    // An explicit discovery word chooses the way; without one, the keys choose it as they did in 0.6.2.
+    c.mode =
+        modeOfDiscovery(c.discovery) ??
+        (explicit ? "explicit" : tagValue !== undefined || c.tagKey !== undefined ? "tag" : "system");
     if (c.mode === "tag" && c.activeTagKey === undefined && team !== undefined)
         c.activeTagValue = c.activeTagValue ?? "true";
     if (c.mode !== "tag") {

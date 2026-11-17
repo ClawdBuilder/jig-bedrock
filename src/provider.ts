@@ -836,6 +836,9 @@ export function createBedrockProvider(
                 if (mode === "explicit") return "listed";
                 if (mode === "tag") return "by tag";
                 if (mode === "system") return "AWS-defined";
+                if (body.discovery === "tag") return "by tag";
+                if (body.discovery === "list") return "listed";
+                if (body.discovery === "aws-defined") return "AWS-defined";
                 return body.profiles !== undefined
                     ? "listed"
                     : body.tagKey !== undefined || body.team !== undefined

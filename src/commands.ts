@@ -136,6 +136,7 @@ export interface BedrockCommandSources {
     refused?: () => Array<{ arn: string; id: string; date: string }>;
 }
 export const SETTING_EXAMPLES: Record<string, string> = {
+    discovery: "aws-defined",
     regions: "us-east-1",
     profiles: "global.anthropic.claude-sonnet-5-5",
     monthlyBudgetUsd: "200",
@@ -552,9 +553,17 @@ export function registerBedrockCommands(
         }
         const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = pairs.some(([key]) =>
-            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
-                key,
-            ),
+            [
+                "discovery",
+                "team",
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+            ].includes(key),
         );
         await sources.apply?.(needsRefresh);
         const shown = pairs.map(([key, value]) => `${key}: ${clean(value, 30)}`).join(", ");
@@ -626,9 +635,17 @@ export function registerBedrockCommands(
         }
         const beforeModels = sources.models().map((model) => model.id);
         const needsRefresh = keys.some((key) =>
-            ["team", "profile", "regions", "tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"].includes(
-                key,
-            ),
+            [
+                "discovery",
+                "team",
+                "profile",
+                "regions",
+                "tagKey",
+                "tagValue",
+                "activeTagKey",
+                "activeTagValue",
+                "profiles",
+            ].includes(key),
         );
         await sources.apply?.(needsRefresh);
         emit(ctx, "Bedrock settings", [
@@ -1178,6 +1195,15 @@ export function registerBedrockCommands(
                 if (key === "api") {
                     const answer = await ctx.ui.select("api (example: messages)", ["messages", "converse"]);
                     if (answer !== undefined) await set(`api ${answer}`, ctx, true);
+                    return false;
+                }
+                if (key === "discovery") {
+                    const answer = await ctx.ui.select(`discovery (current: ${String(current ?? "unset")})`, [
+                        "aws-defined",
+                        "tag",
+                        "list",
+                    ]);
+                    if (answer !== undefined) await set(`discovery ${answer}`, ctx, true);
                     return false;
                 }
                 if (key === "signInAtStart" || key === "debug") {

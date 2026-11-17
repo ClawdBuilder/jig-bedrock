@@ -16,33 +16,34 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 
 ## Every setting
 
-| Setting            | Type                         | Default                             | Environment variable    | Meaning                                                                |
-| ------------------ | ---------------------------- | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
-| `presets`          | object                       | unset                               | none                    | Named sets of profile, discovery, route, budget and spend settings.    |
-| `preset`           | string                       | unset                               | `JIG_BEDROCK_PRESET`    | Active preset name.                                                    |
-| `profile`          | string                       | unset                               | `JIG_BEDROCK_PROFILE`   | AWS profile for discovery, requests and sign-in.                       |
-| `regions`          | list                         | `["us-east-1"]`                     | `JIG_BEDROCK_REGIONS`   | Regions to search, 1 to 16; the first picks the plain id.              |
-| `tagKey`           | string                       | unset                               | `JIG_BEDROCK_TAG_KEY`   | Tag name for tag mode; use with `tagValue`.                            |
-| `tagValue`         | string                       | unset                               | `JIG_BEDROCK_TAG_VALUE` | Tag value for tag mode.                                                |
-| `activeTagKey`     | string                       | unset                               | none                    | Second tag name; use with `activeTagValue`.                            |
-| `activeTagValue`   | string                       | unset                               | none                    | Second tag value.                                                      |
-| `profiles`         | list                         | unset                               | none                    | Explicit inference-profile ARNs or ids, up to 256.                     |
-| `team`             | string                       | unset                               | `JIG_BEDROCK_TEAM`      | 0.2.x short tag form, read once. Do not combine with `tagKey`.         |
-| `api`              | `"messages"` or `"converse"` | `"messages"`                        | none                    | `converse` puts every model on Converse.                               |
-| `converseModels`   | list of short ids            | unset                               | none                    | Models that stay on Converse.                                          |
-| `messagesModels`   | list of short ids            | unset                               | none                    | Models forced onto Messages; not both lists.                           |
-| `monthlyBudgetUsd` | number                       | unset                               | none                    | Display budget; not an AWS limit and never blocks.                     |
-| `spendCommand`     | argv list                    | unset                               | none                    | Program that prints spend JSON; see [Spend command](spend-command.md). |
-| `ssoLoginCommand`  | argv list                    | `aws sso login --profile {profile}` | none                    | The sign-in program; `{profile}` is replaced.                          |
-| `signInAtStart`    | boolean                      | `false`                             | none                    | `true` renews an expired SSO sign-in at Pi start.                      |
-| `browser`          | string                       | unset                               | none                    | Program that opens the sign-in address.                                |
-| `debug`            | boolean                      | `false`                             | `JIG_BEDROCK_DEBUG=1`   | One private JSON line per request, discovery or repair.                |
+| Setting            | Type                                 | Default                             | Environment variable    | Meaning                                                                |
+| ------------------ | ------------------------------------ | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `presets`          | object                               | unset                               | none                    | Named sets of profile, discovery, route, budget and spend settings.    |
+| `preset`           | string                               | unset                               | `JIG_BEDROCK_PRESET`    | Active preset name.                                                    |
+| `discovery`        | `"aws-defined"`, `"tag"` or `"list"` | unset                               | none                    | How models are found; unset infers it from the keys.                   |
+| `profile`          | string                               | unset                               | `JIG_BEDROCK_PROFILE`   | AWS profile for discovery, requests and sign-in.                       |
+| `regions`          | list                                 | `["us-east-1"]`                     | `JIG_BEDROCK_REGIONS`   | Regions to search, 1 to 16; the first picks the plain id.              |
+| `tagKey`           | string                               | unset                               | `JIG_BEDROCK_TAG_KEY`   | Tag name for tag mode; use with `tagValue`.                            |
+| `tagValue`         | string                               | unset                               | `JIG_BEDROCK_TAG_VALUE` | Tag value for tag mode.                                                |
+| `activeTagKey`     | string                               | unset                               | none                    | Second tag name; use with `activeTagValue`.                            |
+| `activeTagValue`   | string                               | unset                               | none                    | Second tag value.                                                      |
+| `profiles`         | list                                 | unset                               | none                    | Explicit inference-profile ARNs or ids, up to 256.                     |
+| `team`             | string                               | unset                               | `JIG_BEDROCK_TEAM`      | 0.2.x short tag form, read once. Do not combine with `tagKey`.         |
+| `api`              | `"messages"` or `"converse"`         | `"messages"`                        | none                    | `converse` puts every model on Converse.                               |
+| `converseModels`   | list of short ids                    | unset                               | none                    | Models that stay on Converse.                                          |
+| `messagesModels`   | list of short ids                    | unset                               | none                    | Models forced onto Messages; not both lists.                           |
+| `monthlyBudgetUsd` | number                               | unset                               | none                    | Display budget; not an AWS limit and never blocks.                     |
+| `spendCommand`     | argv list                            | unset                               | none                    | Program that prints spend JSON; see [Spend command](spend-command.md). |
+| `ssoLoginCommand`  | argv list                            | `aws sso login --profile {profile}` | none                    | The sign-in program; `{profile}` is replaced.                          |
+| `signInAtStart`    | boolean                              | `false`                             | none                    | `true` renews an expired SSO sign-in at Pi start.                      |
+| `browser`          | string                               | unset                               | none                    | Program that opens the sign-in address.                                |
+| `debug`            | boolean                              | `false`                             | `JIG_BEDROCK_DEBUG=1`   | One private JSON line per request, discovery or repair.                |
 
 `set` accepts several key-value pairs and `unset` several keys in one command, for example `/bedrock set activeTagKey Active activeTagValue true`. A model cannot be in both `converseModels` and `messagesModels`.
 
 ## Presets
 
-A preset may hold `profile`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
+A preset may hold `profile`, `discovery`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
 
 When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
 
@@ -61,6 +62,21 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 ```
 
 `/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset add work` saves the settings in force as a preset and activates it, and `/bedrock preset remove work` deletes it. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The preset's footer shows its spend, including this month's spend from before presets existed, and `preset add` says so. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+
+`discovery` names the way models are found: `"aws-defined"` lists every AWS-defined Claude inference profile, `"tag"` needs `tagKey` and `tagValue`, and `"list"` needs `profiles`. A preset that sets `discovery` uses only its own discovery keys: it does not inherit a top-level `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `team` or `profiles`. A preset that does not set it inherits the top-level `discovery`; with neither set, the way is inferred from the keys as before. `/bedrock set discovery aws-defined` reloads the models at once, and `/login` saves the word for the choice it asks.
+
+```json
+{
+    "discovery": "tag",
+    "tagKey": "Team",
+    "tagValue": "my-team",
+    "presets": {
+        "work": { "profile": "my-profile" },
+        "personal": { "profile": "my-profile", "discovery": "aws-defined" }
+    },
+    "preset": "work"
+}
+```
 
 Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, and `set` writes there too, not the top level.
 
@@ -81,11 +97,13 @@ An explicit choice never falls back when it is missing. `/bedrock doctor` names 
 
 ## The three ways models are found
 
-| Way            | Settings              | What it uses                                                     |
-| -------------- | --------------------- | ---------------------------------------------------------------- |
-| AWS-defined    | no tag, no `profiles` | Every AWS-defined Claude inference profile in `regions`.         |
-| By tag         | `tagKey`, `tagValue`  | Application inference profiles with the tag; any Pi-known model. |
-| Listed by hand | `profiles`            | Exact ARNs or ids; AWS-defined is Claude only.                   |
+| Way            | `discovery`     | Settings              | What it uses                                                     |
+| -------------- | --------------- | --------------------- | ---------------------------------------------------------------- |
+| AWS-defined    | `"aws-defined"` | no tag, no `profiles` | Every AWS-defined Claude inference profile in `regions`.         |
+| By tag         | `"tag"`         | `tagKey`, `tagValue`  | Application inference profiles with the tag; any Pi-known model. |
+| Listed by hand | `"list"`        | `profiles`            | Exact ARNs or ids; AWS-defined is Claude only.                   |
+
+When `discovery` is unset, the way is inferred from the Settings column, as 0.6.2 did. `discovery` is a choice: `/login` writes the word for the mode chosen, and `/bedrock set discovery` changes it. A `"tag"` choice without `tagKey` and `tagValue`, and a `"list"` choice without `profiles`, are configuration errors that say what to add.
 
 [How it works](how-it-works.md#how-models-are-found) has the calls and limits.
 

@@ -475,6 +475,21 @@ test("the settings menu saves a fixed choice and a comma-separated list", async 
     ]);
 });
 
+test("the settings menu offers the discovery mode as a choice", async (t) => {
+    const h = harness(t, {});
+    withUi(h, ["Settings", "discovery", "Set", "aws-defined"]);
+    await h.result.bedrock("", h.ctx as never);
+    const saved = JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8"));
+    assert.equal(saved.discovery, "aws-defined");
+});
+
+test("/bedrock settings shows the discovery mode and its source", async (t) => {
+    const h = harness(t, {}, { config: { ...config, discovery: "aws-defined" } });
+    writeFileSync(join(h.root, "bedrock.json"), JSON.stringify({ discovery: "aws-defined" }));
+    await h.result.bedrock("settings", h.ctx as never);
+    assert.match(h.notices.join("\n"), /discovery: aws-defined \(file\)/);
+});
+
 test("the settings menu refuses an invalid value and writes nothing", async (t) => {
     const h = harness(t, {});
     withUi(h, ["Settings", "regions", "Set"], ["nowhere-1"]);

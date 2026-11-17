@@ -4,7 +4,7 @@ import { AwsApiError, getCallerIdentity, getInferenceProfile, getResources, list
 import { atomicCache } from "./cache.ts";
 import { catalogFile } from "./cache-root.ts";
 import { type Catalog, filterHash, type Profile, readCatalog, validArn } from "./catalog.ts";
-import type { ResolvedConfig } from "./config.ts";
+import { modeOfDiscovery, type ResolvedConfig } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 
@@ -299,6 +299,7 @@ export function createAwsDiscovery(
     // can arrive even later (#14's late settings). A captured mode or tag key would make the cache scope stale.
     const modeFor = (): "explicit" | "tag" | "system" =>
         config.mode ??
+        modeOfDiscovery(config.discovery) ??
         (config.profiles?.length ? "explicit" : config.team || config.tagValue || config.tagKey ? "tag" : "system");
     const tagKeyFor = (): string | undefined => config.tagKey ?? (config.team === undefined ? undefined : "Team");
     const tagValueFor = (): string | undefined => config.tagValue ?? config.team;
