@@ -64,7 +64,7 @@ The settings choose one way; there is no fallback.
 
 Each way starts with an STS account check, then reads Bedrock over HTTPS with the AWS profile's credentials; no `aws` program runs for discovery. (`aws sso login` and the AWS profile list still use the AWS CLI.) A call may take 20 seconds; a run stops at 90 seconds. At most 256 inference profiles are kept. An inference profile that points at another is followed up to two levels. `GetFoundationModel` is never called.
 
-The catalog is private, written by atomic rename, and records the AWS profile and settings. A changed setting discards it. A read that fails in one region keeps the other regions' models and says `N models loaded from X of Y regions`; the failed region is tried again at the next start or `/bedrock refresh`. A failed read says what went wrong — AWS throttled the call, AWS had a problem on its side, the credentials expired or are not valid, or AWS could not be reached — and gives its own next step. If the catalog cannot be written, the models still load for this session and the warning names the folder. An inference profile whose foundation model Pi does not know is not listed; `/bedrock refresh`, `/bedrock status` and `/bedrock models` say how many and name `update Pi`. A model with no price is listed as `no price`, and its replies count as unpriced. `/bedrock models` names up to three rejected entries, with `update Pi` when that is the cause.
+The catalog is private, written by atomic rename, and records the AWS profile and settings. The top level and each preset's scope keep one file, and identical scopes share it, so one preset's discovery does not overwrite another's; one spare is kept for a scope whose settings just changed, and at most 32 files are kept. A changed setting discards its catalog. A read that fails in one region keeps the other regions' models and says `N models loaded from X of Y regions`; the failed region is tried again at the next start or `/bedrock refresh`. A failed read says what went wrong — AWS throttled the call, AWS had a problem on its side, the credentials expired or are not valid, or AWS could not be reached — and gives its own next step. If the catalog cannot be written, the models still load for this session and the warning names the folder. An inference profile whose foundation model Pi does not know is not listed; `/bedrock refresh`, `/bedrock status` and `/bedrock models` say how many and name `update Pi`. A model with no price is listed as `no price`, and its replies count as unpriced. `/bedrock models` names up to three rejected entries, with `update Pi` when that is the cause.
 
 ## Model ids
 
@@ -94,11 +94,11 @@ An SSO profile and a role over an SSO `source_profile` are repaired; keys, and a
 
 | When                                 | What happens                                                                     | Calls AWS?       |
 | ------------------------------------ | -------------------------------------------------------------------------------- | ---------------- |
-| Pi starts the package                | Settings are read; commands and provider are registered.                         | No               |
-| A session starts                     | AWS profile chosen; cache read; stale cache refreshes in background.             | Only the refresh |
+| Pi starts the package                | Settings are read; commands and one provider per preset are registered.          | No               |
+| A session starts                     | Each provider's AWS profile and cache; stale caches refresh in the background.   | Only the refresh |
 | A request                            | The route is chosen; credentials are built; an expired sign-in is repaired once. | Yes              |
 | A reply ends                         | Spend is recorded; the footer updates; a budget notice may appear.               | No               |
-| You open `/model`                    | The saved list shows; a cache older than 24 hours refreshes in the background.   | Only the refresh |
+| You open `/model`                    | Every provider's saved list shows; stale caches refresh in the background.       | Only the refresh |
 | `/bedrock refresh`, `/bedrock login` | Discovery runs now, whatever the cache age, or the sign-in runs.                 | Yes              |
 | `/bedrock doctor`                    | Local checks, then free AWS calls; `offline` makes none.                         | Yes, free        |
 
@@ -108,7 +108,7 @@ Nothing waits for AWS at start.
 
 - A reply that reports usage adds one line to `${XDG_STATE_HOME:-~/.local/state}/jig-bedrock/spend/`; no prompt, ARN, account id or AWS profile name. A reply that ended in error or was aborted is counted when Pi reports tokens for it; a message with no usage adds nothing.
 - The first reply of a month imports earlier sessions from this agent folder once.
-- With a preset the footer starts with its name: `work · Nov $12.40 / $200`. A preset's figure includes this month's spend from before presets existed, and `preset add` says so.
+- The footer follows the model in use. With a preset its line starts with the preset's name: `work · Nov $12.40 / $200`. A preset's figure includes this month's spend from before presets existed. `preset add` selects the new preset's model from the same cached list, so the footer moves at once; while that list is still loading it says the footer switches when a model of the new preset is used, and the footer stays on the model in use.
 - The footer shows `Nov $12.40`, or `Nov $12.40 / $200` with a budget. A `+` means an unpriced reply.
 - Warning colour starts at 80%, error at 100%; the footer clears when another provider's model is selected. Each warning is announced once a month for one preset and budget amount; a raised budget or `/bedrock budget` can announce again.
 - `/bedrock usage week` counts the last 7 days, reading the previous month's file when they cross a month.
