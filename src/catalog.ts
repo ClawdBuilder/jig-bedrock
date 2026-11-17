@@ -806,12 +806,17 @@ export function registerBedrockSelectionGuard(
     blockUntilChoice(): void;
     unresolved(): boolean;
     restoreSaved(ctx: ExtensionContext): Promise<void>;
+    /** A runtime registered its models: restore the saved selection that was waiting for that provider id. */
+    restoreUnresolved(providerId: string, ctx: ExtensionContext): Promise<boolean>;
     suppressWarnings(): void;
     refusalHidden(id: string): void;
     /** The preset whose model is in use was removed: the next prompt says why it is held. */
     removedPreset(name: string): void;
 } {
     let unresolvedSavedSelection = false;
+    // What the unresolved saved selection names, so the runtime whose models arrive can restore exactly it.
+    let unresolvedSavedProvider: string | undefined;
+    let unresolvedSavedId: string | undefined;
     let suppressWarnings = false;
     let blockedReason: string | undefined;
     const unavailableWarning =
@@ -895,6 +900,8 @@ export function registerBedrockSelectionGuard(
                 target = match && ctx.modelRegistry.find(targetProvider, match.id);
             if (!target) {
                 unresolvedSavedSelection = true;
+                unresolvedSavedProvider = targetProvider;
+                unresolvedSavedId = id;
                 if (options.deferStartupWarning?.() !== true) {
                     ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
@@ -902,10 +909,14 @@ export function registerBedrockSelectionGuard(
             } else if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
+                    unresolvedSavedProvider = target.provider;
+                    unresolvedSavedId = target.id;
                     ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
                 } else {
                     unresolvedSavedSelection = false;
+                    unresolvedSavedProvider = undefined;
+                    unresolvedSavedId = undefined;
                     if (announce) ctx.ui.notify(`Bedrock: restored ${target.id}.`, "info");
                 }
             }
@@ -917,6 +928,8 @@ export function registerBedrockSelectionGuard(
     pi.on("model_select", (event, ctx) => {
         if (event.source === "set" || event.source === "cycle") {
             unresolvedSavedSelection = false;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
             suppressWarnings = false;
             blockedReason = undefined;
         }
@@ -938,9 +951,30 @@ export function registerBedrockSelectionGuard(
     });
     return {
         blockUntilChoice: () => {
+            // Not a saved default waiting for models: a refusal, a removal or a vanished model holds input.
             unresolvedSavedSelection = true;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
         },
         unresolved: () => unresolvedSavedSelection,
+        /**
+         * The runtime of `providerId` registered its models: restore the saved default that was waiting for them. The
+         * target comes from Pi's registry, so nothing is selected that Pi does not know under that provider.
+         */
+        restoreUnresolved: async (providerId: string, ctx: ExtensionContext): Promise<boolean> => {
+            if (!unresolvedSavedSelection || unresolvedSavedProvider !== providerId) return false;
+            const match = resolveSelection(modelsOf(providerId), unresolvedSavedId ?? "");
+            const target = match && ctx.modelRegistry.find(providerId, match.id);
+            if (!target) return false;
+            if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
+                if (!(await pi.setModel(target))) return false;
+                ctx.ui.notify(`Bedrock: restored ${target.id} (${providerId}).`, "info");
+            }
+            unresolvedSavedSelection = false;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
+            return true;
+        },
         restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
         suppressWarnings: () => {
             suppressWarnings = true;

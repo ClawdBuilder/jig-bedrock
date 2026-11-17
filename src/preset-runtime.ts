@@ -381,8 +381,10 @@ export class PresetRuntime {
             // The session may have started or ended across that await; the notices below belong to the current one.
             ctx = this.host.context();
             const guard = this.host.guard();
-            if (change.changed && guard?.unresolved() && ctx !== undefined && !this.settingsChanged)
-                await guard.restoreSaved(ctx);
+            // Same order as 0.6.1: register first, then restore. Each runtime restores only a saved selection that
+            // names its own provider id, so a preset's late list restores the preset's default.
+            if (change.changed && ctx !== undefined && !this.settingsChanged)
+                await guard?.restoreUnresolved(this.providerId, ctx);
             const current = this.catalog.load();
             const problems = current?.errors ?? [];
             const warnings = current?.warnings ?? [];

@@ -32,7 +32,14 @@ const settings = {
 
 async function start(
     t: test.TestContext,
-    options: { settingsFile?: Record<string, unknown>; raw?: Record<string, unknown> } = {},
+    options: {
+        settingsFile?: Record<string, unknown>;
+        raw?: Record<string, unknown>;
+        /** Start every runtime's discovery at session_start, instead of leaving it to the test. */
+        background?: boolean;
+        /** Hold each fake AWS response, so a discovery lands after session_start has passed the guard. */
+        discoveryDelayMs?: number;
+    } = {},
 ) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-initial-preset-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -44,6 +51,14 @@ async function start(
         writeFileSync(join(agent, "settings.json"), JSON.stringify(options.settingsFile));
     const env = { HOME: dir, PI_CODING_AGENT_DIR: agent, XDG_CACHE_HOME: join(dir, "cache") };
     const fake = fakeAwsHttp({ profiles, account: ACCOUNT });
+    const delay = options.discoveryDelayMs;
+    const fetchWithDelay =
+        delay === undefined
+            ? fake.fetch
+            : async (input: any, init: any) => {
+                  await new Promise((resolve) => setTimeout(resolve, delay));
+                  return fake.fetch(input, init);
+              };
     const hooks = new Map<string, Array<(event: any, ctx: any) => unknown>>();
     const providers: any[] = [];
     const commands = new Map<string, any>();
@@ -79,8 +94,8 @@ async function start(
     const handle = await createBedrockProvider({
         env,
         listProfiles: async () => ["fixture", "dev"],
-        backgroundRefresh: false,
-        fetch: fake.fetch,
+        backgroundRefresh: options.background === true,
+        fetch: fetchWithDelay,
         discoveryCredentials: async () => ({ accessKeyId: "AKIAFIXTURE", secretAccessKey: "fixture-secret" }),
     })(pi as never);
     assert.ok(handle);
@@ -200,6 +215,39 @@ test("an explicit --provider is never replaced by a preset's saved default", asy
     assert.deepEqual(h.selected, [], "the saved default does not replace the explicit provider");
     assert.equal(h.ctx.model.provider, "anthropic");
     assert.equal(h.ctx.model.id, "claude-sonnet-4-5");
+});
+
+test("a preset's saved default is restored when its models arrive after a fallback start", async (t) => {
+    const h = await start(t, {
+        settingsFile: { defaultProvider: "jig-bedrock-dev", defaultModel: "claude-haiku-5-5" },
+        background: true,
+        discoveryDelayMs: 50,
+    });
+    // Pi started on another provider's model and recorded that fallback as the branch's model_change; dev's list is
+    // not cached, so its discovery is still running when the guard first looks at the saved default.
+    piStartedOn(h.ctx, "anthropic", "claude-sonnet-4-5");
+    // Pi's registry is honest: a provider's model is found only after that provider registered it.
+    h.ctx.modelRegistry = {
+        find: (provider: string, id: string) => {
+            const registered = [...h.providers].reverse().find((entry) => entry.id === provider);
+            const model = registered?.getModels?.().find((entry: { id: string }) => entry.id === id);
+            return model === undefined ? undefined : { ...model, provider };
+        },
+    };
+    await h.fire("session_start");
+    assert.deepEqual(h.selected, [], "nothing is selected before the preset's models arrive");
+    await h.until(() => h.selected.length > 0);
+    assert.deepEqual(h.selected, [{ provider: "jig-bedrock-dev", id: "claude-haiku-5-5" }]);
+    assert.equal(h.ctx.model.provider, "jig-bedrock-dev");
+    assert.equal(h.ctx.model.id, "claude-haiku-5-5");
+    assert.ok(
+        h.notices.some((text) => text === "Bedrock: restored claude-haiku-5-5 (jig-bedrock-dev)."),
+        JSON.stringify(h.notices),
+    );
+    const input = h.hooks.get("input")?.[0];
+    assert.ok(input, "the selection guard registers an input hook");
+    const result = await input({ text: "hello", source: "interactive" }, h.ctx);
+    assert.equal(result?.action, "continue", "a restored saved default does not block input");
 });
 
 test("a saved default naming a removed preset says so once, keeps the settings, and does not block input", async (t) => {
