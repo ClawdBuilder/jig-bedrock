@@ -8,6 +8,11 @@ export function providerIdOf(preset: string | undefined): string {
     return preset === undefined ? JIG_BEDROCK : `${JIG_BEDROCK}-${preset}`;
 }
 
+/** The display name Pi's /login lists for a preset's provider; the plain one keeps today's name. */
+export function providerNameOf(preset: string | undefined): string {
+    return preset === undefined ? BEDROCK_PROVIDER_NAME : `Amazon Bedrock (${providerIdOf(preset)})`;
+}
+
 /** The preset one of this package's provider ids names; undefined for the plain id or another provider's. */
 export function presetOf(providerId: string): string | undefined {
     const prefix = `${JIG_BEDROCK}-`;

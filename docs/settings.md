@@ -49,6 +49,8 @@ When a tag lists profiles that split by another tag, `/login` offers the values 
 
 A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again. The next prompt is not swallowed: choose another model with `/model`.
 
+Each preset is its own Pi provider, `jig-bedrock-<preset>`, so every preset's models appear in `/model` at once, with that id in the bracket at the end of the row; the top-level settings stay the plain `jig-bedrock` provider. `/login` lists one Amazon Bedrock entry per preset, and signing in on one saves the AWS profile and discovery into that preset. A saved default names the provider it was saved from, so `/model` then Ctrl+S keeps it.
+
 A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
 
 ```json

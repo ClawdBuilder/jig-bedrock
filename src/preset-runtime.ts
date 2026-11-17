@@ -35,7 +35,7 @@ export interface RuntimeOptions {
     preserveNativeAuth?: boolean;
     transformModels?: (models: BedrockModel[]) => BedrockModel[];
     listProfiles?: ListProfiles;
-    credentials?: () => Promise<AwsCredentials>;
+    credentials?: (profile?: string) => Promise<AwsCredentials>;
     fetch?: typeof globalThis.fetch;
     discoveryCredentials?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
     env?: NodeJS.ProcessEnv;
@@ -66,8 +66,10 @@ export interface PresetRuntimeHost {
     disposed(): boolean;
     /** The first-run line, which only one session start may write. */
     firstRunNotice(context: ExtensionContext): void;
-    /** Pi's one provider registration, owned by the provider so every path goes through it. */
-    registerModels(): Promise<void>;
+    /** The one provider registration path, given the runtime whose models changed. */
+    registerModels(runtime: PresetRuntime): Promise<void>;
+    /** How many per-scope catalog files to keep: one per runtime plus a spare (design §7). */
+    catalogKeep(): number;
     /** /login's guided flow and the work after it; the provider owns the prompts. */
     login: {
         listed: ListProfiles;
@@ -130,9 +132,10 @@ export class PresetRuntime {
         });
         this.catalog = this.buildCatalog();
         this.spend = this.host.options.spend ?? new SpendTracker(this.config, this.host.options.env ?? process.env);
+        const suppliedCredentials = this.host.options.credentials;
         this.signedFetch = createSignedFetch({
             credentials:
-                this.host.options.credentials ??
+                (suppliedCredentials === undefined ? undefined : () => suppliedCredentials(this.currentProfile())) ??
                 (() => {
                     // One chain per profile, made on the first request: it caches the role's credentials and
                     // refreshes them. No profile means the SDK's own chain (environment, container, instance).
@@ -173,6 +176,14 @@ export class PresetRuntime {
 
     storedAuthLost(): boolean {
         return this.storedAuthSeen && !this.storedAuthNow();
+    }
+
+    /** The AWS profile Pi stores for this provider at /login, for the factory's cache read only. */
+    storedProfile(): string | undefined {
+        const credential = readStoredCredential(this.providerId, path.join(this.host.agentDir(), "auth.json"));
+        if (credential?.type !== "api_key") return undefined;
+        const profile = credential.env?.AWS_PROFILE;
+        return typeof profile === "string" && profile !== "" ? profile : undefined;
     }
 
     markStoredAuthSeen(): void {
@@ -216,6 +227,7 @@ export class PresetRuntime {
                     ...(this.host.options.discoveryCredentials === undefined
                         ? {}
                         : { credentials: this.host.options.discoveryCredentials }),
+                    keepCatalogFiles: () => this.host.catalogKeep(),
                 }),
             this.host.debug,
             () => ({ mode: this.config.mode, regions: this.config.regions }),
@@ -279,7 +291,7 @@ export class PresetRuntime {
         const index = this.models.findIndex((entry) => entry.arn === model.arn);
         if (index >= 0) this.models.splice(index, 1);
         this.host.guard()?.refusalHidden(model.id);
-        void this.host.registerModels();
+        void this.host.registerModels(this);
         const plain = `AWS refused ${model.id} for your AWS role (no permission to call this inference profile). It is hidden from /model. /bedrock refresh tries it again. If your organisation marks the usable profiles with a second tag, run /login again or /bedrock settings.`;
         return unremembered === undefined ? plain : `${plain}\n${unremembered.message}`;
     }
@@ -360,7 +372,7 @@ export class PresetRuntime {
             const beforeCount = this.settingsBaseline ?? this.models.length;
             this.settingsBaseline = undefined;
             const change = updateModels(this.models, updated);
-            if (change.changed) await this.host.registerModels();
+            if (change.changed) await this.host.registerModels(this);
             // The session may have started or ended across that await; the notices below belong to the current one.
             ctx = this.host.context();
             const guard = this.host.guard();
@@ -430,12 +442,32 @@ export class PresetRuntime {
         return this.refreshInFlight;
     }
 
-    async refreshForModelSelector(force: boolean): Promise<void> {
+    async refreshForModelSelector(force: boolean, signal?: AbortSignal): Promise<void> {
+        // A login or a previous /model press is already refreshing: publish what is loaded now rather than wait for it.
         if (this.refreshInFlight !== undefined) return;
-        const status = await this.refresh(force, false, true);
-        if (status !== "ok")
+        // Pi gives this call the /model dialog's 15 s signal. Start the refresh and stop waiting when Pi does; the
+        // discovery keeps going and the models arrive in the list it already holds.
+        const flight = this.refresh(force, false, true);
+        if (signal === undefined) {
+            const status = await flight;
+            if (status !== "ok")
+                throw new Error(
+                    `${this.catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status, this.config.mode)}`,
+                );
+            return;
+        }
+        const aborted = new Promise<"aborted">((resolve) => {
+            if (signal.aborted) {
+                resolve("aborted");
+                return;
+            }
+            signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+        });
+        const outcome = await Promise.race([flight, aborted]);
+        if (outcome === "aborted") return;
+        if (outcome !== "ok")
             throw new Error(
-                `${this.catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(status, this.config.mode)}`,
+                `${this.catalog.failure?.() ?? "Bedrock could not load models."} ${discoveryHelp(outcome, this.config.mode)}`,
             );
     }
 
