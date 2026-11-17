@@ -8,7 +8,7 @@ import { modeOfDiscovery, type ResolvedConfig } from "./config.ts";
 import { loadCredentialProvider } from "./credential-provider.ts";
 import type { AwsCredentials } from "./sigv4.ts";
 
-// biome-ignore lint/suspicious/noExplicitAny: parsed JSON from the AWS CLI, checked field by field where it is used
+// biome-ignore lint/suspicious/noExplicitAny: parsed JSON from an AWS response, checked field by field where it is used
 type Json = any;
 export type Status =
     | "ok"
@@ -130,7 +130,7 @@ export function discoveryHelp(status: Status, mode?: string): string {
             return `Ask your AWS administrator for ${permission} on the configured AWS profile; then /bedrock refresh.`;
         }
         case "configuration":
-            return "Check AWS CLI v2 on PATH and the configured AWS profile and regions; then /bedrock refresh.";
+            return "Check the configured AWS profile and regions; then /bedrock refresh.";
         case "credentials":
             return "Add credentials to the AWS profile, or run /bedrock login to choose another profile.";
         case "network":

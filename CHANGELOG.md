@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Changed: when discovery cannot start, the advice no longer sends you to the AWS CLI or the PATH; it says to check the AWS profile and regions.
+
 ## [0.7.0] - 2026-11-17
 
 - Added: every preset is its own Pi provider, `jig-bedrock-<preset>`, so every preset's models are in `/model` at once with the preset in the bracket; `/login` lists one Amazon Bedrock entry per preset, and signing in there saves into that preset.

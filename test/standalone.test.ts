@@ -286,7 +286,7 @@ test("discovery rejects returned tags outside the configured team and safely dis
     for (const [error, status, help] of [
         ["AccessDeniedException private-canary", "permission_denied", /administrator/],
         ["The config profile (private-canary) could not be found", "configuration", /profile/],
-        ["spawn aws ENOENT private-canary", "configuration", /PATH/],
+        ["spawn aws ENOENT private-canary", "configuration", /regions/],
         ["SSO token expired private-canary", "sso_expired", /bedrock login/],
         ["Could not connect private-canary", "network", /network/],
     ] as const) {
@@ -302,6 +302,8 @@ test("discovery rejects returned tags outside the configured team and safely dis
         assert.match(discoveryHelp(result), help);
         assert.doesNotMatch(discoveryHelp(result), /private-canary/);
     }
+    // Discovery makes its own HTTPS calls, so setup advice never sends a person to the AWS CLI or the PATH.
+    assert.doesNotMatch(discoveryHelp("configuration"), /AWS CLI|PATH/);
 });
 test("AWS text from another source is classified with the same advice", async (t) => {
     const file = join(directory(t), "catalog.json");
