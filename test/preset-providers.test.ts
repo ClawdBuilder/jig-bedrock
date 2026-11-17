@@ -340,6 +340,20 @@ test("a saved default for a preset is restored by Pi's own registry", async (t) 
     });
     const model = services.modelRuntime.getModel("jig-bedrock-dev", "claude-opus-5");
     assert.ok(model, "the saved default's model is registered under its preset's provider");
+    // Pi writes configuredProviders from the last availability pass to start; a pass it supersedes returns first
+    // (ModelRuntime.refresh), and on a slower scheduler the registration refreshes land after this call. Wait for
+    // the settled snapshot /model is built from instead of reading the previous (pre-extension) pass's answer.
+    const untilAvailable = async (): Promise<void> => {
+        for (let attempt = 0; attempt < 200; attempt++) {
+            if (
+                services.modelRuntime.hasConfiguredAuth("jig-bedrock-dev") &&
+                services.modelRuntime.hasConfiguredAuth("jig-bedrock")
+            )
+                return;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+    };
+    await untilAvailable();
     assert.equal(services.modelRuntime.hasConfiguredAuth("jig-bedrock-dev"), true);
     assert.equal(services.modelRuntime.hasConfiguredAuth("jig-bedrock"), true);
 });
