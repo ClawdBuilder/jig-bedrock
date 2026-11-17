@@ -131,6 +131,15 @@ test("a saved default keeps the session off the `preset` setting", async (t) => 
     assert.deepEqual(h.selected, [{ provider: "jig-bedrock", id: "claude-sonnet-5-5" }]);
 });
 
+/** The model Pi started on reaches session_start as the branch's model change (sdk.ts), before our providers exist. */
+function piStartedOn(ctx: any, provider: string, id: string): void {
+    ctx.model = { provider, id };
+    ctx.sessionManager = {
+        getSessionId: () => "test",
+        getBranch: () => [{ type: "model_change", provider, modelId: id }],
+    };
+}
+
 test("a preset's saved default is restored when Pi started on a fallback model", async (t) => {
     const h = await start(t, {
         settingsFile: { defaultProvider: "jig-bedrock-dev", defaultModel: "claude-haiku-5-5" },
@@ -151,6 +160,46 @@ test("a preset's saved default is restored when Pi started on a fallback model",
     assert.ok(input, "the selection guard registers an input hook");
     const result = await input({ text: "hello", source: "interactive" }, h.ctx);
     assert.equal(result?.action, "continue", "a restored saved default does not block input");
+});
+
+test("an explicit --model is never replaced by a preset's saved default", async (t) => {
+    const h = await start(t, {
+        settingsFile: { defaultProvider: "jig-bedrock-dev", defaultModel: "claude-haiku-5-5" },
+    });
+    await h.load("jig-bedrock-dev");
+    await h.load("jig-bedrock");
+    piStartedOn(h.ctx, "anthropic", "claude-sonnet-4-5");
+    const before = process.argv;
+    process.argv = [...before, "--model", "anthropic/claude-sonnet-4-5"];
+    t.after(() => {
+        process.argv = before;
+    });
+    await h.fire("session_start");
+    assert.deepEqual(h.selected, [], "the saved default does not replace the explicit model");
+    assert.equal(h.ctx.model.provider, "anthropic");
+    assert.equal(h.ctx.model.id, "claude-sonnet-4-5");
+    const input = h.hooks.get("input")?.[0];
+    assert.ok(input, "the selection guard registers an input hook");
+    const result = await input({ text: "hello", source: "interactive" }, h.ctx);
+    assert.equal(result?.action, "continue", "an explicit model outside the catalog does not block input");
+});
+
+test("an explicit --provider is never replaced by a preset's saved default", async (t) => {
+    const h = await start(t, {
+        settingsFile: { defaultProvider: "jig-bedrock-dev", defaultModel: "claude-haiku-5-5" },
+    });
+    await h.load("jig-bedrock-dev");
+    await h.load("jig-bedrock");
+    piStartedOn(h.ctx, "anthropic", "claude-sonnet-4-5");
+    const before = process.argv;
+    process.argv = [...before, "--provider", "anthropic"];
+    t.after(() => {
+        process.argv = before;
+    });
+    await h.fire("session_start");
+    assert.deepEqual(h.selected, [], "the saved default does not replace the explicit provider");
+    assert.equal(h.ctx.model.provider, "anthropic");
+    assert.equal(h.ctx.model.id, "claude-sonnet-4-5");
 });
 
 test("a saved default naming a removed preset says so once, keeps the settings, and does not block input", async (t) => {

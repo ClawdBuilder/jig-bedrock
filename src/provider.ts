@@ -86,6 +86,14 @@ function _nearName(value: string, names: readonly string[]): string | undefined 
     return bestDistance <= 2 ? best : undefined;
 }
 
+/**
+ * Whether Pi was started with its own `--model` or `--provider` (pi:dist/cli/args.js: each takes the next argument).
+ * That is a person's explicit choice, so the saved default must not replace it at start-up.
+ */
+function startedWithExplicitSelection(argv: readonly string[]): boolean {
+    return argv.some((arg, index) => (arg === "--model" || arg === "--provider") && index + 1 < argv.length);
+}
+
 export type { CatalogSource, Recover, ResolvedConfig };
 
 export interface BedrockOptions {
@@ -1677,6 +1685,10 @@ export function createBedrockProvider(
         // checks the model list can explain a missing saved model; a refresh that never starts cannot.
         guard = registerBedrockSelectionGuard(pi, models, {
             ...(options.selection ?? { agentDir: config?.agentDir }),
+            // Pi has no API for its own command line; `--model` and `--provider` are the person's explicit choice, so
+            // the saved default must not replace the model Pi started on (a test may replace this hook).
+            explicitSelection:
+                options.selection?.explicitSelection ?? (() => startedWithExplicitSelection(process.argv)),
             deferStartupWarning: () => (ctx === undefined ? primary : currentRuntime(ctx)).loading(),
             discoverySlow: () => (ctx === undefined ? primary : currentRuntime(ctx)).isDiscoverySlow(),
             isRegistered: (providerId) => runtimeForProviderId(providerId) !== undefined,
