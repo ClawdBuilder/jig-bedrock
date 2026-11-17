@@ -360,11 +360,13 @@ export class PresetRuntime {
             }
             const updated = this.readModels().available;
             const selected = ctx?.model;
-            const selectedGone =
-                isOwnModel(selected) && selected !== undefined && !updated.some((model) => model.id === selected.id);
-            if (isOwnModel(selected)) {
+            // A refresh only judges the model when the model is this runtime's own; another runtime's model (a
+            // restored preset while this one lands later) is not this list's to block.
+            const mine = isOwnModel(selected) && selected?.provider === this.providerId;
+            const selectedGone = mine && selected !== undefined && !updated.some((model) => model.id === selected.id);
+            if (mine) {
                 const previous = this.models.find((m) => m.id === selected?.id);
-                const replacement = updated.find((m) => m.id === selected?.id);
+                const replacement = updated.find((model) => model.id === selected?.id);
                 if (
                     !replacement ||
                     (previous &&

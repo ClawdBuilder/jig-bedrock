@@ -964,10 +964,32 @@ export function registerBedrockSelectionGuard(
         restoreUnresolved: async (providerId: string, ctx: ExtensionContext): Promise<boolean> => {
             if (!unresolvedSavedSelection || unresolvedSavedProvider !== providerId) return false;
             const match = resolveSelection(modelsOf(providerId), unresolvedSavedId ?? "");
-            const target = match && ctx.modelRegistry.find(providerId, match.id);
+            let target = match && ctx.modelRegistry.find(providerId, match.id);
             if (!target) return false;
             if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
-                if (!(await pi.setModel(target))) return false;
+                // Pi's extension setModel refuses a provider its availability pass has not marked configured yet
+                // (agent-session: one false, no error). The registration above starts that pass; wait for it, then ask
+                // again, so a fresh start whose profile check is still settling is not silently left on no model.
+                let set = false;
+                try {
+                    set = await pi.setModel(target);
+                } catch {
+                    set = false;
+                }
+                if (!set) {
+                    try {
+                        await ctx.modelRegistry.refresh({ allowNetwork: false });
+                    } catch {}
+                    const again = match && ctx.modelRegistry.find(providerId, match.id);
+                    if (again === undefined) return false;
+                    target = again;
+                    try {
+                        set = await pi.setModel(target);
+                    } catch {
+                        set = false;
+                    }
+                }
+                if (!set) return false;
                 ctx.ui.notify(`Bedrock: restored ${target.id} (${providerId}).`, "info");
             }
             unresolvedSavedSelection = false;
