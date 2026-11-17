@@ -3,7 +3,7 @@
 // `New preset…` and `/bedrock preset new` guide a short setup that reuses /login's own prompts: name, AWS profile,
 // discovery, tag pair and second tag, regions. A cancelled setup writes nothing.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -29,33 +29,28 @@ const application = (name: string, active: string, foundation: string): FakeAwsP
     kind: "application",
 });
 
-/** The AWS CLI lookup /login's second-tag offer uses; the display tags split by Active. */
-function fakeAwsCli(dir: string): string {
+/** A fake aws on PATH that records any start; the tag lookup must never start one. */
+function trapAws(dir: string): { bin: string; marker: string } {
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
-    const tags = (active: string) => ({
-        Tags: [
-            { Key: "Team", Value: "fixture-team" },
-            { Key: "Active", Value: active },
-        ],
-    });
-    const body = JSON.stringify({ ResourceTagMappingList: [tags("true"), tags("true"), tags("false")] });
-    writeFileSync(join(bin, "aws"), `#!/bin/sh\nprintf '%s\\n' '${body}'\n`, { mode: 0o755 });
-    return bin;
+    const marker = join(dir, "aws-ran");
+    writeFileSync(join(bin, "aws"), `#!/bin/sh\necho "$*" >> "${marker}"\nexit 1\n`, { mode: 0o755 });
+    return { bin, marker };
 }
 
-async function start(t: test.TestContext, raw: Record<string, unknown>, withCli = false) {
+async function start(t: test.TestContext, raw: Record<string, unknown>) {
     const dir = mkdtempSync(join(tmpdir(), "bedrock-preset-new-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const agent = join(dir, "agent");
     mkdirSync(agent, { recursive: true });
     const file = join(agent, "bedrock.json");
     writeFileSync(file, JSON.stringify(raw));
+    const aws = trapAws(dir);
     const env: NodeJS.ProcessEnv = {
         HOME: dir,
         PI_CODING_AGENT_DIR: agent,
         XDG_CACHE_HOME: join(dir, "cache"),
-        ...(withCli ? { PATH: `${fakeAwsCli(dir)}:${process.env.PATH ?? ""}` } : {}),
+        PATH: `${aws.bin}:${process.env.PATH ?? ""}`,
     };
     const fake = fakeAwsHttp({
         profiles: [
@@ -105,7 +100,7 @@ async function start(t: test.TestContext, raw: Record<string, unknown>, withCli 
         backgroundRefresh: false,
     } as never)(pi as never);
     for (const hook of hooks.get("session_start") ?? []) await hook({ reason: "startup" }, ctx);
-    return { dir, agent, file, env, fake, providers, commands, notices, selections, ctx, handle };
+    return { dir, agent, file, env, fake, aws, providers, commands, notices, selections, ctx, handle };
 }
 
 function scriptUi(ctx: any, selects: Array<string | undefined>, inputs: Array<string | undefined>) {
@@ -177,15 +172,15 @@ test("a guided AWS-defined preset is saved with discovery and switched to", asyn
 });
 
 test("a guided tag preset offers the second tag and saves it", async (t) => {
-    const h = await start(t, { profile: "fixture", regions: [REGION] }, true);
+    const h = await start(t, { profile: "fixture", regions: [REGION] });
     const calls = await presetNew(
         h,
-        ["fixture", "Inference profiles with a tag I name", "Only the 2 with Active=true"],
+        ["fixture", "Inference profiles with a tag I name", "Only the 1 with Active=true"],
         ["team", "Team", "fixture-team", ""],
     );
     const offer = calls.find((call) => call.title.includes("also splits by"));
     assert.ok(offer, JSON.stringify(calls));
-    assert.ok(offer?.options?.includes("Only the 2 with Active=true"), JSON.stringify(offer));
+    assert.ok(offer?.options?.includes("Only the 1 with Active=true"), JSON.stringify(offer));
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as {
         preset?: string;
         presets: Record<string, Record<string, unknown>>;
@@ -204,10 +199,11 @@ test("a guided tag preset offers the second tag and saves it", async (t) => {
     const ids = await waitForModels(h);
     assert.ok(ids.includes("claude-sonnet-5-5"), JSON.stringify(ids));
     assert.equal(ids.includes("claude-haiku-5-5"), false, JSON.stringify(ids));
+    assert.equal(existsSync(h.aws.marker), false, "the second-tag lookup starts no aws program");
 });
 
 test("Escape half-way writes nothing", async (t) => {
-    const h = await start(t, { profile: "fixture", regions: [REGION] }, true);
+    const h = await start(t, { profile: "fixture", regions: [REGION] });
     const before = readFileSync(h.file, "utf8");
     const calls = await presetNew(h, ["fixture", "Inference profiles with a tag I name"], ["half", "Team", undefined]);
     assert.ok(

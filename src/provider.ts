@@ -3,13 +3,13 @@
 //
 // The factory registers and reads settings, and no more: AWS and the browser are touched in `session_start`, in the
 // background, or by a command the user types.
-import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Provider, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
+import { getResources } from "./aws-api.ts";
 import { writeAwsConfig } from "./aws-config-write.ts";
 import type { CatalogSource, Status } from "./aws-discovery.ts";
 import { category, createAwsDiscovery, discoveryHelp, partialDiscovery, problemSummary } from "./aws-discovery.ts";
@@ -329,36 +329,30 @@ export function createBedrockProvider(
             value,
             signal,
         ) => {
+            // One credential resolution for this lookup, from the profile chosen in the flow, then signed HTTPS calls.
+            let credentials: AwsCredentials | undefined;
+            const load = async (): Promise<AwsCredentials> => {
+                if (credentials !== undefined) return credentials;
+                if (options.discoveryCredentials !== undefined) credentials = await options.discoveryCredentials();
+                else {
+                    const provider = await loadCredentialProvider();
+                    credentials = (await provider(profile === undefined ? {} : { profile })()) as AwsCredentials;
+                }
+                return credentials;
+            };
             const all: Array<Array<{ Key: string; Value: string }>> = [];
-            const run = (args: string[]) =>
-                new Promise<string>((resolve, reject) => {
-                    execFile(
-                        "aws",
-                        args,
-                        { encoding: "utf8", env: profileEnv, timeout: 20_000, maxBuffer: 4_194_304, signal },
-                        (error, stdout, stderr) =>
-                            error
-                                ? reject(new Error(error.killed ? "timeout" : stderr || error.message))
-                                : resolve(stdout),
-                    );
-                });
             for (const region of regions) {
-                const text = await run([
-                    "resourcegroupstaggingapi",
-                    "get-resources",
-                    "--region",
+                const result = await getResources(
                     region,
-                    "--resource-type-filters",
-                    "bedrock:application-inference-profile",
-                    "--tag-filters",
-                    JSON.stringify([{ Key: key, Values: [value] }]),
-                    "--no-paginate",
-                    "--output",
-                    "json",
-                    ...(profile === undefined ? [] : ["--profile", profile]),
-                ]);
-                const parsed = JSON.parse(text) as { ResourceTagMappingList?: Array<{ Tags?: unknown }> };
-                for (const row of parsed.ResourceTagMappingList ?? [])
+                    { tagFilters: [{ Key: key, Values: [value] }] },
+                    {
+                        credentials: await load(),
+                        timeoutMs: 20_000,
+                        signal,
+                        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+                    },
+                );
+                for (const row of result.ResourceTagMappingList ?? [])
                     if (Array.isArray(row.Tags))
                         all.push(
                             row.Tags.filter(

@@ -1,7 +1,7 @@
 // The login flow and /aws-login as a person meets them: choosing a profile starts discovery before the dialog closes,
 // and /aws-login refuses a profile that does not exist or is not an SSO profile instead of starting a doomed sign-in.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -273,6 +273,69 @@ test("a zero match with no near key gets no case hint", async () => {
     const text = notices.join("\n");
     assert.match(text, /No application inference profiles matched/);
     assert.doesNotMatch(text, /have Team=/);
+});
+
+test("/login's second-tag offer calls AWS over HTTPS and starts no aws program", async () => {
+    const { dir, env } = folder();
+    try {
+        const bin = join(dir, "bin");
+        mkdirSync(bin, { recursive: true });
+        const marker = join(dir, "aws-ran");
+        writeFileSync(join(bin, "aws"), `#!/bin/sh\necho "$*" >> "${marker}"\nexit 1\n`, { mode: 0o755 });
+        const loginEnv = {
+            ...env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            XDG_CACHE_HOME: join(dir, "cache"),
+        };
+        const fake = fakeAwsHttp({
+            profiles: [
+                {
+                    arn: `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-app`,
+                    name: "team-app",
+                    region: "us-east-1",
+                    foundation: "anthropic.claude-sonnet-5-5",
+                    tags: { Team: "fixture-team", Active: "true" },
+                    kind: "application",
+                },
+                {
+                    arn: `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/team-old`,
+                    name: "team-old",
+                    region: "us-east-1",
+                    foundation: "anthropic.claude-haiku-5-5",
+                    tags: { Team: "fixture-team", Active: "false" },
+                    kind: "application",
+                },
+            ],
+        });
+        const { provider } = await build({ env: loginEnv, list: ["work"], fetch: fake.fetch });
+        const prompts: string[] = [];
+        await provider.auth.apiKey.login({
+            signal: new AbortController().signal,
+            prompt: async (prompt: any) => {
+                prompts.push(prompt.message ?? "");
+                if (prompt.type !== "select") {
+                    if (prompt.message === "Tag key") return "Team";
+                    if (prompt.message === "Tag value") return "fixture-team";
+                    return "";
+                }
+                if (prompt.message?.includes("How do you sign in to AWS?")) return "existing";
+                if (prompt.message === "Which inference profiles should Bedrock list?") return "tag";
+                if (prompt.message?.includes("also splits by")) return "tag:true";
+                return "profile:work";
+            },
+            notify: () => {},
+        });
+        assert.ok(
+            prompts.some((message) => message.includes("also splits by")),
+            JSON.stringify(prompts),
+        );
+        assert.equal(existsSync(marker), false, "the second-tag lookup starts no aws program");
+        const saved = JSON.parse(readFileSync(join(env.PI_CODING_AGENT_DIR as string, "bedrock.json"), "utf8"));
+        assert.equal(saved.activeTagKey, "Active");
+        assert.equal(saved.activeTagValue, "true");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 test("a new provider from a /login-only home has its models at the factory", async () => {
