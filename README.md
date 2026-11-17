@@ -129,7 +129,7 @@ At `/login`, choose **Create an IAM Identity Center (SSO) profile**. It asks for
 
 ## Several AWS profiles
 
-Named presets switch AWS profiles, model lists, budgets and spend; see [Presets](docs/settings.md#presets).
+Named presets switch AWS profiles, model lists, budgets and spend; New preset… in the Presets menu sets one up. See [Presets](docs/settings.md#presets).
 
 ## Commands
 
