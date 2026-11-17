@@ -16,6 +16,7 @@
     "files": [
         "index.ts",
         "src/**",
+        "!src/EGM.md",
         "bin/**",
         "docs/**",
         "CHANGELOG.md",
