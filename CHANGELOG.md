@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-18
+
 - Changed: when discovery cannot start, the advice no longer sends you to the AWS CLI or the PATH; it says to check the AWS profile and regions.
 
 ## [0.7.0] - 2026-11-17
