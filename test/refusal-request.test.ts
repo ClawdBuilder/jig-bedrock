@@ -122,9 +122,27 @@ test("the provider has one registration path with the refusal handler", async ()
     assert.equal(
         (source.match(/registerBedrockProvider\(/g) ?? []).length,
         1,
-        "every provider registration goes through register()",
+        "every runtime registers through the one function",
     );
-    assert.ok((source.match(/await register\(\)/g) ?? []).length >= 4);
+    assert.match(source, /const register = async \(runtime: PresetRuntime\): Promise<void> => \{/);
+    assert.match(source, /runtime\.refusalMessage\(model, message\)/, "the refusal handler is attached");
+    assert.match(source, /runtime\.providerId,\s*\n\s*runtime\.displayName,/, "each runtime's id and name");
+    assert.match(
+        source,
+        /registerModels: \(runtime\) => register\(runtime\)/,
+        "a runtime whose models changed registers through the same function",
+    );
+    assert.match(
+        source,
+        /for \(const runtime of orderedRuntimes\) await register\(runtime\)/,
+        "every runtime is registered at the factory",
+    );
+    assert.match(source, /for \(const entry of runtimeConfigs\)[\s\S]*?new PresetRuntime\(\{/);
+    assert.match(source, /providerId: allPresetModels \? providerIdOf\(entry\.preset\) : providerIdOf\(undefined\)/);
+    assert.ok(
+        (source.match(/await register\(/g) ?? []).length >= 4,
+        "the factory and every later live change register through the same function",
+    );
 });
 
 test("a first start with no models registers the refresh list with the refusal handler", async (t) => {

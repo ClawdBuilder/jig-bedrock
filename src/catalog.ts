@@ -551,12 +551,13 @@ export function bedrockStream(
     profile: () => string | undefined,
     signedFetch?: typeof globalThis.fetch,
     onRefusal?: (model: BedrockModel, message: string) => string | undefined,
+    providerId: string = JIG_BEDROCK,
 ): Stream {
     const approved = [...models];
     return (model, context, options) => {
         const physical = approved.find((m) => m.id === model.id);
         if (
-            model.provider !== JIG_BEDROCK ||
+            model.provider !== providerId ||
             !physical ||
             !load()?.profiles.some(
                 (p) => p.arn === physical.arn && p.foundation_model_id === physical.foundationModelId,
@@ -587,7 +588,7 @@ export function bedrockStream(
         };
         // Pi records the model it is given but sends that model's id on the wire. A logical model carries this
         // package's provider and short id (for /model and resume); onPayload swaps in the ARN for the request.
-        const logical = { ...model, ...physical, provider: JIG_BEDROCK, id: physical.id };
+        const logical = { ...model, ...physical, provider: providerId, id: physical.id };
         // A credential failure is recorded for this request only, so the error event below can say what happened
         // instead of Pi's "Connection error."; a later successful attempt clears it again.
         let credentialFailure: string | undefined;
@@ -725,20 +726,22 @@ export async function registerBedrockProvider(
     messages?: { stream: Stream; streamSimple: Stream },
     signedFetch?: typeof globalThis.fetch,
     refreshCatalog?: (options: { allowNetwork: boolean; force: boolean; signal: AbortSignal }) => Promise<void>,
+    providerId: string = JIG_BEDROCK,
+    displayName: string = BEDROCK_PROVIDER_NAME,
 ): Promise<BedrockModel[]> {
     const makePicker = () =>
         models.map(({ arn: _arn, aliases: _aliases, foundationModelId: _foundation, rateSource: _rate, ...m }) => ({
             ...m,
             type: "chat" as const,
-            provider: JIG_BEDROCK,
+            provider: providerId,
         }));
     let picker = makePicker();
     const fillPicker = (): void => {
         picker = makePicker();
     };
     pi.registerProvider({
-        id: JIG_BEDROCK,
-        name: BEDROCK_PROVIDER_NAME,
+        id: providerId,
+        name: displayName,
         auth: identity.auth,
         getModels: () => picker,
         getAllModels: () => picker,
@@ -767,6 +770,7 @@ export async function registerBedrockProvider(
             identity.profile,
             signedFetch,
             onRefusal,
+            providerId,
         ) as typeof native.stream,
         streamSimple: bedrockStream(
             models,
@@ -778,6 +782,7 @@ export async function registerBedrockProvider(
             identity.profile,
             signedFetch,
             onRefusal,
+            providerId,
         ),
     });
     return models;
@@ -792,48 +797,57 @@ export function registerBedrockSelectionGuard(
         deferStartupWarning?: () => boolean;
         /** Discovery timed out or the network is slow: say so instead of calling the saved model unavailable. */
         discoverySlow?: () => boolean;
+        /** The provider ids this package has registered now; a saved id whose preset is gone is not ours. */
+        isRegistered?: (providerId: string) => boolean;
+        /** One registered provider's models, for resolving a saved selection that names it. */
+        modelsFor?: (providerId: string) => BedrockModel[] | undefined;
     } = {},
 ): {
     blockUntilChoice(): void;
     unresolved(): boolean;
     restoreSaved(ctx: ExtensionContext): Promise<void>;
+    /** A runtime registered its models: restore the saved selection that was waiting for that provider id. */
+    restoreUnresolved(providerId: string, ctx: ExtensionContext): Promise<boolean>;
     suppressWarnings(): void;
     refusalHidden(id: string): void;
+    /** The preset whose model is in use was removed: the next prompt says why it is held. */
+    removedPreset(name: string): void;
 } {
     let unresolvedSavedSelection = false;
+    // What the unresolved saved selection names, so the runtime whose models arrive can restore exactly it.
+    let unresolvedSavedProvider: string | undefined;
+    let unresolvedSavedId: string | undefined;
     let suppressWarnings = false;
-    let hiddenRefusal: string | undefined;
+    let blockedReason: string | undefined;
     const unavailableWarning =
         "Saved Bedrock model is unavailable or ambiguous for your profiles; choose a model with /model before sending a request.";
     const slowWarning =
         "AWS discovery is slow; Bedrock models are not loaded yet. Try again in a moment or run /bedrock refresh.";
     const loadingWarning =
         "Saved Bedrock model is not loaded yet; the models are still arriving. Choose one with /model after they appear.";
-    const warning = () =>
-        options.discoverySlow?.() === true || models.length === 0 ? loadingWarning : unavailableWarning;
+    const warning = (list: BedrockModel[] = models) =>
+        options.discoverySlow?.() === true || list.length === 0 ? loadingWarning : unavailableWarning;
     // 0.2.x recorded the built-in provider with the profile ARN; only that shape is ours to migrate. A plain id is Pi's
-    // built-in model and must be left alone.
+    // built-in model and must be left alone. A preset id counts only while its preset is registered: a saved default
+    // naming a removed preset must not block input.
     const oldRecorded = (model: { provider?: string; id?: string } | undefined) =>
         model?.provider === "amazon-bedrock" && typeof model.id === "string" && model.id.startsWith("arn:");
-    const ours = (model: { provider?: string; id?: string } | undefined) => isOwnModel(model) || oldRecorded(model);
+    const registered = (providerId: string | undefined): boolean =>
+        options.isRegistered === undefined ? providerId === JIG_BEDROCK : options.isRegistered(providerId ?? "");
+    const modelsOf = (providerId: string | undefined): BedrockModel[] =>
+        options.modelsFor?.(providerId ?? "") ?? models;
+    const ours = (model: { provider?: string; id?: string } | undefined) =>
+        oldRecorded(model) || (isOwnModel(model) && registered(model?.provider));
     const unsupported = (ctx: ExtensionContext) =>
-        hiddenRefusal !== undefined ||
+        blockedReason !== undefined ||
         unresolvedSavedSelection ||
-        (ours(ctx.model) && (ctx.model?.provider !== JIG_BEDROCK || !models.some((m) => m.id === ctx.model?.id)));
+        (ours(ctx.model) && !modelsOf(ctx.model?.provider).some((m) => m.id === ctx.model?.id));
     const restore = async (event: { type?: string; reason?: string }, ctx: ExtensionContext, announce = false) => {
         // Pi 1.2 reports a session switch as session_start with reason new, resume or fork.
         const switched =
             event.type === "session_start" &&
             (event.reason === "new" || event.reason === "resume" || event.reason === "fork");
-        let warned = false;
-        const selected = [...ctx.sessionManager.getBranch()]
-            .reverse()
-            .find(
-                (e: Json) => e.type === "model_change" || (e.type === "message" && e.message?.role === "assistant"),
-            ) as Json;
-        let provider = selected?.type === "model_change" ? selected.provider : selected?.message?.provider;
-        let id = selected?.type === "model_change" ? selected.modelId : selected?.message?.model;
-        if (!selected && !options.explicitSelection?.()) {
+        const readSavedDefault = (): { provider?: string; model?: string } => {
             try {
                 const settings = JSON.parse(
                     readFileSync(
@@ -843,68 +857,155 @@ export function registerBedrockSelectionGuard(
                         ),
                         "utf8",
                     ),
-                );
-                provider = settings.defaultProvider;
-                id = settings.defaultModel;
+                ) as { defaultProvider?: unknown; defaultModel?: unknown };
+                return {
+                    ...(typeof settings.defaultProvider === "string" && settings.defaultProvider !== ""
+                        ? { provider: settings.defaultProvider }
+                        : {}),
+                    ...(typeof settings.defaultModel === "string" && settings.defaultModel !== ""
+                        ? { model: settings.defaultModel }
+                        : {}),
+                };
             } catch {
-                /* No saved default. */
+                return {};
+            }
+        };
+        let warned = false;
+        const selected = [...ctx.sessionManager.getBranch()]
+            .reverse()
+            .find(
+                (e: Json) => e.type === "model_change" || (e.type === "message" && e.message?.role === "assistant"),
+            ) as Json;
+        let provider = selected?.type === "model_change" ? selected.provider : selected?.message?.provider;
+        let id = selected?.type === "model_change" ? selected.modelId : selected?.message?.model;
+        // At a real start Pi chose its initial model before our providers were registered; a stale availability
+        // snapshot can make it skip the saved default and record another provider's fallback as a model_change.
+        // That fallback is not the person's choice: the settings default, when it is ours, is.
+        const fallbackAtStartup =
+            event.reason === "startup" &&
+            selected !== undefined &&
+            !options.explicitSelection?.() &&
+            !ours({ provider, id: id || "" });
+        if ((!selected || fallbackAtStartup) && !options.explicitSelection?.()) {
+            const saved = readSavedDefault();
+            if (!fallbackAtStartup || ours({ provider: saved.provider, id: saved.model ?? "" })) {
+                provider = saved.provider;
+                id = saved.model;
             }
         }
         if ((!options.explicitSelection?.() || switched) && ours({ provider, id: id || "" })) {
-            const match = resolveSelection(models, id || ""),
-                target = match && ctx.modelRegistry.find(JIG_BEDROCK, match.id);
+            const match = resolveSelection(modelsOf(provider), id || ""),
+                // A 0.2.x ARN under Pi's own provider moves to the plain provider; anything else keeps its provider.
+                targetProvider = oldRecorded({ provider }) ? JIG_BEDROCK : (provider ?? JIG_BEDROCK),
+                target = match && ctx.modelRegistry.find(targetProvider, match.id);
             if (!target) {
                 unresolvedSavedSelection = true;
+                unresolvedSavedProvider = targetProvider;
+                unresolvedSavedId = id;
                 if (options.deferStartupWarning?.() !== true) {
-                    ctx.ui.notify(warning(), "warning");
+                    ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
                 }
             } else if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
                 if (!(await pi.setModel(target))) {
                     unresolvedSavedSelection = true;
-                    ctx.ui.notify(warning(), "warning");
+                    unresolvedSavedProvider = target.provider;
+                    unresolvedSavedId = target.id;
+                    ctx.ui.notify(warning(modelsOf(provider)), "warning");
                     warned = true;
                 } else {
                     unresolvedSavedSelection = false;
+                    unresolvedSavedProvider = undefined;
+                    unresolvedSavedId = undefined;
                     if (announce) ctx.ui.notify(`Bedrock: restored ${target.id}.`, "info");
                 }
             }
         }
         if (!warned && options.deferStartupWarning?.() !== true && unsupported(ctx))
-            ctx.ui.notify(warning(), "warning");
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
     };
     pi.on("session_start", restore);
     pi.on("model_select", (event, ctx) => {
         if (event.source === "set" || event.source === "cycle") {
             unresolvedSavedSelection = false;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
             suppressWarnings = false;
-            hiddenRefusal = undefined;
+            blockedReason = undefined;
         }
-        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings)
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
     });
     pi.on("input", (event, ctx) => {
         if (!unsupported(ctx)) return { action: "continue" };
-        if (hiddenRefusal !== undefined) {
+        if (blockedReason !== undefined) {
             if (typeof ctx.ui.setEditorText === "function") ctx.ui.setEditorText(event.text);
-            ctx.ui.notify(hiddenRefusal, "warning");
+            ctx.ui.notify(blockedReason, "warning");
             return { action: "handled" };
         }
         if (ctx.mode === "tui" && event.source === "interactive" && !event.streamingBehavior)
             ctx.ui.setEditorText(event.text);
-        if (unresolvedSavedSelection && !suppressWarnings) ctx.ui.notify(warning(), "warning");
+        if (unresolvedSavedSelection && !suppressWarnings)
+            ctx.ui.notify(warning(modelsOf(ctx.model?.provider)), "warning");
         return { action: "handled" };
     });
     return {
         blockUntilChoice: () => {
+            // Not a saved default waiting for models: a refusal, a removal or a vanished model holds input.
             unresolvedSavedSelection = true;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
         },
         unresolved: () => unresolvedSavedSelection,
+        /**
+         * The runtime of `providerId` registered its models: restore the saved default that was waiting for them. The
+         * target comes from Pi's registry, so nothing is selected that Pi does not know under that provider.
+         */
+        restoreUnresolved: async (providerId: string, ctx: ExtensionContext): Promise<boolean> => {
+            if (!unresolvedSavedSelection || unresolvedSavedProvider !== providerId) return false;
+            const match = resolveSelection(modelsOf(providerId), unresolvedSavedId ?? "");
+            let target = match && ctx.modelRegistry.find(providerId, match.id);
+            if (!target) return false;
+            if (ctx.model?.provider !== target.provider || ctx.model?.id !== target.id) {
+                // Pi's extension setModel refuses a provider its availability pass has not marked configured yet
+                // (agent-session: one false, no error). The registration above starts that pass; wait for it, then ask
+                // again, so a fresh start whose profile check is still settling is not silently left on no model.
+                let set = false;
+                try {
+                    set = await pi.setModel(target);
+                } catch {
+                    set = false;
+                }
+                if (!set) {
+                    try {
+                        await ctx.modelRegistry.refresh({ allowNetwork: false });
+                    } catch {}
+                    const again = match && ctx.modelRegistry.find(providerId, match.id);
+                    if (again === undefined) return false;
+                    target = again;
+                    try {
+                        set = await pi.setModel(target);
+                    } catch {
+                        set = false;
+                    }
+                }
+                if (!set) return false;
+                ctx.ui.notify(`Bedrock: restored ${target.id} (${providerId}).`, "info");
+            }
+            unresolvedSavedSelection = false;
+            unresolvedSavedProvider = undefined;
+            unresolvedSavedId = undefined;
+            return true;
+        },
         restoreSaved: (ctx: ExtensionContext) => restore({ type: "session_start", reason: "resume" }, ctx, true),
         suppressWarnings: () => {
             suppressWarnings = true;
         },
         refusalHidden: (id: string) => {
-            hiddenRefusal = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
+            blockedReason = `${id} was refused by AWS for your role and is hidden. Choose another model with /model; your message is still in the editor.`;
+        },
+        removedPreset: (name: string) => {
+            blockedReason = `Preset ${name} was removed; its model is no longer available. Choose another with /model; your message is still in the editor.`;
         },
     };
 }

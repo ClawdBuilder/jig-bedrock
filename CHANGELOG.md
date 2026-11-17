@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
+
+- Added: every preset is its own Pi provider, `jig-bedrock-<preset>`, so every preset's models are in `/model` at once with the preset in the bracket; `/login` lists one Amazon Bedrock entry per preset, and signing in there saves into that preset.
+- Added: `/bedrock use` selects a model of the preset (this session's last, else Pi's saved default, else its first); `/bedrock preset add` and `preset remove` register and unregister its provider.
+- Added: Ctrl+S in `/model` keeps a saved default that names its provider, so it opens on the same preset at the next start.
+- Added: a saved default whose preset was removed, and a model that moved into a preset, each get one start-up line; Pi's settings are left alone.
+- Added: `allPresetModels: false` keeps 0.6.3's shape, one plain provider carrying the preset's settings.
+- Changed: the footer, the spend record and `/bedrock` follow the model in use; each preset has its own budget and spend.
+- Changed: `preset` opens a new session on that preset's model; `preset add` selects a model from the same cached list, or says the models are loading and leaves the footer on the model in use.
+- Changed: the catalog keeps one file per scope plus a spare, up to 32, so many presets no longer evict each other's list.
+- Changed: `JIG_BEDROCK_PRESET` now limits `/model` to the plain provider plus that preset instead of replacing the plain provider's settings, and `preset` no longer configures the plain provider. A model saved under the old plain provider that only the preset lists needs `/bedrock use <preset>`, then Ctrl+S in `/model`.
+- Fixed: a saved default on a preset is restored at start even when Pi opened on another model; an explicit `--model` or `--provider` always wins.
+
 ## [0.6.3] - 2026-11-17
 
 - Added: a preset can name its discovery — AWS-defined, by tag, or listed — so one preset can list all AWS-defined models while another uses a tag.

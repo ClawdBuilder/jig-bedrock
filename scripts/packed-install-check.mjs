@@ -430,6 +430,7 @@ async function main() {
             settingsScreen ===
                 [
                     "Bedrock settings · <agent>/bedrock.json",
+                    "– allPresetModels: true (default)",
                     "– regions: us-east-1 (default)",
                     "– ssoLoginCommand: aws sso login --profile {profile} (default)",
                     "– signInAtStart: false (default)",
