@@ -1,4 +1,4 @@
-// The one write jig-bedrock makes outside its own settings: add a profile to the AWS CLI's shared config. The file is
+// The one write jig-bedrock makes to a file other tools share: add a profile to the AWS CLI's shared config. The file is
 // hand-edited and shared with every AWS tool, so this appends only, keeps every existing byte (comments and unknown
 // sections included), respects AWS_CONFIG_FILE, keeps the file's mode, writes through a temporary file, and leaves a
 // timestamped backup (the five newest are kept). A config that is a symbolic link is written through, and the link stays.

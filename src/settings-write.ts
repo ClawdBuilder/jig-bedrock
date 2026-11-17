@@ -1,4 +1,4 @@
-// The one file jig-bedrock writes: the user's own bedrock.json. The /login flow saves discovery choices there (never the
+// The one settings file jig-bedrock writes: the user's own bedrock.json. The /login flow saves discovery choices there (never the
 // profile, which belongs to the credential), and leaves every other key alone. No secret ever reaches this file.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
