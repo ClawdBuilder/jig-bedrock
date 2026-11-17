@@ -1148,7 +1148,9 @@ export function createBedrockProvider(
                 return;
             }
             if (!(await activateSavedPreset(name, context))) return;
-            currentRuntime(context).spend.updateFooter(context);
+            // The line below names the new preset, so its own tracker is what must reach the footer: with no cached
+            // models yet, the model in use is still another provider's (design §6).
+            (runtimeFor.get(name) ?? currentRuntime(context)).spend.updateFooter(context);
             emitPreset(context, [
                 `${m.ok} Preset ${name} saved and active; models reloaded.`,
                 `The footer now shows ${name}'s spend, including this month's spend from before presets.`,
