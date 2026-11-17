@@ -842,15 +842,7 @@ export function registerBedrockSelectionGuard(
         const switched =
             event.type === "session_start" &&
             (event.reason === "new" || event.reason === "resume" || event.reason === "fork");
-        let warned = false;
-        const selected = [...ctx.sessionManager.getBranch()]
-            .reverse()
-            .find(
-                (e: Json) => e.type === "model_change" || (e.type === "message" && e.message?.role === "assistant"),
-            ) as Json;
-        let provider = selected?.type === "model_change" ? selected.provider : selected?.message?.provider;
-        let id = selected?.type === "model_change" ? selected.modelId : selected?.message?.model;
-        if (!selected && !options.explicitSelection?.()) {
+        const readSavedDefault = (): { provider?: string; model?: string } => {
             try {
                 const settings = JSON.parse(
                     readFileSync(
@@ -860,11 +852,40 @@ export function registerBedrockSelectionGuard(
                         ),
                         "utf8",
                     ),
-                );
-                provider = settings.defaultProvider;
-                id = settings.defaultModel;
+                ) as { defaultProvider?: unknown; defaultModel?: unknown };
+                return {
+                    ...(typeof settings.defaultProvider === "string" && settings.defaultProvider !== ""
+                        ? { provider: settings.defaultProvider }
+                        : {}),
+                    ...(typeof settings.defaultModel === "string" && settings.defaultModel !== ""
+                        ? { model: settings.defaultModel }
+                        : {}),
+                };
             } catch {
-                /* No saved default. */
+                return {};
+            }
+        };
+        let warned = false;
+        const selected = [...ctx.sessionManager.getBranch()]
+            .reverse()
+            .find(
+                (e: Json) => e.type === "model_change" || (e.type === "message" && e.message?.role === "assistant"),
+            ) as Json;
+        let provider = selected?.type === "model_change" ? selected.provider : selected?.message?.provider;
+        let id = selected?.type === "model_change" ? selected.modelId : selected?.message?.model;
+        // At a real start Pi chose its initial model before our providers were registered; a stale availability
+        // snapshot can make it skip the saved default and record another provider's fallback as a model_change.
+        // That fallback is not the person's choice: the settings default, when it is ours, is.
+        const fallbackAtStartup =
+            event.reason === "startup" &&
+            selected !== undefined &&
+            !options.explicitSelection?.() &&
+            !ours({ provider, id: id || "" });
+        if ((!selected || fallbackAtStartup) && !options.explicitSelection?.()) {
+            const saved = readSavedDefault();
+            if (!fallbackAtStartup || ours({ provider: saved.provider, id: saved.model ?? "" })) {
+                provider = saved.provider;
+                id = saved.model;
             }
         }
         if ((!options.explicitSelection?.() || switched) && ours({ provider, id: id || "" })) {

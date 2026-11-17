@@ -131,6 +131,28 @@ test("a saved default keeps the session off the `preset` setting", async (t) => 
     assert.deepEqual(h.selected, [{ provider: "jig-bedrock", id: "claude-sonnet-5-5" }]);
 });
 
+test("a preset's saved default is restored when Pi started on a fallback model", async (t) => {
+    const h = await start(t, {
+        settingsFile: { defaultProvider: "jig-bedrock-dev", defaultModel: "claude-haiku-5-5" },
+    });
+    await h.load("jig-bedrock-dev");
+    await h.load("jig-bedrock");
+    // Pi picked another provider's model because its availability snapshot did not yet know the preset; for a new
+    // session it records that fallback as a model_change (sdk.ts), so the branch is not empty at session_start.
+    h.ctx.model = { provider: "anthropic", id: "claude-sonnet-4-5" };
+    h.ctx.sessionManager = {
+        getSessionId: () => "test",
+        getBranch: () => [{ type: "model_change", provider: "anthropic", modelId: "claude-sonnet-4-5" }],
+    };
+    await h.fire("session_start");
+    assert.deepEqual(h.selected, [{ provider: "jig-bedrock-dev", id: "claude-haiku-5-5" }]);
+    assert.equal(h.ctx.model.provider, "jig-bedrock-dev");
+    const input = h.hooks.get("input")?.[0];
+    assert.ok(input, "the selection guard registers an input hook");
+    const result = await input({ text: "hello", source: "interactive" }, h.ctx);
+    assert.equal(result?.action, "continue", "a restored saved default does not block input");
+});
+
 test("a saved default naming a removed preset says so once, keeps the settings, and does not block input", async (t) => {
     const removed = { defaultProvider: "jig-bedrock-gone", defaultModel: "claude-haiku-5-5" };
     const h = await start(t, { raw: { profile: "fixture", regions: [REGION] }, settingsFile: removed });
