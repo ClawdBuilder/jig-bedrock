@@ -58,7 +58,10 @@ async function start(initial: Record<string, unknown>, envExtra: Record<string, 
             commands.set(name, value);
         },
         events: { emit() {} },
-        setModel: async () => true,
+        setModel: async (model: any) => {
+            ctx.model = model;
+            return true;
+        },
     };
     await createBedrockProvider({
         env,
@@ -78,7 +81,7 @@ async function start(initial: Record<string, unknown>, envExtra: Record<string, 
         model: undefined as unknown,
         ui: { notify: (text: string) => notices.push(text), setStatus() {} },
         sessionManager: { getSessionId: () => "s" },
-        modelRegistry: { find: () => undefined },
+        modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
     };
     return { dir, env, raw, resolved, commands, notices, signed, providers, ctx };
 }
@@ -128,10 +131,8 @@ test("a typed regions save registers the new region's models", async (t) => {
             models.some((model: any) => model.id === "claude-sonnet-5-5"),
             JSON.stringify(models),
         );
-        assert.ok(
-            models.some((model: any) => String(model.baseUrl).includes("us-west-2")),
-            JSON.stringify(models),
-        );
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["us-west-2"], "the new region is saved and its models registered");
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }
@@ -249,19 +250,18 @@ test("preset add announces the active preset and reloads models", async (t) => {
     }
 });
 
-test("a preset chosen for the session survives an env preset on the next save", async (t) => {
+test("an env preset saves into its own preset and leaves the other alone", async (t) => {
     const s = await start(
         { preset: "work", presets: { work: { regions: ["us-east-1"] }, personal: { regions: ["us-east-1"] } } },
         { JIG_BEDROCK_PRESET: "work" },
     );
     try {
-        await s.commands.get("bedrock").handler("use personal", s.ctx);
-        // Step 4 makes `use` select the model; until then, a session on personal's model is what routes the save there.
-        focus(s, "personal");
+        await s.commands.get("bedrock").handler("use work", s.ctx);
         await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
         const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
-        assert.deepEqual(saved.presets.personal.regions, ["eu-west-1"]);
-        assert.deepEqual(saved.presets.work.regions, ["us-east-1"]);
+        assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.presets.personal.regions, ["us-east-1"]);
+        assert.equal(saved.preset, "work", "the env preset leaves the file's own choice alone");
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }

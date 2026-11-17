@@ -90,6 +90,23 @@ async function start(t: test.TestContext, raw: Record<string, unknown>) {
 }
 
 const ids = (rows: Array<{ id: string }>): string[] => rows.map((row) => row.id).sort();
+/** Refresh one preset's provider the way Pi's /model does; the plain provider's handle only refreshes the top level. */
+async function loadPreset(s: { providers: any[] }, id: string): Promise<Array<{ id: string }>> {
+    const provider = [...s.providers].reverse().find((entry) => entry.id === id);
+    assert.ok(provider, `${id} is registered`);
+    await provider.refreshModels({
+        allowNetwork: true,
+        force: true,
+        signal: new AbortController().signal,
+        publish: async () => true,
+    });
+    return (
+        [...s.providers]
+            .reverse()
+            .find((entry) => entry.id === id)
+            ?.getModels?.() ?? []
+    );
+}
 const tagging = (calls: Array<{ target: string }>) => calls.filter((call) => call.target.includes("GetResources"));
 const lists = (calls: Array<{ url: string }>) => calls.filter((call) => call.url.includes("/inference-profiles?"));
 
@@ -111,8 +128,8 @@ test("a preset that names aws-defined uses only its own mode, not the top-level 
     for (const key of ["tagKey", "tagValue", "activeTagKey", "activeTagValue", "profiles"] as const)
         assert.equal(s.config[key], undefined, `${key} is not inherited from the top level`);
 
-    assert.equal(await s.handle.refresh(false), "ok");
-    assert.deepEqual(ids(s.handle.models), ["claude-haiku-5-5"], JSON.stringify(s.handle.models));
+    const dev = await loadPreset(s, "jig-bedrock-dev");
+    assert.deepEqual(ids(dev), ["claude-haiku-5-5"], JSON.stringify(dev));
     assert.equal(tagging(s.fake.calls).length, 0, "AWS-defined discovery makes no tag call");
     assert.ok(lists(s.fake.calls).length > 0, "AWS-defined discovery lists the inference profiles");
 });
@@ -128,8 +145,8 @@ test("a top-level discovery applies to a preset that does not name its own", asy
     assert.equal(s.config.mode, "system");
     assert.equal(s.config.tagKey, undefined);
 
-    assert.equal(await s.handle.refresh(false), "ok");
-    assert.deepEqual(ids(s.handle.models), ["claude-haiku-5-5"], JSON.stringify(s.handle.models));
+    const dev = await loadPreset(s, "jig-bedrock-dev");
+    assert.deepEqual(ids(dev), ["claude-haiku-5-5"], JSON.stringify(dev));
     assert.equal(tagging(s.fake.calls).length, 0);
 });
 
@@ -156,8 +173,8 @@ test("a preset with its own tag mode ignores a top-level list", async (t) => {
     assert.equal(s.config.profiles, undefined, "the top-level list is not inherited");
     assert.equal(s.config.tagKey, "Team");
 
-    assert.equal(await s.handle.refresh(false), "ok");
-    assert.deepEqual(ids(s.handle.models), ["claude-sonnet-5-5"], JSON.stringify(s.handle.models));
+    const team = await loadPreset(s, "jig-bedrock-team");
+    assert.deepEqual(ids(team), ["claude-sonnet-5-5"], JSON.stringify(team));
     assert.ok(tagging(s.fake.calls).length > 0, "tag discovery lists the tagged profiles");
     assert.equal(lists(s.fake.calls).length, 0, "tag discovery does not list AWS-defined profiles");
 });
@@ -234,8 +251,9 @@ test("/login choosing AWS-defined under a preset writes discovery and the refres
             backgroundRefresh: false,
         }) as never
     )(pi as never);
-    const loginProvider = providers.find((entry) => entry?.id === "jig-bedrock");
-    assert.ok(loginProvider, "the Bedrock provider is registered");
+    // 0.7.0: /login on the preset's own provider edits that preset.
+    const loginProvider = providers.find((entry) => entry?.id === "jig-bedrock-dev");
+    assert.ok(loginProvider, "the preset's provider is registered");
     const notices: string[] = [];
     await loginProvider.auth.apiKey.login({
         signal: new AbortController().signal,

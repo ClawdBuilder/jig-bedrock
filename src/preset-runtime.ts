@@ -70,11 +70,16 @@ export interface PresetRuntimeHost {
     registerModels(runtime: PresetRuntime): Promise<void>;
     /** How many per-scope catalog files to keep: one per runtime plus a spare (design §7). */
     catalogKeep(): number;
-    /** /login's guided flow and the work after it; the provider owns the prompts. */
+    /** /login's guided flow and the work after it; the provider owns the prompts, the runtime says whose preset. */
     login: {
         listed: ListProfiles;
-        guided(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
-        after(profile: string | undefined, interaction: ProviderAuthInteraction, signal: AbortSignal): Promise<void>;
+        guided(runtime: PresetRuntime, interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
+        after(
+            runtime: PresetRuntime,
+            profile: string | undefined,
+            interaction: ProviderAuthInteraction,
+            signal: AbortSignal,
+        ): Promise<void>;
     };
 }
 
@@ -127,8 +132,8 @@ export class PresetRuntime {
         });
         this.auth = createProfileAuth(this.profiles, this.host.login.listed, {
             unavailable: () => this.autoProfileFailed && this.models.length === 0,
-            guided: this.host.login.guided,
-            afterLogin: this.host.login.after,
+            guided: (interaction) => this.host.login.guided(this, interaction),
+            afterLogin: (profile, interaction, signal) => this.host.login.after(this, profile, interaction, signal),
         });
         this.catalog = this.buildCatalog();
         this.spend = this.host.options.spend ?? new SpendTracker(this.config, this.host.options.env ?? process.env);

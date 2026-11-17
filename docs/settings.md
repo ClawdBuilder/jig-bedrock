@@ -19,7 +19,8 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 | Setting            | Type                                 | Default                             | Environment variable    | Meaning                                                                |
 | ------------------ | ------------------------------------ | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
 | `presets`          | object                               | unset                               | none                    | Named sets of profile, discovery, route, budget and spend settings.    |
-| `preset`           | string                               | unset                               | `JIG_BEDROCK_PRESET`    | Active preset name.                                                    |
+| `preset`           | string                               | unset                               | `JIG_BEDROCK_PRESET`    | Preset a new session opens on when nothing is restored.                |
+| `allPresetModels`  | boolean                              | `true`                              | none                    | `false` = one plain provider carrying the preset's settings (0.6.3).   |
 | `discovery`        | `"aws-defined"`, `"tag"` or `"list"` | unset                               | none                    | How models are found; unset infers it from the keys.                   |
 | `profile`          | string                               | unset                               | `JIG_BEDROCK_PROFILE`   | AWS profile for discovery, requests and sign-in.                       |
 | `regions`          | list                                 | `["us-east-1"]`                     | `JIG_BEDROCK_REGIONS`   | Regions to search, 1 to 16; the first picks the plain id.              |

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Catalog } from "../src/catalog.ts";
+import { loadConfig } from "../src/config.ts";
 import { jigBedrock } from "../src/index.ts";
 
 function catalog(region: string, id = "claude-sonnet-5-5", count = 1): Catalog {
@@ -108,9 +109,11 @@ async function harness(
         events: { emit() {} },
         setModel: async () => true,
     };
+    const resolved = loadConfig({ raw, env, agentDir: agent });
+    assert.ok(resolved.config, resolved.error);
     await jigBedrock({
         env,
-        config: raw,
+        config: resolved.config,
         catalog: source as never,
         listProfiles: async () => ["keys", "demo-sso"],
         ssoRecover: async () => {},
@@ -166,7 +169,8 @@ test("login under an active preset saves into it and the session uses it", async
         regions: ["us-east-1"],
         presets: { work: { profile: "old", regions: ["us-east-1"] } },
     });
-    const provider = s.providers.find((entry) => entry?.id === "jig-bedrock");
+    // 0.7.0: the plain provider is the top level, so /login on the preset's provider edits that preset.
+    const provider = s.providers.find((entry) => entry?.id === "jig-bedrock-work");
     await provider.auth.apiKey.login({
         signal: new AbortController().signal,
         prompt: async (prompt: any) => answers(prompt),
