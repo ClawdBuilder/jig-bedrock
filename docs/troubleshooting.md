@@ -86,9 +86,39 @@ AWS refused claude-opus-5 for your AWS role (no permission to call this inferenc
 Bedrock: preset work is not defined; known: personal.
 ```
 
+or, when the environment variable names it:
+
+```text
+Bedrock: JIG_BEDROCK_PRESET=work is not a known preset; showing the plain provider only. Known: personal.
+```
+
 **Run:** `/bedrock use`
 
-**Still wrong?** Fix `preset` in `bedrock.json`, unset `JIG_BEDROCK_PRESET`, or add the preset with `/bedrock preset add <name>`.
+**Still wrong?** Fix `preset` in `bedrock.json`, unset `JIG_BEDROCK_PRESET`, or add the preset with `/bedrock preset add <name>`. A bad `preset` in the file still registers every preset's provider; a bad `JIG_BEDROCK_PRESET` narrows `/model` to the plain provider only.
+
+## A saved model's preset was removed
+
+**You see**
+
+```text
+Bedrock: claude-haiku-5-5 is saved under jig-bedrock-work, whose preset no longer exists. Choose another with /model; Pi keeps the saved settings.
+```
+
+**Run:** `/model`, pick a model, then Ctrl+S to keep it; or `/bedrock preset add work` to recreate the preset.
+
+**Still wrong?** The saved default still names the removed provider until you choose another, so the line is said once and then stays away. Pi's `settings.json` is not rewritten, and the unknown provider id does not block input.
+
+## The saved model is only in a preset
+
+**You see**
+
+```text
+Bedrock: preset work is saved, but the saved default model claude-haiku-5-5 is only in it. Run /bedrock use work, then Ctrl+S in /model.
+```
+
+**Run:** `/bedrock use work`, then Ctrl+S in `/model`.
+
+**Still wrong?** This is the one 0.7.0 upgrade: `preset` no longer changes the plain provider's settings, so a saved default on `jig-bedrock` cannot find a model that only `work` lists. The line is said once; the two steps make the saved default name `jig-bedrock-work`.
 
 ## A model is missing after an update
 
@@ -110,7 +140,7 @@ No spend line under Pi's footer.
 
 **Run:** `/bedrock usage`
 
-**Still wrong?** Select a jig-bedrock model with `/model`; the footer hides for other providers. Check the state folder is writable. A `+` means an unpriced reply.
+**Still wrong?** Select a jig-bedrock model with `/model`; the footer hides for other providers. Check the state folder is writable. A `+` means an unpriced reply. After `preset add` on a preset with no cached models, the footer stays on the model in use; it switches when you select one of the new preset's models.
 
 ## A 400 after a tool was loaded
 

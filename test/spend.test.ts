@@ -585,7 +585,27 @@ test("/bedrock budget resets the month's claims so the same budget can announce 
     assert.match(again.notices[0] ?? "", /85%/);
 });
 
-test("adding a preset keeps the spend the footer showed and says what it counts", async (t) => {
+/** The cached catalog the current scope shares with a preset copied from it (design §6). */
+const presetCatalog = {
+    schema: 1 as const,
+    mode: "system" as const,
+    aws_profile: "fixture",
+    account_id: "123456789012",
+    regions: ["us-east-1"],
+    fetched_at: Math.floor(Date.now() / 1000),
+    profiles: [
+        {
+            arn: "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-sonnet-5-5",
+            profile_name: "System Sonnet",
+            foundation_model_id: "anthropic.claude-sonnet-5-5",
+            region: "us-east-1",
+            kind: "system" as const,
+        },
+    ],
+};
+
+/** The provider with the spend record, a command map and the footer Pi would receive. */
+async function presetAddHarness(t: test.TestContext, cached: boolean) {
     const root = folder(t);
     const env = { HOME: root, PI_CODING_AGENT_DIR: root, XDG_STATE_HOME: root, LANG: "C.UTF-8" };
     const raw = { profile: "fixture", regions: ["us-east-1"] };
@@ -593,7 +613,6 @@ test("adding a preset keeps the spend the footer showed and says what it counts"
     const resolved = loadConfig({ raw, env, agentDir: root });
     assert.ok(resolved.config);
     appendReply(env, reply({ costUsd: 120 }));
-    const tracker = new SpendTracker(resolved.config, env, () => now);
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
     const pi = {
         on() {},
@@ -602,13 +621,19 @@ test("adding a preset keeps the spend the footer showed and says what it counts"
             commands.set(name, value);
         },
         events: { emit() {} },
-        setModel: async () => true,
+        setModel: async (selected: { provider: string; id: string }) => {
+            context.model = selected;
+            return true;
+        },
     };
     await createBedrockProvider({
         env,
         config: resolved.config,
-        catalog: { load: () => undefined, refresh: async () => "ok", status: () => "ok" },
-        spend: tracker,
+        catalog: {
+            load: () => (cached ? presetCatalog : undefined),
+            refresh: async () => "ok",
+            status: () => "ok",
+        },
         listProfiles: async () => ["fixture"],
         ssoRecover: async () => {},
         budget: { load: () => undefined, refresh: async () => {} },
@@ -627,22 +652,54 @@ test("adding a preset keeps the spend the footer showed and says what it counts"
             setStatus: (_key: string, text: string | undefined) => statuses.push(text),
         },
         sessionManager: { getSessionId: () => "s", getBranch: () => [] },
-        modelRegistry: { find: () => undefined },
+        modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
     };
     const command = commands.get("bedrock");
     assert.ok(command, "the /bedrock command is registered");
-    await command.handler("preset add work", context);
-    assert.match(notices.join("\n"), /Preset work saved and active/, notices.join("\n"));
+    return { root, command, context, notices, statuses };
+}
+
+test("adding a preset selects its model, and the footer follows it with the month's spend", async (t) => {
+    const h = await presetAddHarness(t, true);
+    await h.command.handler("preset add work", h.context);
+    assert.equal(h.context.model.provider, "jig-bedrock-work", "the new preset's model is selected");
+    assert.equal(h.context.model.id, "claude-sonnet-5-5");
+    assert.match(h.notices.join("\n"), /Preset work saved and active; models reloaded\./, h.notices.join("\n"));
     assert.match(
-        notices.join("\n"),
+        h.notices.join("\n"),
         /The footer now shows work's spend, including this month's spend from before presets\./,
-        notices.join("\n"),
+        h.notices.join("\n"),
     );
-    assert.match(tracker.footerText(), /^work · Nov \$120/, tracker.footerText());
-    assert.doesNotMatch(tracker.footerText(), /\$0\.00/);
+    // Pi's setStatus is the footer the user sees; it names the model's preset and keeps the month's figure.
+    const footer = h.statuses.at(-1);
+    assert.match(String(footer), /^work · Nov \$120/, JSON.stringify(h.statuses));
     assert.ok(
-        statuses.some((status) => status?.startsWith("work · Nov $120")),
-        JSON.stringify(statuses),
+        h.statuses.every((status) => !status?.includes("$0.00")),
+        JSON.stringify(h.statuses),
+    );
+    assert.equal(
+        (JSON.parse(readFileSync(join(h.root, "bedrock.json"), "utf8")) as { preset?: string }).preset,
+        "work",
+        "the new preset is the next session's choice",
+    );
+});
+
+test("a preset added while its models load says so and leaves the footer on the model in use", async (t) => {
+    const h = await presetAddHarness(t, false);
+    await h.command.handler("preset add work", h.context);
+    assert.match(
+        h.notices.join("\n"),
+        /Preset work saved; loading its models\. The footer switches when you use one of them\./,
+        h.notices.join("\n"),
+    );
+    assert.doesNotMatch(h.notices.join("\n"), /The footer now shows work's spend/, h.notices.join("\n"));
+    assert.match(h.notices.join("\n"), /Loading work's models…/, h.notices.join("\n"));
+    assert.equal(h.context.model.provider, "jig-bedrock", "no model of the new preset is in use yet");
+    // The footer is still the figure of the model in use, not the preset that is loading.
+    assert.match(String(h.statuses.at(-1)), /^Nov \$120$/, JSON.stringify(h.statuses));
+    assert.ok(
+        h.statuses.every((status) => !status?.startsWith("work ·")),
+        JSON.stringify(h.statuses),
     );
 });
 
@@ -676,13 +733,15 @@ test("a reply that ended in error is counted when Pi reports its usage", async (
         registerProvider() {},
         registerCommand() {},
         events: { emit() {} },
-        setModel: async () => true,
+        setModel: async (selected: { provider: string; id: string }) => {
+            context.model = selected;
+            return true;
+        },
     };
     await createBedrockProvider({
         env,
         config: resolved.config,
         catalog: { load: () => undefined, refresh: async () => "ok", status: () => "ok" },
-        spend: tracker,
         listProfiles: async () => ["fixture"],
         ssoRecover: async () => {},
         budget: { load: () => undefined, refresh: async () => {} },

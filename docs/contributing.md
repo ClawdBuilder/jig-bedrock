@@ -92,6 +92,7 @@ adds a Claude model, run the second script for it before you trust the route rul
 | `src/login-flow.ts`          | The interactive /login flow and its prompts.                     |
 | `src/markers.ts`             | Chooses check marks or words for the terminal.                   |
 | `src/messages.ts`            | Formats the messages shared by commands and the provider.        |
+| `src/preset-runtime.ts`      | One preset's settings, catalog, models, profile and spend view.  |
 | `src/profile.ts`             | Resolves the AWS profile in one place.                           |
 | `src/refusals.ts`            | Remembers AWS AccessDenied refusals for seven days.              |
 | `src/regions.ts`             | Names the known AWS regions and checks a region setting.         |

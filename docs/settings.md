@@ -19,7 +19,8 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 | Setting            | Type                                 | Default                             | Environment variable    | Meaning                                                                |
 | ------------------ | ------------------------------------ | ----------------------------------- | ----------------------- | ---------------------------------------------------------------------- |
 | `presets`          | object                               | unset                               | none                    | Named sets of profile, discovery, route, budget and spend settings.    |
-| `preset`           | string                               | unset                               | `JIG_BEDROCK_PRESET`    | Active preset name.                                                    |
+| `preset`           | string                               | unset                               | `JIG_BEDROCK_PRESET`    | Preset whose model a new session opens on; see [Presets](#presets).    |
+| `allPresetModels`  | boolean                              | `true`                              | none                    | `false` = one plain provider carrying the preset's settings (0.6.3).   |
 | `discovery`        | `"aws-defined"`, `"tag"` or `"list"` | unset                               | none                    | How models are found; unset infers it from the keys.                   |
 | `profile`          | string                               | unset                               | `JIG_BEDROCK_PROFILE`   | AWS profile for discovery, requests and sign-in.                       |
 | `regions`          | list                                 | `["us-east-1"]`                     | `JIG_BEDROCK_REGIONS`   | Regions to search, 1 to 16; the first picks the plain id.              |
@@ -43,13 +44,17 @@ From 0.2.x, `/bedrock migrate` copies the `bedrock` section of `jig.json` to `be
 
 ## Presets
 
-A preset may hold `profile`, `discovery`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser` and `debug` stay top level.
+A preset may hold `profile`, `discovery`, `regions`, `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `profiles`, `team`, `api`, `converseModels`, `messagesModels`, `monthlyBudgetUsd` and `spendCommand`. `ssoLoginCommand`, `signInAtStart`, `browser`, `debug` and `allPresetModels` stay top level.
 
 When a tag lists profiles that split by another tag, `/login` offers the values of that tag as a second filter and saves `activeTagKey`/`activeTagValue`. Without a UI it lists all and says a second tag would narrow the result.
 
 A model AWS refuses with AccessDenied is remembered for seven days per AWS profile and account and hidden from `/model`; `/bedrock models` lists it under “Refused by AWS for your role” with the date. `/bedrock refresh`, or “Try again” in the Models menu, tries it again. The next prompt is not swallowed: choose another model with `/model`.
 
-A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `JIG_BEDROCK_PRESET` wins over `preset`; with neither, the top level applies.
+Each preset is its own Pi provider, `jig-bedrock-<preset>`; the top-level settings are the plain `jig-bedrock` provider. Every preset's models are in `/model` at once, and each row ends with the provider in the bracket, `[jig-bedrock-<preset>]`. `/login` lists one `Amazon Bedrock (jig-bedrock-<preset>)` entry per preset, after the plain one, and signing in on one saves the AWS profile and discovery into that preset.
+
+`/model` then Ctrl+S writes Pi's saved default, `defaultProvider` and `defaultModel` (such as `jig-bedrock-work` and `claude-sonnet-5-5`), so Pi restores it at the next start. At start, if Pi opened on another model, jig-bedrock restores the saved default when it names a `jig-bedrock-<preset>`, unless Pi was started with `--model` or `--provider`, which always win. Until a model is chosen, a saved default that belongs to one of our providers decides which preset the footer, the spend record and `/bedrock` act on; otherwise the model in use does.
+
+A preset name starts with a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens. `preset` names the preset whose model a new session opens on when Pi restored no model and no saved default decides; it never changes the plain provider's settings. `JIG_BEDROCK_PRESET=work` registers the plain provider plus `work` only: it decides the provider list, not the plain provider's settings, and an unknown name warns once and shows the plain provider. The environment variable leaves the file's `preset` alone.
 
 ```json
 {
@@ -61,7 +66,11 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 }
 ```
 
-`/bedrock use` lists and switches presets; a fresh saved list loads at once. `/bedrock preset new` (or the Presets menu's `New preset…`) asks for a preset name, the AWS profile, discovery and regions with the same prompts as `/login`, saves the preset and switches to it; without a UI it says to use `/bedrock preset add <name>` or edit the file. `/bedrock preset add work` saves the settings in force as a preset and activates it, and `/bedrock preset remove work` deletes it. The top-level settings are the row labelled `Top-level settings` at the top of the Presets menu, and `/bedrock use top` switches back to them; `top` cannot be a preset name. Unsetting `preset` also returns to the top-level settings and reloads their models. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The preset's footer shows its spend, including this month's spend from before presets existed, and `preset add` says so. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it its own list and spend.
+`/bedrock use` lists the presets and selects a model of the one named: this session's last model for that provider, else Pi's saved default when it belongs to that provider, else its first. While its models are still arriving it starts the discovery and says so, changing nothing else. `/bedrock preset new` (or the Presets menu's `New preset…`) asks for a preset name, the AWS profile, discovery and regions with the same prompts as `/login`, saves the preset and switches to it, loading its list first if it is not cached; without a UI it says to use `/bedrock preset add <name>` or edit the file. `/bedrock preset add work` copies the settings in force into a new preset and registers it from the same cached catalog, with no discovery: when that catalog has models it selects one and the footer shows `work`'s spend; when it has none it says `Preset work saved; loading its models. The footer switches when you use one of them.` and leaves the footer on the model in use. `/bedrock preset remove work` deletes it and unregisters its provider; if its model is in use, the provider stays until you choose another, and input is blocked meanwhile. The top-level settings are the row labelled `Top-level settings` at the top of the Presets menu, and `/bedrock use top` selects the top-level model; `top` cannot be a preset name. A preset inherits every top-level setting it does not name: one that sets only `profile` and `regions` still reads the top-level tag, and its row in the Presets menu says `by tag`. The footer shows the spend of the model in use, including this month's spend from before presets existed. In a second terminal, `JIG_BEDROCK_PRESET=work pi` gives it the plain provider plus `work`.
+
+A saved default naming a preset that no longer exists gets one start-up line and Pi's `settings.json` is left alone; the unknown provider id does not block input. A saved default on `jig-bedrock` whose model is only in the `preset` set gets one line saying `Run /bedrock use <preset>, then Ctrl+S in /model`; the choice is not rewritten for you. Each line is said once.
+
+Setting `allPresetModels: false` returns to 0.6.3's shape: one plain `jig-bedrock` provider carries the `preset`/`JIG_BEDROCK_PRESET` settings, there is no provider per preset, and no extra discovery runs.
 
 `discovery` names the way models are found: `"aws-defined"` lists every AWS-defined Claude inference profile, `"tag"` needs `tagKey` and `tagValue`, and `"list"` needs `profiles`. A preset that sets `discovery` uses only its own discovery keys: it does not inherit a top-level `tagKey`, `tagValue`, `activeTagKey`, `activeTagValue`, `team` or `profiles`. A preset that does not set it inherits the top-level `discovery`; with neither set, the way is inferred from the keys as before. `/bedrock set discovery aws-defined` reloads the models at once, and `/login` saves the word for the choice it asks.
 
@@ -78,7 +87,7 @@ A preset name starts with a letter or digit, then up to 39 letters, digits, dots
 }
 ```
 
-Precedence for every preset key: environment variable, active preset, top-level file, then the AWS-profile fallbacks below. When a preset is active, `/login` saves the AWS profile and discovery into that preset, and `set` writes there too, not the top level.
+Precedence for every preset key: environment variable, the preset being viewed, top-level file, then the AWS-profile fallbacks below. The scope of a command is the model in use: `/login` on `jig-bedrock-<preset>` saves the AWS profile and discovery into that preset, and `/bedrock set`, `unset` and `budget` write there too, not the top level.
 
 ## Which AWS profile is used
 
@@ -138,12 +147,12 @@ Requests and discovery both use the AWS SDK credential chain, with the AWS profi
 
 ## Files on disk
 
-| Path                                                                                          | What it is                                                                                 |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `~/.pi/agent/bedrock.json` for `pi`; `~/.jig` for `jig` (`PI_CODING_AGENT_DIR` or `JIG_HOME`) | Your settings and `/login` choice.                                                         |
-| `~/.cache/jig-bedrock/catalog-<hash>.json` (`XDG_CACHE_HOME`)                                 | The model lists, one per AWS profile and discovery settings, at most 8; private, 24 hours. |
-| `~/.local/state/jig-bedrock/` (`XDG_STATE_HOME`)                                              | `spend/`, `debug.log`, `sso-runtime/`.                                                     |
-| `~/.aws/config.jig-bedrock-backup-<time>`                                                     | Up to five backups before `/login` adds an AWS profile.                                    |
+| Path                                                                                          | What it is                                                                                                 |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `~/.pi/agent/bedrock.json` for `pi`; `~/.jig` for `jig` (`PI_CODING_AGENT_DIR` or `JIG_HOME`) | Your settings and `/login` choice.                                                                         |
+| `~/.cache/jig-bedrock/catalog-<hash>.json` (`XDG_CACHE_HOME`)                                 | The model lists, one per scope (identical settings share it), plus a spare, at most 32; private, 24 hours. |
+| `~/.local/state/jig-bedrock/` (`XDG_STATE_HOME`)                                              | `spend/`, `debug.log`, `sso-runtime/`.                                                                     |
+| `~/.aws/config.jig-bedrock-backup-<time>`                                                     | Up to five backups before `/login` adds an AWS profile.                                                    |
 
 The AWS profiles `/login` added stay in `~/.aws/config`. Pi's `auth.json` keeps the AWS profile's name until `/logout`. The model-list cache and spend record are per machine, shared by every Pi folder that runs jig-bedrock. The cache folder may be a link; `jig-bedrock` and the catalog files must not be. An older `catalog.json` is read until it ages out.
 

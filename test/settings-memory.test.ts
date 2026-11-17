@@ -58,7 +58,10 @@ async function start(initial: Record<string, unknown>, envExtra: Record<string, 
             commands.set(name, value);
         },
         events: { emit() {} },
-        setModel: async () => true,
+        setModel: async (model: any) => {
+            ctx.model = model;
+            return true;
+        },
     };
     await createBedrockProvider({
         env,
@@ -75,11 +78,22 @@ async function start(initial: Record<string, unknown>, envExtra: Record<string, 
         hasUI: true,
         mode: "rpc",
         signal: new AbortController().signal,
+        model: undefined as unknown,
         ui: { notify: (text: string) => notices.push(text), setStatus() {} },
         sessionManager: { getSessionId: () => "s" },
-        modelRegistry: { find: () => undefined },
+        modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
     };
     return { dir, env, raw, resolved, commands, notices, signed, providers, ctx };
+}
+
+/** Make the session run one preset's model, which is what decides the command's scope in 0.7.0. */
+function focus(h: { providers: any[]; ctx: { model: unknown } }, preset: string): void {
+    const model = [...h.providers]
+        .reverse()
+        .find((provider: any) => provider.id === `jig-bedrock-${preset}`)
+        ?.getModels?.()[0];
+    assert.ok(model, `${preset} has a model`);
+    h.ctx.model = model;
 }
 
 test("set profile then login renews the new profile, and status shows it", async (t) => {
@@ -121,6 +135,8 @@ test("a typed regions save registers the new region's models", async (t) => {
             models.some((model: any) => String(model.baseUrl).includes("us-west-2")),
             JSON.stringify(models),
         );
+        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["us-west-2"], "the new region is saved");
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }
@@ -205,6 +221,8 @@ test("every settings-menu example is a value its own key accepts", async (t) => 
 test("a set under an active preset writes into the preset", async (t) => {
     const s = await start({ preset: "work", presets: { work: { profile: "old" } }, regions: ["us-east-1"] });
     try {
+        // 0.7.0: the model in use decides the scope, not the `preset` key alone.
+        focus(s, "work");
         await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
         const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
         assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
@@ -236,17 +254,28 @@ test("preset add announces the active preset and reloads models", async (t) => {
     }
 });
 
-test("a preset chosen for the session survives an env preset on the next save", async (t) => {
+test("the model in use decides where a save goes, even under an env preset", async (t) => {
     const s = await start(
         { preset: "work", presets: { work: { regions: ["us-east-1"] }, personal: { regions: ["us-east-1"] } } },
         { JIG_BEDROCK_PRESET: "work" },
     );
     try {
-        await s.commands.get("bedrock").handler("use personal", s.ctx);
-        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
-        const saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
-        assert.deepEqual(saved.presets.personal.regions, ["eu-west-1"]);
+        // The plain provider's model writes the top level: the env preset does not take the save.
+        await s.commands.get("bedrock").handler("use top", s.ctx);
+        await s.commands.get("bedrock").handler("set regions us-west-2", s.ctx);
+        let saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.regions, ["us-west-2"], "the model in use, not the env preset, is the scope");
         assert.deepEqual(saved.presets.work.regions, ["us-east-1"]);
+        assert.match(s.notices.join("\n"), /regions: us-west-2 \(saved to bedrock\.json\)/);
+        // And that preset's own model writes into the preset, leaving the top level and the other preset alone.
+        await s.commands.get("bedrock").handler("use work", s.ctx);
+        await s.commands.get("bedrock").handler("set regions eu-west-1", s.ctx);
+        saved = JSON.parse(readFileSync(join(s.dir, "bedrock.json"), "utf8"));
+        assert.deepEqual(saved.presets.work.regions, ["eu-west-1"]);
+        assert.deepEqual(saved.presets.personal.regions, ["us-east-1"]);
+        assert.deepEqual(saved.regions, ["us-west-2"]);
+        assert.match(s.notices.join("\n"), /regions: eu-west-1 \(saved to preset work\)/);
+        assert.equal(saved.preset, "work", "the env preset leaves the file's own choice alone");
     } finally {
         rmSync(s.dir, { recursive: true, force: true });
     }

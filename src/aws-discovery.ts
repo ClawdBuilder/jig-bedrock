@@ -287,6 +287,8 @@ export function createAwsDiscovery(
         fetch?: typeof globalThis.fetch;
         /** Tests can force the HTTPS path while passing a sentinel runner. */
         useApi?: boolean;
+        /** How many per-scope catalog files to keep; read when a discovery writes (each runtime owns one). */
+        keepCatalogFiles?: () => number;
     } = {},
 ): CatalogSource {
     let flight: Promise<Status> | undefined,
@@ -700,7 +702,7 @@ export function createAwsDiscovery(
                 atomicCache(target, catalog);
                 lastSaveFailure = undefined;
                 memory = undefined;
-                if (typeof file === "function") pruneCatalogFiles(dirname(target));
+                if (typeof file === "function") pruneCatalogFiles(dirname(target), options.keepCatalogFiles?.());
             } catch (error) {
                 // A safety refusal (a link, too large) is still a discovery failure; an OS write error is not.
                 if ((error as NodeJS.ErrnoException).code === undefined) throw error;

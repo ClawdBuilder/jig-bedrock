@@ -40,6 +40,8 @@ export interface ResolvedConfig {
     profileSource?: "setting" | "env" | "preset";
     /** The active preset that supplied the profile, for diagnostics. */
     profilePreset?: string;
+    /** When false, one plain provider carries the `preset`/env settings (0.6.3's shape). */
+    allPresetModels?: boolean;
     /** The active preset name, its source, and the valid names. */
     preset?: string;
     presetSource?: "file" | "env";
@@ -101,12 +103,13 @@ export const PRESET_FIELDS = [
     "monthlyBudgetUsd",
     "spendCommand",
 ] as const;
-export const MACHINE_FIELDS = ["ssoLoginCommand", "signInAtStart", "browser", "debug"] as const;
+export const MACHINE_FIELDS = ["ssoLoginCommand", "signInAtStart", "browser", "debug", "allPresetModels"] as const;
 export const presetNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 /** The typed word for the top-level settings; it is never a preset name. */
 export const TOP_LEVEL_PRESET = "top";
 export const FIELDS = [
     "presets",
+    "allPresetModels",
     "preset",
     "discovery",
     "team",
@@ -134,6 +137,7 @@ export const DEFAULTS = {
     signInAtStart: false,
     api: "messages" as BedrockApi,
     debug: false,
+    allPresetModels: true,
 };
 
 /** A short model id: Claude's name and version, as in `claude-opus-5` or `claude-sonnet-5-5`. */
@@ -164,6 +168,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         converseModels,
         messagesModels,
         debug,
+        allPresetModels,
     } = c;
     if (
         team !== undefined &&
@@ -263,6 +268,7 @@ export function problemsOf(c: Record<string, unknown>): string[] {
         problems.push("ssoLoginCommand must be an argv array; only {profile} is supported in arguments");
     }
     if (typeof signInAtStart !== "boolean") problems.push("signInAtStart must be true or false");
+    if (typeof allPresetModels !== "boolean") problems.push("allPresetModels must be true or false");
     if (typeof debug !== "boolean") problems.push("debug must be true or false");
     if (browser !== undefined && (typeof browser !== "string" || !browserPattern.test(browser))) {
         problems.push(

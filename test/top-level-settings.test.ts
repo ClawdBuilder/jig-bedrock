@@ -100,6 +100,25 @@ const ids = (h: Awaited<ReturnType<typeof start>>): string[] =>
         ?.getModels?.()
         .map((model: { id: string }) => model.id) ?? [];
 
+/** Refresh one preset's provider the way Pi's /model does, and return its model ids. */
+async function loadPreset(h: Awaited<ReturnType<typeof start>>, id: string): Promise<string[]> {
+    const provider = [...h.providers].reverse().find((entry: any) => entry.id === id);
+    assert.ok(provider, `${id} is registered`);
+    await provider.refreshModels({
+        allowNetwork: true,
+        force: true,
+        signal: new AbortController().signal,
+        publish: async () => true,
+    });
+    return (
+        [...h.providers]
+            .reverse()
+            .find((entry: any) => entry.id === id)
+            ?.getModels?.()
+            .map((model: { id: string }) => model.id) ?? []
+    );
+}
+
 async function untilModel(h: Awaited<ReturnType<typeof start>>, id: string): Promise<string[]> {
     for (let attempt = 0; attempt < 100; attempt++) {
         const list = ids(h);
@@ -113,17 +132,23 @@ async function command(h: Awaited<ReturnType<typeof start>>, args: string): Prom
     await h.commands.get("bedrock")?.handler(args, h.ctx);
 }
 
-test("/bedrock use top returns from a preset to the top-level settings", async (t) => {
+test("/bedrock use top selects the top-level settings' model", async (t) => {
     const h = await start(t, WITH_DEV);
     assert.equal(await h.handle.refresh(false), "ok");
-    assert.ok(ids(h).includes("claude-haiku-5-5"), JSON.stringify(ids(h)));
+    const dev = await loadPreset(h, "jig-bedrock-dev");
+    assert.ok(dev.includes("claude-haiku-5-5"), JSON.stringify(dev));
+    h.ctx.model = { provider: "jig-bedrock-dev", id: "claude-haiku-5-5" };
     await command(h, "use top");
+    assert.deepEqual(
+        { provider: h.ctx.model.provider, id: h.ctx.model.id },
+        {
+            provider: "jig-bedrock",
+            id: "claude-sonnet-5-5",
+        },
+    );
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as { preset?: string };
     assert.equal(saved.preset, undefined, "the preset setting is removed");
     assert.match(h.notices.join("\n"), /Top-level settings are active: fixture · by tag/);
-    const models = await untilModel(h, "claude-sonnet-5-5");
-    assert.ok(models.includes("claude-sonnet-5-5"), JSON.stringify(models));
-    assert.equal(models.includes("claude-haiku-5-5"), false, JSON.stringify(models));
 });
 
 test("the Presets menu lists the top-level settings and switches to them", async (t) => {
@@ -135,13 +160,13 @@ test("the Presets menu lists the top-level settings and switches to them", async
         calls.push({ title, options: [...options] });
         const wanted = answers.shift();
         if (wanted === undefined) return undefined;
-        return options.find((option) => option === wanted || option.startsWith(wanted)) ?? wanted;
+        return options.find((option) => option === wanted || option.includes(wanted)) ?? wanted;
     };
     await command(h, "");
     const menu = calls.find((call) => call.title.startsWith("Bedrock presets"));
     assert.ok(menu, JSON.stringify(calls));
     assert.ok(
-        menu?.options.some((option) => option.startsWith("Top-level settings — fixture · by tag")),
+        menu?.options.some((option) => option.includes("Top-level settings — fixture · by tag")),
         JSON.stringify(menu?.options),
     );
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as { preset?: string };
@@ -167,31 +192,31 @@ test("the Presets menu lists the top-level settings and switches to them", async
     );
 });
 
-test("/bedrock unset preset reloads the top-level models and says so", async (t) => {
+test("/bedrock unset preset selects the top-level model and says so", async (t) => {
     const h = await start(t, WITH_DEV);
     assert.equal(await h.handle.refresh(false), "ok");
-    assert.ok(ids(h).includes("claude-haiku-5-5"), JSON.stringify(ids(h)));
+    await loadPreset(h, "jig-bedrock-dev");
+    h.ctx.model = { provider: "jig-bedrock-dev", id: "claude-haiku-5-5" };
     await command(h, "unset preset");
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as { preset?: string };
     assert.equal(saved.preset, undefined);
+    assert.equal(h.ctx.model.provider, "jig-bedrock");
+    assert.equal(h.ctx.model.id, "claude-sonnet-5-5", "the top-level settings' model, not the preset's");
     assert.match(h.notices.join("\n"), /Top-level settings are active: fixture · by tag/);
-    const models = await untilModel(h, "claude-sonnet-5-5");
-    assert.ok(models.includes("claude-sonnet-5-5"), JSON.stringify(models));
-    assert.equal(models.includes("claude-haiku-5-5"), false, JSON.stringify(models));
 });
 
-test("/bedrock set preset switches like use and says one line", async (t) => {
+test("/bedrock set preset selects that model and says one line", async (t) => {
     const h = await start(t, TOP_WITH_DEV);
     assert.equal(await h.handle.refresh(false), "ok");
-    assert.ok(ids(h).includes("claude-sonnet-5-5"), JSON.stringify(ids(h)));
+    const dev = await loadPreset(h, "jig-bedrock-dev");
+    assert.ok(dev.includes("claude-haiku-5-5"), JSON.stringify(dev));
     await command(h, "set preset dev");
     const saved = JSON.parse(readFileSync(h.file, "utf8")) as { preset?: string };
     assert.equal(saved.preset, "dev", h.notices.join("\n"));
     assert.match(h.notices.join("\n"), /preset dev is active/i);
     assert.doesNotMatch(h.notices.join("\n"), /preset: dev \(saved to preset dev\)/);
-    const models = await untilModel(h, "claude-haiku-5-5");
-    assert.ok(models.includes("claude-haiku-5-5"), JSON.stringify(models));
-    assert.equal(models.includes("claude-sonnet-5-5"), false, JSON.stringify(models));
+    assert.equal(h.ctx.model.provider, "jig-bedrock-dev");
+    assert.equal(h.ctx.model.id, "claude-haiku-5-5");
 });
 
 test("a preset switch says Loading only when its list is not cached", async (t) => {
@@ -215,11 +240,13 @@ test("a preset switch says Loading only when its list is not cached", async (t) 
 test("typed use and the menu print the same preset line", async (t) => {
     const typed = await start(t, TOP_WITH_DEV);
     await typed.handle.refresh(false);
+    await loadPreset(typed, "jig-bedrock-dev");
     await command(typed, "use dev");
     assert.ok(typed.notices.includes("Preset dev is active: fixture · AWS-defined"), JSON.stringify(typed.notices));
 
     const menu = await start(t, TOP_WITH_DEV);
     await menu.handle.refresh(false);
+    await loadPreset(menu, "jig-bedrock-dev");
     const answers: Array<string | undefined> = ["Presets", "dev — fixture · AWS-defined"];
     menu.ctx.ui.select = async (title: string, options: string[] = []) => {
         const wanted = answers.shift();

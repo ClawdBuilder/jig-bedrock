@@ -49,30 +49,44 @@ function setup(t: test.TestContext, shared?: string, settings?: Record<string, u
         hooks: new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>(),
         commands: new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>(),
         notices: [] as string[],
-        providers: [] as Array<{ getModels?: () => Array<{ id: string }> }>,
+        providers: [] as Array<{ id?: string; getModels?: () => Array<{ id: string }> }>,
+        selected: [] as Array<{ provider: string; id: string }>,
+        unregistered: [] as string[],
+        branch: [] as Array<Record<string, unknown>>,
+        editor: [] as string[],
     };
     const pi = {
         on(name: string, fn: (event: unknown, ctx: unknown) => unknown) {
             h.hooks.set(name, [...(h.hooks.get(name) ?? []), fn]);
         },
-        registerProvider(provider: { getModels?: () => Array<{ id: string }> }) {
+        registerProvider(provider: { id?: string; getModels?: () => Array<{ id: string }> }) {
             h.providers.push(provider);
+        },
+        unregisterProvider(id: string) {
+            h.unregistered.push(id);
+            const at = h.providers.findIndex((entry) => entry.id === id);
+            if (at >= 0) h.providers.splice(at, 1);
         },
         registerCommand(name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) {
             h.commands.set(name, options);
         },
         events: { emit() {} },
-        setModel: () => true,
+        setModel: async (model: { provider: string; id: string }) => {
+            h.selected.push({ provider: model.provider, id: model.id });
+            ctx.model = model as never;
+            return true;
+        },
     };
     const ctx = {
         mode: "rpc",
         hasUI: true,
         model: undefined,
-        sessionManager: { getBranch: () => [], getSessionId: () => "test" },
-        modelRegistry: { find: () => undefined },
+        sessionManager: { getBranch: () => h.branch, getSessionId: () => "test" },
+        modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
         ui: {
             notify: (text: string) => h.notices.push(text),
             setStatus: () => {},
+            setEditorText: (text: string) => h.editor.push(text),
         },
     };
     return { dir, file, h, pi, ctx, calls: () => calls, bump: () => calls++ };
@@ -85,6 +99,7 @@ async function start(
         fresh?: boolean;
         byProfile?: boolean;
         settings?: Record<string, unknown>;
+        catalogIds?: string[];
     } = {},
 ) {
     const s = setup(t, undefined, options.settings);
@@ -95,7 +110,7 @@ async function start(
         agentDir: s.dir,
     });
     assert.ok(resolved.config);
-    let current = catalog("anthropic.claude-haiku-5-5");
+    let current = catalog(...(options.catalogIds ?? ["anthropic.claude-haiku-5-5"]));
     const source = {
         load: () =>
             options.byProfile
@@ -129,71 +144,91 @@ const models = (h: { providers: Array<{ getModels?: () => Array<{ id: string }> 
         ?.getModels?.()
         .map((model) => model.id) ?? [];
 
-test("/bedrock use changes the registered model list with no reload", async (t) => {
+const providerOf = (h: { providers: Array<{ id?: string; getModels?: () => Array<{ id: string }> }> }, id: string) =>
+    [...h.providers].reverse().find((entry) => entry.id === id);
+const fireHooks = async (
+    h: { hooks: Map<string, Array<(event: any, ctx: any) => unknown>> },
+    name: string,
+    event: unknown,
+    ctx: unknown,
+): Promise<void> => {
+    for (const hook of h.hooks.get(name) ?? []) await hook(event, ctx);
+};
+
+test("/bedrock use selects a model of that preset and writes `preset`", async (t) => {
     const s = await start(t);
     await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    assert.ok(models(s.h).includes("claude-sonnet-5-5"), JSON.stringify(models(s.h)));
-    const workFile = catalogFileFor({ profile: "work", mode: "system", regions: [region] }, { HOME: s.dir }, true);
-    const personalFile = catalogFileFor(
-        { profile: "personal", mode: "system", regions: [region] },
-        { HOME: s.dir },
-        true,
-    );
-    assert.notEqual(workFile, personalFile);
+    assert.deepEqual(s.h.selected.at(-1), { provider: "jig-bedrock-personal", id: "claude-haiku-5-5" });
+    assert.equal((JSON.parse(readFileSync(s.file, "utf8")) as { preset?: string }).preset, "personal");
     assert.match(s.notices.join("\n"), /Preset personal is active: personal · AWS-defined/);
 });
 
-test("a fresh switch makes no discovery, a missing list makes one", async (t) => {
-    const fresh = await start(t, { fresh: true });
-    await fresh.commands.get("bedrock")?.handler("use personal", fresh.ctx);
-    assert.equal(fresh.calls(), 0);
-    const empty = await start(t);
-    empty.source.load = () => undefined;
-    await empty.commands.get("bedrock")?.handler("use personal", empty.ctx);
-    assert.equal(empty.calls(), 1);
+test("use picks this session's last model, then the saved default, then the first", async (t) => {
+    const catalogIds = ["anthropic.claude-haiku-5-5", "anthropic.claude-sonnet-5-5"];
+    const remembered = await start(t, { catalogIds });
+    remembered.h.branch.push({
+        type: "model_change",
+        provider: "jig-bedrock-personal",
+        modelId: "claude-haiku-5-5",
+    });
+    await remembered.commands.get("bedrock")?.handler("use personal", remembered.ctx);
+    assert.equal(remembered.h.selected.at(-1)?.id, "claude-haiku-5-5", "the session's last model wins");
+
+    const saved = await start(t, { catalogIds });
+    writeFileSync(
+        join(saved.dir, "settings.json"),
+        JSON.stringify({ defaultProvider: "jig-bedrock-personal", defaultModel: "claude-haiku-5-5" }),
+    );
+    await saved.commands.get("bedrock")?.handler("use personal", saved.ctx);
+    assert.equal(saved.h.selected.at(-1)?.id, "claude-haiku-5-5", "Pi's saved default comes second");
+
+    const first = await start(t, { catalogIds });
+    await first.commands.get("bedrock")?.handler("use personal", first.ctx);
+    assert.equal(first.h.selected.at(-1)?.id, "claude-sonnet-5-5", "otherwise its first model");
 });
 
-test("the selected model stays when its id exists, and one notice when it does not", async (t) => {
+test("use keeps the provider list and starts no discovery", async (t) => {
     const s = await start(t);
-    const before = s.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(before);
-    s.ctx.model = { ...before, provider: "jig-bedrock" } as never;
-    s.source.refresh = async () => {
-        s.bump();
-        return "ok";
-    };
+    const providers = s.h.providers.length;
     await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    const after = s.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(after, "the id is still in the list");
-
-    const missing = await start(t);
-    const old = missing.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(old);
-    missing.ctx.model = { ...old, provider: "jig-bedrock" } as never;
-    missing.source.load = () => catalog("anthropic.claude-sonnet-5-5");
-    await missing.commands.get("bedrock")?.handler("use personal", missing.ctx);
-    assert.match(missing.notices.join("\n"), /claude-haiku-5-5 is not in preset personal/);
+    assert.equal(s.h.providers.length, providers, "selecting a model re-registers nothing");
+    assert.equal(s.calls(), 0, "the cached catalog was enough");
 });
 
-test("JIG_BEDROCK_PRESET switches only this process and leaves the file alone", async (t) => {
+test("JIG_BEDROCK_PRESET shows its provider only, switches in this process, and leaves the file alone", async (t) => {
     const s = await start(t, { env: { JIG_BEDROCK_PRESET: "work" } });
+    assert.deepEqual(
+        s.h.providers.map((entry) => entry.id).sort(),
+        ["jig-bedrock", "jig-bedrock-work"],
+        "plain plus the named preset only",
+    );
     const before = readFileSync(s.file, "utf8");
-    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    assert.equal(readFileSync(s.file, "utf8"), before);
+    await s.commands.get("bedrock")?.handler("use work", s.ctx);
+    assert.deepEqual(s.h.selected.at(-1), { provider: "jig-bedrock-work", id: "claude-haiku-5-5" });
+    assert.equal(readFileSync(s.file, "utf8"), before, "the file is not rewritten");
     assert.match(s.notices.join("\n"), /for this Pi only/);
+    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
+    assert.match(s.notices.at(-1) ?? "", /Unknown preset personal/);
 });
 
-test("/bedrock use lists every preset and marks the active one", async (t) => {
+test("/bedrock use marks the model's preset active", async (t) => {
     const s = await start(t);
+    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
     await s.commands.get("bedrock")?.handler("use", s.ctx);
-    const text = s.notices.join("\n");
-    assert.match(text, /personal/);
-    assert.match(text, /work/);
-    assert.match(text, /active \(file\)/);
+    const listing = s.notices.at(-1) ?? "";
+    assert.match(listing, /ok personal .* · active \(model in use\)/, listing);
+    assert.doesNotMatch(listing, /ok Top-level settings/, listing);
+    assert.match(listing, /work/, "every preset is listed");
+    assert.match(listing, /Top-level settings/, "the top-level settings stay a choice");
 });
 
-test("preset add snapshots the effective profile and refuses an existing name", async (t) => {
+test("preset add copies the current runtime's config, registers at once and selects its model", async (t) => {
     const s = await start(t);
+    const work = providerOf(s.h, "jig-bedrock-work");
+    assert.ok(work);
+    s.ctx.model = { ...(work.getModels?.()[0] as never), provider: "jig-bedrock-work" } as never;
+    const callsBefore = s.calls();
+    const providersBefore = s.h.providers.length;
     await s.commands.get("bedrock")?.handler("preset add extra", s.ctx);
     const parsed = JSON.parse(readFileSync(s.file, "utf8")) as {
         presets: Record<string, { profile?: string }>;
@@ -201,12 +236,19 @@ test("preset add snapshots the effective profile and refuses an existing name", 
     };
     assert.equal(parsed.presets.extra?.profile, "work");
     assert.equal(parsed.preset, "extra");
+    assert.equal(s.calls(), callsBefore, "the cached catalog was enough: no discovery");
+    assert.equal(s.h.providers.length, providersBefore + 1);
+    assert.deepEqual(
+        providerOf(s.h, "jig-bedrock-extra")
+            ?.getModels?.()
+            .map((model) => model.id),
+        ["claude-haiku-5-5"],
+    );
+    assert.deepEqual(s.h.selected.at(-1), { provider: "jig-bedrock-extra", id: "claude-haiku-5-5" });
+    assert.match(s.notices.join("\n"), /Preset extra saved and active/);
     const before = readFileSync(s.file, "utf8");
     await s.commands.get("bedrock")?.handler("preset add extra", s.ctx);
-    assert.equal(readFileSync(s.file, "utf8"), before);
-    await s.commands.get("bedrock")?.handler("preset remove extra", s.ctx);
-    const after = JSON.parse(readFileSync(s.file, "utf8")) as { preset?: string };
-    assert.equal(after.preset, undefined);
+    assert.equal(readFileSync(s.file, "utf8"), before, "an existing name is refused unchanged");
 });
 
 test("no presets keeps the 0.3.3 footer and catalog path", async (t) => {
@@ -239,68 +281,84 @@ test("two providers with two JIG_BEDROCK_PRESET values use two catalog files and
     assert.equal(a.calls() + b.calls(), 0, "both providers used their cached list");
 });
 
-test("preset remove of the active preset unsets it, and the next list has no active mark", async (t) => {
+test("preset remove unregisters at once, and on the next model change when its model is in use", async (t) => {
     const s = await start(t);
-    await s.commands.get("bedrock")?.handler("preset add extra", s.ctx);
-    await s.commands.get("bedrock")?.handler("preset remove extra", s.ctx);
-    const parsed = JSON.parse(readFileSync(s.file, "utf8")) as { preset?: string; presets: Record<string, unknown> };
-    assert.equal(parsed.preset, undefined);
-    assert.equal(parsed.presets.extra, undefined);
-    await s.commands.get("bedrock")?.handler("use", s.ctx);
-    const listing = s.notices.at(-1) ?? "";
-    assert.match(listing, /Top-level settings .* active \(top-level\)/);
-    assert.doesNotMatch(listing, /^ok (?:personal|work)\b/m);
+    await s.commands.get("bedrock")?.handler("preset remove personal", s.ctx);
+    assert.deepEqual(s.h.unregistered, ["jig-bedrock-personal"]);
+    assert.equal(providerOf(s.h, "jig-bedrock-personal"), undefined);
+    const afterFirst = JSON.parse(readFileSync(s.file, "utf8")) as { presets: Record<string, unknown> };
+    assert.equal(afterFirst.presets.personal, undefined, "the removed preset is gone from bedrock.json");
+
+    const inUse = await start(t);
+    const work = providerOf(inUse.h, "jig-bedrock-work");
+    assert.ok(work);
+    inUse.ctx.model = { ...(work.getModels?.()[0] as never), provider: "jig-bedrock-work" } as never;
+    await inUse.commands.get("bedrock")?.handler("preset remove work", inUse.ctx);
+    assert.deepEqual(inUse.h.unregistered, [], "the provider stays while its model is in use");
+    assert.match(inUse.notices.join("\n"), /removed while its model is in use/);
+    const removed = JSON.parse(readFileSync(inUse.file, "utf8")) as { presets: Record<string, unknown> };
+    assert.equal(removed.presets.work, undefined, "the removed preset is gone from bedrock.json");
+    const inputHook = inUse.h.hooks.get("input")?.[0];
+    assert.ok(inputHook, "the selection guard registers an input hook");
+    const input = (await inputHook({ text: "hi", source: "interactive" }, inUse.ctx)) as { action?: string };
+    assert.equal(input?.action, "handled", "input is blocked until a choice is made");
+    const top = providerOf(inUse.h, "jig-bedrock");
+    assert.ok(top);
+    inUse.ctx.model = { ...(top.getModels?.()[0] as never), provider: "jig-bedrock" } as never;
+    await fireHooks(inUse.h, "model_select", { source: "set", model: inUse.ctx.model }, inUse.ctx);
+    assert.deepEqual(inUse.h.unregistered, ["jig-bedrock-work"]);
+    assert.equal(providerOf(inUse.h, "jig-bedrock-work"), undefined);
+    const after = JSON.parse(readFileSync(inUse.file, "utf8")) as { preset?: string; presets: Record<string, unknown> };
+    assert.equal(after.preset, undefined);
+    assert.equal(after.presets.work, undefined);
+    // The next listing has no active mark on a preset that no longer exists: the top level is what is in use.
+    await inUse.commands.get("bedrock")?.handler("use", inUse.ctx);
+    const listing = inUse.notices.at(-1) ?? "";
+    assert.match(listing, /Top-level settings .* active \(top-level\)/, listing);
+    assert.doesNotMatch(listing, /^ok (?:personal|work)\b/m, listing);
 });
 
-test("a switch with no saved list waits for discovery before judging the selected id", async (t) => {
+/** Start a provider on `work`'s model, then remove `work` while that model is in use. */
+async function removeInUse(t: test.TestContext) {
     const s = await start(t);
-    const selected = s.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(selected);
-    s.ctx.model = { ...selected, provider: "jig-bedrock" } as never;
-    s.source.load = () => undefined;
-    s.source.refresh = async () => {
-        s.bump();
-        s.source.load = () => catalog("anthropic.claude-haiku-5-5");
-        return "ok";
+    const work = providerOf(s.h, "jig-bedrock-work");
+    assert.ok(work);
+    s.ctx.model = { ...(work.getModels?.()[0] as never), provider: "jig-bedrock-work" } as never;
+    await s.commands.get("bedrock")?.handler("preset remove work", s.ctx);
+    return s;
+}
+
+test("removing the preset in use prints only the removal line and the warning", async (t) => {
+    const s = await removeInUse(t);
+    const removal = s.notices.find((text) => text.includes("Preset work removed.")) ?? "";
+    assert.equal(removal.split("\n").length, 2, `only the title and the removal line: ${removal}`);
+    assert.doesNotMatch(removal, /is active/, removal);
+    assert.doesNotMatch(s.notices.join("\n"), /Preset work is active/, s.notices.join("\n"));
+    assert.match(
+        s.notices.join("\n"),
+        /Bedrock: preset work was removed while its model is in use\. Choose another with \/model\./,
+        s.notices.join("\n"),
+    );
+});
+
+test("the prompt held after removing the preset in use says why and keeps the text", async (t) => {
+    const s = await removeInUse(t);
+    const inputHook = s.h.hooks.get("input")?.[0];
+    assert.ok(inputHook, "the selection guard registers an input hook");
+    const input = (await inputHook({ text: "send this later", source: "interactive" }, s.ctx)) as {
+        action?: string;
     };
-    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.doesNotMatch(s.notices.join("\n"), /is not in preset/);
-});
-
-test("a fresh saved list without the selected id warns once, after it is registered", async (t) => {
-    const s = await start(t);
-    const selected = s.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(selected);
-    s.ctx.model = { ...selected, provider: "jig-bedrock" } as never;
-    s.source.load = () => catalog("anthropic.claude-sonnet-5-5");
-    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    assert.equal(s.notices.filter((text) => text.includes("is not in preset personal")).length, 1);
-});
-
-test("a list that loses the selected id after background discovery warns once, after it finishes", async (t) => {
-    const s = await start(t);
-    const selected = s.provider.models.find((model) => model.id === "claude-haiku-5-5");
-    assert.ok(selected);
-    s.ctx.model = { ...selected, provider: "jig-bedrock" } as never;
-    s.source.refresh = async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        s.source.load = () => catalog("anthropic.claude-sonnet-5-5");
-        return "ok";
-    };
-    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    assert.doesNotMatch(s.notices.join("\n"), /is not in preset/);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(s.notices.filter((text) => text.includes("is not in preset personal")).length, 1);
-});
-
-test("a fresh preset switch registers the new preset's models, not the old ones", async (t) => {
-    const s = await start(t, { byProfile: true, fresh: true });
-    assert.ok(models(s.h).includes("claude-haiku-5-5"));
-    await s.commands.get("bedrock")?.handler("use personal", s.ctx);
-    const after = models(s.h);
-    assert.ok(after.includes("claude-sonnet-5-5"), JSON.stringify(after));
-    assert.equal(after.includes("claude-haiku-5-5"), false, JSON.stringify(after));
+    assert.equal(input?.action, "handled", "the prompt is not sent");
+    assert.ok(
+        s.notices.some((text) =>
+            text.includes(
+                "Preset work was removed; its model is no longer available. Choose another with /model; your message is still in the editor.",
+            ),
+        ),
+        s.notices.join("\n"),
+    );
+    assert.deepEqual(s.h.editor, ["send this later"], "the message stays in the editor");
+    assert.doesNotMatch(s.notices.join("\n"), /Saved Bedrock model is unavailable or ambiguous/);
 });
 
 test("the presets menu labels a preset with the mode it really runs", async (t) => {
