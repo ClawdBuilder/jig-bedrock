@@ -6,7 +6,7 @@ jig-bedrock is a public Pi package (`@clawdbuilder/jig-bedrock`) that turns AWS 
 
 The life of a session:
 
-1. **Pi starts the package.** `index.ts` hands over to `src/`. Settings are read and the provider and the `/bedrock` commands are registered. Nothing waits for AWS and nothing touches the network.
+1. **Pi starts the package.** `index.ts` hands over to `src/`. Settings are read and the providers (one per preset, or the one plain provider) and the `/bedrock` commands are registered. Nothing waits for AWS and nothing touches the network.
 2. **A session starts.** The AWS profile is chosen, the saved catalog is read, and a stale catalog refreshes in the background.
 3. **A request.** The route (Messages or Converse) is chosen per model, the request is signed with the AWS profile's credentials, and an expired SSO sign-in is repaired once, then the request is sent again.
 4. **A reply ends.** Spend is recorded, the footer updates, and a budget notice may appear.
