@@ -594,6 +594,33 @@ test("the presets menu saves a valid name and refuses an invalid one", async (t)
     assert.match(bad.notices.join("\n"), /not a preset name/);
 });
 
+test("the presets menu starts the guided new preset", async (t) => {
+    let started = 0;
+    const h = harness(t, {}, { presetNew: async () => void started++ });
+    withUi(h, ["Presets", "New preset"]);
+    await h.result.bedrock("", h.ctx as never);
+    assert.equal(started, 1);
+});
+
+test("preset new without a UI points at preset add and the file", async (t) => {
+    const h = harness(t, {});
+    h.ctx.hasUI = false;
+    h.ctx.mode = "rpc";
+    const writes: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+    }) as typeof process.stdout.write;
+    try {
+        await h.result.bedrock("preset new", h.ctx as never);
+    } finally {
+        process.stdout.write = original;
+    }
+    assert.match(writes.join(""), /\/bedrock preset add/);
+    assert.match(writes.join(""), /bedrock\.json/);
+});
+
 test("the presets menu removes a preset after confirmation", async (t) => {
     let removed = "";
     const h = harness(
@@ -635,7 +662,7 @@ test("the presets menu says there are no presets and offers only what makes sens
     const calls = (h.ctx.ui as any).calls as Array<{ title: string; options: string[] }>;
     assert.equal(calls.length, 2);
     assert.match(calls[1]!.title, /No presets yet\. Save the current settings as one first\./);
-    assert.deepEqual(calls[1]!.options, ["Save current settings as a preset…", "Back"]);
+    assert.deepEqual(calls[1]!.options, ["New preset…", "Save current settings as a preset…", "Back"]);
 });
 
 test("Back returns to the menu above, and Escape closes everything", async (t) => {

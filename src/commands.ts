@@ -43,7 +43,7 @@ export const BEDROCK_COMMANDS: readonly BedrockCommandSpec[] = [
     { name: "unset", usage: "unset <key>", summary: "remove one setting from bedrock.json" },
     { name: "migrate", usage: "migrate", summary: "copy a 0.2.x jig.json section once" },
     { name: "use", usage: "use [name]", summary: "switch presets, or list them" },
-    { name: "preset", usage: "preset add|remove <name>", summary: "add or remove a preset" },
+    { name: "preset", usage: "preset new|add|remove [name]", summary: "create, save or remove a preset" },
     { name: "help", usage: "help [name]", summary: "this list" },
 ] as const;
 export const BEDROCK_SUBCOMMANDS = BEDROCK_COMMANDS.map((command) => command.name);
@@ -113,6 +113,8 @@ export interface BedrockCommandSources {
     presetList?: () => Array<{ name: string; profile?: string; mode?: string; active: boolean; source?: string }>;
     activePreset?: () => { name?: string; source?: string };
     usePreset?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
+    /** The guided "New preset…" setup; it asks with the UI and saves and switches like usePreset. */
+    presetNew?: (ctx: ExtensionCommandContext) => Promise<void>;
     presetAdd?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     presetRemove?: (name: string, ctx: ExtensionCommandContext) => Promise<void>;
     loading?: () => boolean;
@@ -967,6 +969,18 @@ export function registerBedrockCommands(
     };
     const preset = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const [action = "", name = ""] = args.trim().split(/\s+/);
+        if (action === "new") {
+            if (name !== "") {
+                emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
+                return;
+            }
+            if (ctx.mode !== "tui" || !ctx.hasUI || toStdout(ctx) || sources.presetNew === undefined) {
+                emit(ctx, "Bedrock presets", [`${m.skip} Use /bedrock preset add <name>, or edit bedrock.json.`]);
+                return;
+            }
+            await sources.presetNew(ctx);
+            return;
+        }
         if (action === "add") {
             if (name === "" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) {
                 emit(ctx, "Bedrock presets", [`${m.fail} Usage: /bedrock ${usageFor("preset")}`]);
@@ -1081,6 +1095,14 @@ export function registerBedrockCommands(
     const presetsMenu = async (ctx: ExtensionCommandContext): Promise<boolean> => {
         const list = sources.presetList?.() ?? [];
         const actions = new Map<string, () => unknown>();
+        actions.set("New preset…", async () => {
+            if (sources.presetNew === undefined) {
+                emit(ctx, "Bedrock presets", [`${m.skip} This install cannot set up presets.`]);
+                return false;
+            }
+            await sources.presetNew(ctx);
+            return false;
+        });
         for (const entry of list) {
             const active = entry.active ? `${m.ok} ` : "";
             const why = entry.active ? ` · active (${entry.source ?? "saved"})` : "";

@@ -45,7 +45,7 @@ import { checkLocalDependencies } from "./doctor.ts";
 import { isOwnModel, JIG_BEDROCK } from "./identity.ts";
 import type { RecoveryOptions } from "./login.ts";
 import { createRecovery } from "./login.ts";
-import { runLoginFlow } from "./login-flow.ts";
+import { askDiscoverySettings, askProfile, type LoginFlowOptions, runLoginFlow } from "./login-flow.ts";
 import { markers } from "./markers.ts";
 import type { ListProfiles, ProfileChoice } from "./profile.ts";
 import {
@@ -73,6 +73,8 @@ import { registerSignInAtStart } from "./start-sign-in.ts";
 import { registerSwitchNotice } from "./switch-cost.ts";
 
 type Json = Record<string, unknown>;
+/** A prompt in the guided preset setup was cancelled; nothing has been written. */
+class PresetSetupCancelled extends Error {}
 const routeOf = (model: BedrockModel): string => (model.api === "anthropic-messages" ? "Messages" : "Converse");
 /** The nearest name within two edits, for a misspelt preset. */
 function _nearName(value: string, names: readonly string[]): string | undefined {
@@ -319,6 +321,57 @@ export function createBedrockProvider(
               ) => Promise<void>)
             | undefined;
         const loginListProfiles = memoizedList(options.loginListProfiles ?? createListProfiles(profileEnv));
+        // The tag listing /login's second-tag offer reads; the guided preset setup uses the same one.
+        const loginTagMatches: NonNullable<LoginFlowOptions["tagMatches"]> = async (
+            profile,
+            regions,
+            key,
+            value,
+            signal,
+        ) => {
+            const all: Array<Array<{ Key: string; Value: string }>> = [];
+            const run = (args: string[]) =>
+                new Promise<string>((resolve, reject) => {
+                    execFile(
+                        "aws",
+                        args,
+                        { encoding: "utf8", env: profileEnv, timeout: 20_000, maxBuffer: 4_194_304, signal },
+                        (error, stdout, stderr) =>
+                            error
+                                ? reject(new Error(error.killed ? "timeout" : stderr || error.message))
+                                : resolve(stdout),
+                    );
+                });
+            for (const region of regions) {
+                const text = await run([
+                    "resourcegroupstaggingapi",
+                    "get-resources",
+                    "--region",
+                    region,
+                    "--resource-type-filters",
+                    "bedrock:application-inference-profile",
+                    "--tag-filters",
+                    JSON.stringify([{ Key: key, Values: [value] }]),
+                    "--no-paginate",
+                    "--output",
+                    "json",
+                    ...(profile === undefined ? [] : ["--profile", profile]),
+                ]);
+                const parsed = JSON.parse(text) as { ResourceTagMappingList?: Array<{ Tags?: unknown }> };
+                for (const row of parsed.ResourceTagMappingList ?? [])
+                    if (Array.isArray(row.Tags))
+                        all.push(
+                            row.Tags.filter(
+                                (tag): tag is { Key: string; Value: string } =>
+                                    typeof tag === "object" &&
+                                    tag !== null &&
+                                    typeof (tag as { Key?: unknown }).Key === "string" &&
+                                    typeof (tag as { Value?: unknown }).Value === "string",
+                            ),
+                        );
+            }
+            return all;
+        };
         // /login's guided choice: the AWS CLI is the only place a secret is entered, and the profile is verified before
         // the credential is stored. A fresh listing is used after the access-key/role guidance.
         const guided = async (interaction: ProviderAuthInteraction) => {
@@ -353,50 +406,7 @@ export function createBedrockProvider(
                 configFile: awsConfigFile(profileEnv),
                 writeConfig: (sections) => writeAwsConfig(profileEnv, sections),
                 reportNote: (message) => setTimeout(() => ctx?.ui.notify(message, "warning"), 0),
-                tagMatches: async (profile, regions, key, value, signal) => {
-                    const all: Array<Array<{ Key: string; Value: string }>> = [];
-                    const run = (args: string[]) =>
-                        new Promise<string>((resolve, reject) => {
-                            execFile(
-                                "aws",
-                                args,
-                                { encoding: "utf8", env: profileEnv, timeout: 20_000, maxBuffer: 4_194_304, signal },
-                                (error, stdout, stderr) =>
-                                    error
-                                        ? reject(new Error(error.killed ? "timeout" : stderr || error.message))
-                                        : resolve(stdout),
-                            );
-                        });
-                    for (const region of regions) {
-                        const text = await run([
-                            "resourcegroupstaggingapi",
-                            "get-resources",
-                            "--region",
-                            region,
-                            "--resource-type-filters",
-                            "bedrock:application-inference-profile",
-                            "--tag-filters",
-                            JSON.stringify([{ Key: key, Values: [value] }]),
-                            "--no-paginate",
-                            "--output",
-                            "json",
-                            ...(profile === undefined ? [] : ["--profile", profile]),
-                        ]);
-                        const parsed = JSON.parse(text) as { ResourceTagMappingList?: Array<{ Tags?: unknown }> };
-                        for (const row of parsed.ResourceTagMappingList ?? [])
-                            if (Array.isArray(row.Tags))
-                                all.push(
-                                    row.Tags.filter(
-                                        (tag): tag is { Key: string; Value: string } =>
-                                            typeof tag === "object" &&
-                                            tag !== null &&
-                                            typeof (tag as { Key?: unknown }).Key === "string" &&
-                                            typeof (tag as { Value?: unknown }).Value === "string",
-                                    ),
-                                );
-                    }
-                    return all;
-                },
+                tagMatches: loginTagMatches,
             });
             if (saveFailure !== undefined) setTimeout(() => ctx?.ui.notify(saveFailure!, "warning"), 0);
             return credential;
@@ -828,14 +838,14 @@ export function createBedrockProvider(
                 timer.unref();
             }
         };
+        const presetModeName = (mode: ResolvedConfig["mode"]): string =>
+            mode === "explicit" ? "listed" : mode === "tag" ? "by tag" : "AWS-defined";
         const presetList = () => {
             const raw = userSettings(profileEnv)?.presets;
             // The labels a person reads must be the ones the preset would really run: the effective settings merge the
             // preset over the top level, exactly as switching does.
             const modeLabel = (mode: ResolvedConfig["mode"], body: Record<string, unknown>): string => {
-                if (mode === "explicit") return "listed";
-                if (mode === "tag") return "by tag";
-                if (mode === "system") return "AWS-defined";
+                if (mode !== undefined) return presetModeName(mode);
                 if (body.discovery === "tag") return "by tag";
                 if (body.discovery === "list") return "listed";
                 if (body.discovery === "aws-defined") return "AWS-defined";
@@ -877,8 +887,13 @@ export function createBedrockProvider(
             });
             return next;
         };
-        const switchPreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
+        const switchPreset = async (
+            name: string,
+            context: ExtensionCommandContext,
+            switchOptions: { newlySaved?: boolean } = {},
+        ): Promise<void> => {
             const before = new Set(config.presetNames ?? []);
+            if (switchOptions.newlySaved === true) before.add(name);
             if (!before.has(name)) {
                 emitPreset(context, [
                     `${m.fail} Unknown preset ${name}.`,
@@ -954,11 +969,121 @@ export function createBedrockProvider(
             }
             spend.updateFooter(context);
             context.ui.notify(
-                profileEnv.JIG_BEDROCK_PRESET === undefined
-                    ? `Bedrock: preset ${name} is active.`
-                    : `Bedrock: preset ${name} is active for this Pi only.`,
+                switchOptions.newlySaved === true
+                    ? `Preset ${name} is active: ${config.profile ?? "no AWS profile"} · ${presetModeName(config.mode)}`
+                    : profileEnv.JIG_BEDROCK_PRESET === undefined
+                      ? `Bedrock: preset ${name} is active.`
+                      : `Bedrock: preset ${name} is active for this Pi only.`,
                 "info",
             );
+        };
+        /** The command UI as the prompt interface /login uses, so the guided preset setup shares login's prompts. */
+        const presetInteraction = (context: ExtensionCommandContext): ProviderAuthInteraction => {
+            const signal = context.signal ?? new AbortController().signal;
+            return {
+                signal,
+                prompt: async (prompt) => {
+                    if (prompt.type === "select") {
+                        const answer = await context.ui.select(
+                            prompt.message,
+                            prompt.options.map((option) => option.label),
+                            { signal },
+                        );
+                        if (answer === undefined) throw new PresetSetupCancelled();
+                        return (
+                            prompt.options.find((option) => option.label === answer || option.id === answer)?.id ??
+                            answer
+                        );
+                    }
+                    const answer = await context.ui.input(prompt.message, prompt.placeholder, { signal });
+                    if (answer === undefined) throw new PresetSetupCancelled();
+                    return answer;
+                },
+                notify: (event) => {
+                    if (event.type === "info" || event.type === "progress") context.ui.notify(event.message, "info");
+                },
+            };
+        };
+        const newPreset = async (context: ExtensionCommandContext): Promise<void> => {
+            const interaction = presetInteraction(context);
+            try {
+                const document = readSettingsDocument(profileEnv);
+                if ("error" in document) {
+                    context.ui.notify(document.error, "warning");
+                    return;
+                }
+                const presets = isObject(document.target.presets) ? { ...document.target.presets } : {};
+                let name = "";
+                for (;;) {
+                    const answer = await interaction.prompt({
+                        type: "text",
+                        message: "New preset name",
+                        placeholder: "work",
+                    });
+                    const value = answer.trim();
+                    if (value === "") return;
+                    if (!presetNamePattern.test(value)) {
+                        interaction.notify({
+                            type: "info",
+                            message: `${value} is not a preset name: a letter or digit, then up to 39 letters, digits, dots, underscores or hyphens.`,
+                        });
+                        continue;
+                    }
+                    if (Object.hasOwn(presets, value)) {
+                        interaction.notify({
+                            type: "info",
+                            message: `Preset ${value} already exists; choose another name.`,
+                        });
+                        continue;
+                    }
+                    name = value;
+                    break;
+                }
+                const listed = await loginListProfiles(interaction.signal);
+                const profile = await askProfile(interaction, listed);
+                const settings = await askDiscoverySettings(
+                    interaction,
+                    { regions: config.regions, tagMatches: loginTagMatches },
+                    profile,
+                );
+                const body: Record<string, unknown> = {
+                    profile,
+                    discovery: settings.mode === "explicit" ? "list" : settings.mode === "tag" ? "tag" : "aws-defined",
+                    regions: settings.regions,
+                };
+                if (settings.mode === "tag") {
+                    body.tagKey = settings.tagKey;
+                    body.tagValue = settings.tagValue;
+                    if (settings.activeTagKey !== undefined) body.activeTagKey = settings.activeTagKey;
+                    if (settings.activeTagValue !== undefined) body.activeTagValue = settings.activeTagValue;
+                } else if (settings.mode === "explicit") {
+                    body.profiles = settings.profiles;
+                }
+                presets[name] = body;
+                document.target.presets = presets;
+                const candidate = loadConfig({
+                    raw: { ...document.target, preset: name },
+                    env: profileEnv,
+                    agentDir: config.agentDir,
+                    presetOverride: name,
+                });
+                if (!candidate.config) {
+                    context.ui.notify(`The preset was not saved: ${candidate.error ?? "unknown error"}.`, "warning");
+                    return;
+                }
+                const error = saveSettings(document.document);
+                if (error !== undefined) {
+                    context.ui.notify(`The preset was not saved: ${error}.`, "warning");
+                    return;
+                }
+                await switchPreset(name, context, { newlySaved: true });
+            } catch (error) {
+                if (error instanceof PresetSetupCancelled) return;
+                context.ui.notify(
+                    `The preset was not created: ${error instanceof Error ? error.message : String(error)}.`,
+                    "warning",
+                );
+            }
         };
         const addPreset = async (name: string, context: ExtensionCommandContext): Promise<void> => {
             if (!presetNamePattern.test(name)) {
@@ -1096,6 +1221,7 @@ export function createBedrockProvider(
             presetList: () => presetList(),
             activePreset: () => ({ name: config.preset, source: config.presetSource }),
             usePreset: (name, commandContext) => switchPreset(name, commandContext),
+            presetNew: (commandContext) => newPreset(commandContext),
             presetAdd: (name, commandContext) => addPreset(name, commandContext),
             presetRemove: (name, commandContext) => removePreset(name, commandContext),
             apply: async (refreshModels = false) => {
