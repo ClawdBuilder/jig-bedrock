@@ -1148,9 +1148,16 @@ export function createBedrockProvider(
                 return;
             }
             if (!(await activateSavedPreset(name, context))) return;
-            // The line below names the new preset, so its own tracker is what must reach the footer: with no cached
-            // models yet, the model in use is still another provider's (design §6).
-            (runtimeFor.get(name) ?? currentRuntime(context)).spend.updateFooter(context);
+            // The footer follows the model in use (design §4). With a cached catalog the new preset was selected, so
+            // this is its figure; while its list is still loading nothing was selected and the footer stays put.
+            currentRuntime(context).spend.updateFooter(context);
+            const added = allPresetModels ? runtimeFor.get(name)?.models : primary.models;
+            if ((added?.length ?? 0) === 0) {
+                emitPreset(context, [
+                    `${m.ok} Preset ${name} saved; loading its models. The footer switches when you use one of them.`,
+                ]);
+                return;
+            }
             emitPreset(context, [
                 `${m.ok} Preset ${name} saved and active; models reloaded.`,
                 `The footer now shows ${name}'s spend, including this month's spend from before presets.`,
